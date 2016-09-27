@@ -27,11 +27,11 @@ class Client {
     ConnType type;
   };
   std::unique_ptr<conn::Socket[]> servers_;
-  const HostInfo* hosts_;
-  const size_t comm_buff_capacity_;
+  const HostInfo* kHosts_;
+  const size_t kCommBuffCapacity_;
   conn::Poll poll_;
   std::unique_ptr<std::unique_ptr<conn::SocketConn>[]> server_conn_;
-  const size_t num_servers_;
+  const size_t kNumServers_;
   std::unique_ptr<uint8_t[]> send_mem_;
   conn::SendBuffer send_buff_;
   std::unique_ptr<uint8_t[]> recv_mem_;
@@ -40,9 +40,8 @@ class Client {
   std::unique_ptr<PollConn[]> poll_conns_;
   bool stop_ {false};
   WorkerRuntime * const runtime_;
-  const int32_t my_id_;
+  const int32_t kMyId_;
   size_t num_peer_done_recved_ {0};
-  bool partition_data_ { false };
 
  public:
   Client(const HostInfo* hosts,
@@ -72,10 +71,10 @@ Client::Client(const HostInfo* hosts,
     WorkerRuntime *runtime,
     int32_t my_id):
     servers_(std::make_unique<conn::Socket[]>(num_servers)),
-    hosts_(hosts),
-    comm_buff_capacity_(comm_buff_capacity),
+    kHosts_(hosts),
+    kCommBuffCapacity_(comm_buff_capacity),
     server_conn_(std::make_unique<std::unique_ptr<conn::SocketConn>[]>(num_servers)),
-    num_servers_(num_servers),
+    kNumServers_(num_servers),
     send_mem_(std::make_unique<uint8_t[]>(comm_buff_capacity)),
     send_buff_(send_mem_.get(), comm_buff_capacity),
     recv_mem_(std::make_unique<uint8_t[]>(comm_buff_capacity * (num_servers + 2))),
@@ -83,7 +82,7 @@ Client::Client(const HostInfo* hosts,
   local_server_(local_server, recv_mem_.get() + comm_buff_capacity, comm_buff_capacity),
   poll_conns_(std::make_unique<PollConn[]>(num_servers + 2)),
   runtime_(runtime),
-  my_id_(my_id) {
+  kMyId_(my_id) {
   poll_conns_[0].conn = &master_;
   poll_conns_[0].type = PollConn::ConnType::master;
   poll_conns_[1].conn = &local_server_;
@@ -114,33 +113,37 @@ Client::HandleMasterMsg() {
   switch(msg_type) {
     case message::Type::kExecutorConnectToPeers:
       {
-        LOG(INFO) << my_id_ << " Client ConnectToPeers";
+        LOG(INFO) << kMyId_ << " Client ConnectToPeers";
         message::Helper::CreateMsg<
-          message::ExecutorIdentity>(&send_buff_, my_id_);
-        for (size_t i = 0; i < num_servers_; ++i) {
-          if (i == my_id_) continue;
-          int ret = servers_[i].Connect(hosts_[i].ip, hosts_[i].port);
-          CHECK(ret == 0) << "executor " << my_id_ << " connected to " << i
+          message::ExecutorIdentity,
+          message::DefaultPayloadCreator<message::Type::kExecutorIdentity>
+          >(&send_buff_, kMyId_);
+        for (size_t i = 0; i < kNumServers_; ++i) {
+          if (i == kMyId_) continue;
+          int ret = servers_[i].Connect(kHosts_[i].ip, kHosts_[i].port);
+          CHECK(ret == 0) << "executor " << kMyId_ << " connected to " << i
                           << " ret = " << ret
-                          << " ip = " << hosts_[i].ip << " port = " << hosts_[i].port;
+                          << " ip = " << kHosts_[i].ip << " port = " << kHosts_[i].port;
           servers_[i].Send(&send_buff_);
           server_conn_[i] = std::make_unique<conn::SocketConn>(
-              servers_[i], recv_mem_.get() + comm_buff_capacity_ * (i + 2),
-              comm_buff_capacity_);
+              servers_[i], recv_mem_.get() + kCommBuffCapacity_ * (i + 2),
+              kCommBuffCapacity_);
           poll_conns_[i + 2].conn = server_conn_[i].get();
           poll_conns_[i + 2].type = PollConn::ConnType::server;
           if (servers_[i].get_fd() == 0) continue;
           poll_.Add(servers_[i].get_fd(), &poll_conns_[i + 2]);
         }
-        message::Helper::CreateMsg<message::ExecutorConnectToPeersAck>(
-            &send_buff_);
+        message::Helper::CreateMsg<
+          message::ExecutorConnectToPeersAck,
+          message::DefaultPayloadCreator<message::Type::kExecutorConnectToPeersAck>
+        >(&send_buff_);
         master_.pipe.Send(&send_buff_);
       }
       break;
     case message::Type::kExecutorStop:
       {
         stop_ = true;
-        for (size_t i = 0; i < num_servers_; i++) {
+        for (size_t i = 0; i < kNumServers_; i++) {
           if (servers_[i].get_fd() != 0) {
             servers_[i].Close();
             //LOG(INFO) << "close server " << servers_[i].get_fd();

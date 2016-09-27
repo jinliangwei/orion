@@ -25,10 +25,10 @@ class Server {
     void *conn {nullptr};
     ConnType type;
   };
-  const size_t comm_buff_capacity_;
+  const size_t kCommBuffCapacity_;
   conn::Poll poll_;
   std::unique_ptr<std::unique_ptr<conn::SocketConn>[]> client_conn_;
-  const size_t num_clients_;
+  const size_t kNumClients_;
   size_t num_identified_clients_ {0};
   std::unique_ptr<uint8_t[]> send_mem_;
   conn::SendBuffer send_buff_;
@@ -38,7 +38,7 @@ class Server {
   std::unique_ptr<PollConn[]> poll_conns_;
   bool stop_ {false};
   WorkerRuntime * const runtime_;
-  const int32_t my_id_;
+  const int32_t kMyId_;
 
  public:
   Server(conn::Socket* clients, size_t num_clients,
@@ -64,9 +64,9 @@ Server::Server(
     size_t comm_buff_capacity,
     WorkerRuntime *runtime,
     int32_t my_id):
-    comm_buff_capacity_(comm_buff_capacity),
+    kCommBuffCapacity_(comm_buff_capacity),
     client_conn_(std::make_unique<std::unique_ptr<conn::SocketConn>[]>(num_clients)),
-    num_clients_(num_clients),
+    kNumClients_(num_clients),
     send_mem_(std::make_unique<uint8_t[]>(comm_buff_capacity)),
     send_buff_(send_mem_.get(), comm_buff_capacity),
     recv_mem_(std::make_unique<uint8_t[]>(comm_buff_capacity * (num_clients + 2))),
@@ -74,7 +74,7 @@ Server::Server(
   local_client_(local_client, recv_mem_.get() + comm_buff_capacity, comm_buff_capacity),
   poll_conns_(std::make_unique<PollConn[]>(num_clients + 2)),
   runtime_(runtime),
-  my_id_(my_id) {
+  kMyId_(my_id) {
   poll_conns_[0].conn = &master_;
   poll_conns_[0].type = PollConn::ConnType::master;
   poll_conns_[1].conn = &local_client_;
@@ -150,8 +150,11 @@ Server::HandleClientMsg(PollConn *poll_conn_ptr) {
         auto *msg = message::Helper::get_msg<message::ExecutorIdentity>(recv_buff);
         client_conn_[msg->executor_id].reset(&sock_conn);
         num_identified_clients_++;
-        if (num_identified_clients_ == num_clients_ - 1) {
-          message::Helper::CreateMsg<message::ExecutorConnectToPeersAck>(
+        if (num_identified_clients_ == kNumClients_ - 1) {
+          message::Helper::CreateMsg<
+            message::ExecutorConnectToPeersAck,
+            message::DefaultPayloadCreator<message::Type::kExecutorConnectToPeersAck>
+            >(
               &send_buff_);
           master_.pipe.Send(&send_buff_);
         }
@@ -247,8 +250,8 @@ Server::operator() () {
 
 void
 Server::BroadcastPeers() {
-  for (int i = 0; i < num_clients_; ++i) {
-    if (my_id_ == i) continue;
+  for (int i = 0; i < kNumClients_; ++i) {
+    if (kMyId_ == i) continue;
     size_t nsent = client_conn_[i]->sock.Send(&send_buff_);
     CHECK(conn::CheckSendSize(send_buff_, nsent));
   }

@@ -20,7 +20,7 @@ static size_t write_all(int fd, const void *buf, size_t count) {
   return bytes_written;
 }
 
-int Socket::Bind(const char *ip, uint16_t port) {
+int Socket::Bind(uint64_t ip, uint16_t port) {
   socket_ = socket(AF_INET, SOCK_STREAM, 0);
   if (socket_ < 0) return -1;
 
@@ -28,14 +28,12 @@ int Socket::Bind(const char *ip, uint16_t port) {
   bzero(&addr, sizeof(sockaddr_in));
 
   addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = ip;
   addr.sin_port = htons(port);
-  int success = inet_pton(AF_INET, ip, &(addr.sin_addr));
-  if(success != 1) return -1;
-
   return bind(socket_, (sockaddr *) &addr, sizeof(sockaddr_in));
 }
 
-int Socket::Connect(const char *ip, uint16_t port) {
+int Socket::Connect(uint64_t ip, uint16_t port) {
   socket_ = socket(AF_INET, SOCK_STREAM, 0);
   if (socket_ < 0) return -1;
 
@@ -43,10 +41,8 @@ int Socket::Connect(const char *ip, uint16_t port) {
   bzero(&addr, sizeof(sockaddr_in));
 
   addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = ip;
   addr.sin_port = htons(port);
-  int success = inet_pton(AF_INET, ip, &(addr.sin_addr));
-  if(success != 1) return -1;
-
   return connect(socket_, (sockaddr *) &addr, sizeof(sockaddr_in));
 }
 

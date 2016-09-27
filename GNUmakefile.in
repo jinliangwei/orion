@@ -59,8 +59,8 @@ bin:
 lib:
 	mkdir -p lib
 
-$(ORION_LIB): lib $(BOSEN_LIB_OBJ) $(SUPPORT_LIB_OBJ)
-	gcc -shared -Wl,-soname,liborion.so.0 -o liborion.so.0.0 $(BOSEN_LIB_OBJ) $(SUPPORT_LIB_OBJ)
+$(ORION_LIB): lib $(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(SUPPORT_LIB_OBJ)
+	gcc -shared -Wl,-soname,liborion.so.0 -o liborion.so.0.0 $(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(SUPPORT_LIB_OBJ)
 	mv liborion.so.0.0 lib/
 	ln -sf $(ORION_HOME)/lib/liborion.so.0.0 $(ORION_HOME)/lib/liborion.so.0
 	ln -sf $(ORION_HOME)/lib/liborion.so.0.0 $(ORION_HOME)/$@

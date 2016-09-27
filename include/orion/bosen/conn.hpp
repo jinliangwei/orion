@@ -284,14 +284,14 @@ class Socket {
   /*!
    * Used by listener for accepting connections
    */
-  int Bind(const char *ip, uint16_t port);
+  int Bind(uint64_t ip, uint16_t port);
   int Listen(int backlog) const;
   int Accept(Socket *conn) const;
 
   /*!
    * Used by connector for establishing connections
    */
-  int Connect(const char *ip, uint16_t port);
+  int Connect(uint64_t ip, uint16_t port);
 
   size_t Send(const SendBuffer *buf) const;
   size_t Send(const void *mem, size_t to_send) const;
