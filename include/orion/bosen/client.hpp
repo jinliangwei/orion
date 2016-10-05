@@ -111,17 +111,17 @@ Client::HandleMasterMsg() {
 
   auto msg_type = message::Helper::get_type(recv_buff);
   switch(msg_type) {
-    case message::Type::kExecutorConnectToPeers:
+    case message::Type::kWorkerConnectToPeers:
       {
         LOG(INFO) << kMyId_ << " Client ConnectToPeers";
         message::Helper::CreateMsg<
-          message::ExecutorIdentity,
-          message::DefaultPayloadCreator<message::Type::kExecutorIdentity>
+          message::WorkerIdentity,
+          message::DefaultPayloadCreator<message::Type::kWorkerIdentity>
           >(&send_buff_, kMyId_);
         for (size_t i = 0; i < kNumServers_; ++i) {
           if (i == kMyId_) continue;
           int ret = servers_[i].Connect(kHosts_[i].ip, kHosts_[i].port);
-          CHECK(ret == 0) << "executor " << kMyId_ << " connected to " << i
+          CHECK(ret == 0) << "worker " << kMyId_ << " connected to " << i
                           << " ret = " << ret
                           << " ip = " << kHosts_[i].ip << " port = " << kHosts_[i].port;
           servers_[i].Send(&send_buff_);
@@ -134,13 +134,13 @@ Client::HandleMasterMsg() {
           poll_.Add(servers_[i].get_fd(), &poll_conns_[i + 2]);
         }
         message::Helper::CreateMsg<
-          message::ExecutorConnectToPeersAck,
-          message::DefaultPayloadCreator<message::Type::kExecutorConnectToPeersAck>
+          message::WorkerConnectToPeersAck,
+          message::DefaultPayloadCreator<message::Type::kWorkerConnectToPeersAck>
         >(&send_buff_);
         master_.pipe.Send(&send_buff_);
       }
       break;
-    case message::Type::kExecutorStop:
+    case message::Type::kWorkerStop:
       {
         stop_ = true;
         for (size_t i = 0; i < kNumServers_; i++) {

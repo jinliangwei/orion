@@ -28,7 +28,6 @@ class WorkerRuntime {
   std::unique_ptr<RingTable> y_table_;
   size_t num_executors_;
   const size_t my_id_;
-  const size_t num_local_executors_;
   int32_t sub_epoch_ {0};
   int32_t eval_sub_epoch_ {0};
   int32_t num_sub_epochs_per_iteration_ {0};
@@ -53,21 +52,11 @@ class WorkerRuntime {
 
  public:
   WorkerRuntime(size_t num_executors,
-                size_t num_local_executors,
                 size_t my_id):
       num_executors_(num_executors),
       my_id_(my_id),
-      num_local_executors_(num_local_executors),
-      is_edge_in_((num_local_executors == num_executors)
-                  ? false
-                  : ((num_local_executors == 1)
-                     ? true
-                     : ((my_id_ + 1) % num_local_executors == 0))),
-      is_edge_out_((num_local_executors == num_executors)
-                   ? false
-                   : ((num_local_executors == 1)
-                      ? true
-                      : (my_id_ % num_local_executors == 0))),
+      is_edge_in_(true),
+      is_edge_out_(true),
     perf_count_(kPerfCountTypes) { }
   ~WorkerRuntime() { }
 

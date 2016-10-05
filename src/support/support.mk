@@ -16,10 +16,10 @@ $(SUPPORT_OBJ): %.o: %.cpp
 	$(CXX) -fPIC $(CFLAGS) -c $< -o $@
 
 $(SUPPORT_MAIN_EXE): bin/%: src/%_main.o $(ORION_LIB) bin/support
-	$(CXX) $< $(LDFLAGS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
+	$(CXX) $< $(LDFLAGS) $(ASAN_LIBS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
 
 $(SUPPORT_TEST_EXE): bin/%: src/%.o $(ORION_LIB) bin/support
-	$(CXX) $< $(LDFLAGS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
+	$(CXX) $< $(LDFLAGS) $(ASAN_LIBS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
 
 support_clean:
 	rm -rf $(SUPPORT_OBJ)

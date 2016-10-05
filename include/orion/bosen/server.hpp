@@ -113,7 +113,7 @@ Server::HandleMasterMsg() {
 
   auto msg_type = message::Helper::get_type(recv_buff);
   switch(msg_type) {
-    case message::Type::kExecutorStop:
+    case message::Type::kWorkerStop:
       {
         stop_ = true;
       }
@@ -145,15 +145,15 @@ Server::HandleClientMsg(PollConn *poll_conn_ptr) {
 
   auto msg_type = message::Helper::get_type(recv_buff);
   switch(msg_type) {
-    case message::Type::kExecutorIdentity:
+    case message::Type::kWorkerIdentity:
       {
-        auto *msg = message::Helper::get_msg<message::ExecutorIdentity>(recv_buff);
-        client_conn_[msg->executor_id].reset(&sock_conn);
+        auto *msg = message::Helper::get_msg<message::WorkerIdentity>(recv_buff);
+        client_conn_[msg->worker_id].reset(&sock_conn);
         num_identified_clients_++;
         if (num_identified_clients_ == kNumClients_ - 1) {
           message::Helper::CreateMsg<
-            message::ExecutorConnectToPeersAck,
-            message::DefaultPayloadCreator<message::Type::kExecutorConnectToPeersAck>
+            message::WorkerConnectToPeersAck,
+            message::DefaultPayloadCreator<message::Type::kWorkerConnectToPeersAck>
             >(
               &send_buff_);
           master_.pipe.Send(&send_buff_);

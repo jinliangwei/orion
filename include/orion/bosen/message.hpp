@@ -11,10 +11,10 @@ namespace message {
 
 enum class Type {
   kDriverMsg = 0,
-    kExecutorConnectToPeers = 1,
-    kExecutorConnectToPeersAck = 2,
-    kExecutorIdentity = 3,
-    kExecutorStop = 4
+    kWorkerConnectToPeers = 1,
+    kWorkerConnectToPeersAck = 2,
+    kWorkerIdentity = 3,
+    kWorkerStop = 4
 };
 
 class Helper;
@@ -37,58 +37,58 @@ struct Header {
 
 static_assert(std::is_pod<Header>::value, "Header must be POD!");
 
-struct ExecutorConnectToPeers {
+struct WorkerConnectToPeers {
  private:
-  ExecutorConnectToPeers() = default;
-  friend class DefaultPayloadCreator<Type::kExecutorConnectToPeers>;
+  WorkerConnectToPeers() = default;
+  friend class DefaultPayloadCreator<Type::kWorkerConnectToPeers>;
  public:
   void Init() { }
-  static Type get_type() { return Type::kExecutorConnectToPeers; }
+  static Type get_type() { return Type::kWorkerConnectToPeers; }
   size_t get_payload_size() const { return 0; }
 };
 
-static_assert(std::is_pod<ExecutorConnectToPeers>::value,
-              "ExecutorConnectToPeers must be POD!");
+static_assert(std::is_pod<WorkerConnectToPeers>::value,
+              "WorkerConnectToPeers must be POD!");
 
-struct ExecutorConnectToPeersAck {
+struct WorkerConnectToPeersAck {
  private:
-  ExecutorConnectToPeersAck() = default;
-  friend class DefaultPayloadCreator<Type::kExecutorConnectToPeersAck>;
+  WorkerConnectToPeersAck() = default;
+  friend class DefaultPayloadCreator<Type::kWorkerConnectToPeersAck>;
  public:
   void Init() { }
-  static Type get_type() { return Type::kExecutorConnectToPeersAck; }
+  static Type get_type() { return Type::kWorkerConnectToPeersAck; }
   size_t get_payload_size() const { return 0; }
 };
 
-static_assert(std::is_pod<ExecutorConnectToPeersAck>::value,
-                "ExecutorConnectToPeersAck must be POD!");
+static_assert(std::is_pod<WorkerConnectToPeersAck>::value,
+                "WorkerConnectToPeersAck must be POD!");
 
-struct ExecutorStop {
+struct WorkerStop {
  private:
-  ExecutorStop() = default;
-  friend class DefaultPayloadCreator<Type::kExecutorStop>;
+  WorkerStop() = default;
+  friend class DefaultPayloadCreator<Type::kWorkerStop>;
  public:
   void Init() { }
-  static Type get_type() { return Type::kExecutorStop; }
+  static Type get_type() { return Type::kWorkerStop; }
   size_t get_payload_size() const { return 0; }
 };
-static_assert(std::is_pod<ExecutorStop>::value,
-              "ExecutorStop must be POD!");
+static_assert(std::is_pod<WorkerStop>::value,
+              "WorkerStop must be POD!");
 
-struct ExecutorIdentity {
-  int32_t executor_id;
+struct WorkerIdentity {
+  int32_t worker_id;
  private:
-  ExecutorIdentity() = default;
-  friend class DefaultPayloadCreator<Type::kExecutorIdentity>;
+  WorkerIdentity() = default;
+  friend class DefaultPayloadCreator<Type::kWorkerIdentity>;
  public:
-  void Init(int32_t _executor_id) {
-    executor_id = _executor_id;
+  void Init(int32_t _worker_id) {
+    worker_id = _worker_id;
   }
-  static Type get_type() { return Type::kExecutorIdentity; }
+  static Type get_type() { return Type::kWorkerIdentity; }
   size_t get_payload_size() const { return 0; }
 };
 
-static_assert(std::is_pod<ExecutorIdentity>::value, "ExecutorIdentity must be POD!");
+static_assert(std::is_pod<WorkerIdentity>::value, "WorkerIdentity must be POD!");
 
 template<Type header_type>
 class DefaultPayloadCreator {

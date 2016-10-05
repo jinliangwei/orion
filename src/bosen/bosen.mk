@@ -5,7 +5,7 @@ BOSEN_LIB_C := $(filter-out %_test.c %_main.c,$(BOSEN_C))
 BOSEN_OBJ := $(BOSEN_CPP:.cpp=.o)
 BOSEN_COBJ := $(BOSEN_C:.c=.o)
 BOSEN_LIB_OBJ := $(BOSEN_LIB_CPP:.cpp=.o)
-BOSEN_LIB_OBJ := $(BOSEN_LIB_C:.c=.o)
+BOSEN_LIB_COBJ := $(BOSEN_LIB_C:.c=.o)
 BOSEN_MAIN_CPP := $(shell find src/bosen -type f -name "*_main.cpp")
 BOSEN_MAIN_C := $(shell find src/bosen -type f -name "*_main.c")
 BOSEN_TEST_CPP := $(shell find src/bosen -type f -name "*_test.cpp")
@@ -27,10 +27,10 @@ $(BOSEN_COBJ): %.o: %.c
 	$(CXX) -fPIC $(CFLAGS) -c $< -o $@
 
 $(BOSEN_MAIN_EXE): bin/%: src/%_main.o $(ORION_LIB) bin/bosen
-	$(CXX) $< $(LDFLAGS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
+	$(CXX) $< $(LDFLAGS) $(ASAN_LIBS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
 
 $(BOSEN_TEST_EXE): bin/%: src/%.o $(ORION_LIB) bin/bosen
-	$(CXX) $< $(LDFLAGS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
+	$(CXX) $< $(LDFLAGS) $(ASAN_LIBS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
 
 bosen_clean:
 	rm -rf $(BOSEN_OBJ) $(BOSEN_COBJ)

@@ -20,6 +20,13 @@ CFLAGS = $(DFLAGS) $(SANITIZER_FLAGS) $(PERF_COUNT_ON_FLAGS) \
 	-fno-builtin-realloc -fno-builtin-free \
 	-I@THIRD_PARTY_HOME@/include -Iinclude/
 
+ifeq (@SANITIZER_ON@,address)
+SANITIZER_FLAGS += -fsanitize=address -fno-omit-frame-pointer
+ASAN_LIBS = -lasan
+else
+ASAN_LIBS =
+endif
+
 LIBS = -lnuma \
 	-lpthread \
 	-lm \
@@ -27,11 +34,6 @@ LIBS = -lnuma \
 	-lgflags \
 	-ltcmalloc \
 	-lcblas
-
-ifeq (@SANITIZER_ON@,address)
-SANITIZER_FLAGS += -fsanitize=address -fno-omit-frame-pointer
-LIBS += -lasan
-endif
 
 LDFLAGS = -Wl,-rpath,@THIRD_PARTY_HOME@/lib/ -L@THIRD_PARTY_HOME@/lib \
 	-Wl,-rpath,$(ORION_HOME)/lib/ -L$(ORION_HOME)/lib
