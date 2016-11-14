@@ -9,7 +9,10 @@
 int main(int argc, char *argv[]) {
   std::cout << "hello world!" << std::endl;
   GLogConfig *glogconfig = glogconfig_create(argv[0]);
-  glogconfig_set(glogconfig, "minloglevel", "1");
+  glogconfig_set(glogconfig, "minloglevel", "0");
+  glogconfig_set(glogconfig, "logtostderr", "false");
+  glogconfig_set(glogconfig, "alsologtostderr", "true");
+  glogconfig_set(glogconfig, "log_dir", "/home/jinliang/orion.git/");
   glog_init(glogconfig_get_argc(glogconfig), glogconfig_get_argv(glogconfig));
   glogconfig_free(glogconfig);
 

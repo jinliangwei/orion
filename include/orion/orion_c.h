@@ -18,7 +18,7 @@ extern "C" {
   int connect_to_peers(Worker* worker);
   int shut_down(Worker *worker);
 
-  GLogConfig *glogconfig_create(const char* progname);
+  GLogConfig *glogconfig_create(char* progname);
   bool glogconfig_set(GLogConfig* glogconfig, const char* key, const char* value);
   char** glogconfig_get_argv(GLogConfig* glogconfig);
   int glogconfig_get_argc(GLogConfig* glogconfig);

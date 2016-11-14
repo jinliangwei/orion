@@ -1,20 +1,21 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <iostream>
 
 namespace orion {
 class GLogConfig {
  private:
   std::unordered_map<std::string, std::string> map_;
-  const std::string progname_;
+  char* progname_;
   std::string buffer_[6];
   char* argv_[7];
  public:
-  GLogConfig(const char* progname):
+  GLogConfig(char* progname):
       progname_(progname) {
-    map_["logtostderr"] = "true";
+    map_["logtostderr"] = "false";
     map_["minloglevel"] = "0";
-    map_["v"] = "0";
+    map_["v"] = "-1";
     map_["stderrthreshold"] = "2";
     map_["alsologtostderr"] = "false";
     map_["log_dir"] = "";
@@ -30,7 +31,7 @@ class GLogConfig {
 
   char **
   get_argv() {
-    argv_[0] = const_cast<char*>(progname_.c_str());
+    argv_[0] = progname_;
     int i = 0;
     for (auto& kv : map_) {
       buffer_[i].clear();

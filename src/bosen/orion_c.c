@@ -3,6 +3,7 @@
 #include <glog/logging.h>
 #include <gflags/gflags.h>
 #include <orion/utils.hpp>
+#include <iostream>
 
 extern "C" {
 
@@ -32,14 +33,14 @@ extern "C" {
   }
 
   GLogConfig*
-  glogconfig_create(const char* progname) {
+  glogconfig_create(char* progname) {
     auto glogconfig = new orion::GLogConfig(progname);
     return reinterpret_cast<GLogConfig*>(glogconfig);
   }
 
   bool
   glogconfig_set(GLogConfig* glogconfig, const char* key,
-                      const char* value) {
+                 const char* value) {
     return reinterpret_cast<orion::GLogConfig*>(glogconfig)->set(key, value);
   }
 
