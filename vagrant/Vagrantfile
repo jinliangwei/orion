@@ -6,10 +6,6 @@ VM_CPUS = "4"
 VM_MEMORY = "2048" # MB
 VM_NAME = "OrionU16"
 
-# Customize SSH config
-ssh_username = "jinliang"
-ssh_private_key_path = "/Users/jinliangwei/.ssh/id_rsa"
-
 # All Vagrant configuration is done below. The "2" in Vagrant.configure
 # configures the configuration version (we support older styles for
 # backwards compatibility). Please don't change it unless you know what
@@ -29,9 +25,6 @@ Vagrant.configure("2") do |config|
 
     # SSH
     config.ssh.forward_agent = true
-    config.ssh.forward_x11 = true
-#    config.ssh.username = ssh_username
-#    config.ssh.private_key_path = ssh_private_key_path
-#    config.ssh.password = "19881202jl"
+    config.ssh.forward_x11 = false
     config.vm.provision :shell, path: "../install_dependencies.sh"
 end

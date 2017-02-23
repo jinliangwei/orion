@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# This installs dependencies on Ubuntu 16.04
+
 sudo apt-get update
 sudo apt-get --ignore-missing -y install \
     git \
@@ -15,7 +17,9 @@ sudo apt-get --ignore-missing -y install \
     libsnappy-dev \
     libgtest-dev \
     google-perftools \
-    julia
+    libgl1-mesa-glx \
+    julia \
+    emacs
 
 if [ ! -f /usr/lib/libcblas.so ]; then
     echo "link libcblas!!"
