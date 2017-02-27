@@ -26,5 +26,5 @@ Vagrant.configure("2") do |config|
     # SSH
     config.ssh.forward_agent = true
     config.ssh.forward_x11 = false
-    config.vm.provision :shell, path: "../install_dependencies.sh"
+    config.vm.provision :shell, path: "../scripts/install_dependencies.sh"
 end

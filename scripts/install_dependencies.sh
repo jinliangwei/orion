@@ -16,12 +16,24 @@ sudo apt-get --ignore-missing -y install \
     libgoogle-glog-dev \
     libsnappy-dev \
     libgtest-dev \
+    cmake \
     google-perftools \
     libgl1-mesa-glx \
     julia \
-    emacs
+    openjdk-8-jdko \
+    emacs \
+    autoconf
+
+sudo ln -s /usr/lib/libtcmalloc.so.4.2.6 /usr/lib/libtcmalloc_minimal.so
 
 if [ ! -f /usr/lib/libcblas.so ]; then
     echo "link libcblas!!"
     sudo ln -s /usr/lib/libcblas.so.3 /usr/lib/libcblas.so
 fi
+
+
+pushd /usr/src/gtest
+sudo cmake CMakeLists.txt
+sudo make
+sudo cp *.a /usr/lib
+popd
