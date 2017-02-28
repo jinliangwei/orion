@@ -8,6 +8,7 @@
 #include <orion/noncopyable.hpp>
 #include <orion/bosen/conn.hpp>
 #include <orion/bosen/util.hpp>
+#include <orion/bosen/message.hpp>
 #include <orion/bosen/host_info.hpp>
 #include <orion/bosen/server_thread.hpp>
 #include <orion/bosen/client_thread.hpp>
@@ -20,7 +21,7 @@ class ExecutorThread {
     struct PollConn {
     enum class ConnType {
       listen = 0,
-        driver = 1,
+        master = 1,
         pipe = 2
     };
     void *conn;
@@ -37,8 +38,8 @@ class ExecutorThread {
   const int32_t kId;
 
   conn::Poll poll_;
-  std::vector<uint8_t> driver_recv_mem_;
-  conn::SocketConn driver_;
+  std::vector<uint8_t> master_recv_mem_;
+  conn::SocketConn master_;
   conn::Socket listen_;
   std::vector<uint8_t> send_mem_;
   conn::SendBuffer send_buff_;
@@ -49,10 +50,10 @@ class ExecutorThread {
   std::vector<HostInfo> host_info_;
   size_t num_executors_ {0};
   size_t num_executors_recved_ {0};
-  // 0: master <> server :1
-  conn::Pipe pipe_mse_[2];
-  // 0: master <> client :1
-  conn::Pipe pipe_mcl_[2];
+  // 0: executor <> server :1
+  conn::Pipe pipe_ese_[2];
+  // 0: executor <> client :1
+  conn::Pipe pipe_ecl_[2];
   // 0: server <> client :1
   conn::Pipe pipe_scl_[2];
 
@@ -89,8 +90,8 @@ ExecutorThread::ExecutorThread(const Config& config, int32_t index):
     kListenIp(config.kWorkerIp),
     kListenPort(config.kWorkerPort + index * kPortSpan),
     kId(config.kWorkerId*config.kNumExecutorsPerWorker + index),
-    driver_recv_mem_(kCommBuffCapacity),
-    driver_(conn::Socket(), driver_recv_mem_.data(),
+    master_recv_mem_(kCommBuffCapacity),
+    master_(conn::Socket(), master_recv_mem_.data(),
             kCommBuffCapacity),
     send_mem_(kCommBuffCapacity),
     send_buff_(send_mem_.data(), kCommBuffCapacity),
@@ -132,8 +133,17 @@ ExecutorThread::ConnectToMaster() {
   int ret = GetIPFromStr(kMasterIp.c_str(), &ip);
   CHECK_NE(ret, 0);
 
-  ret = driver_.sock.Connect(ip, kMasterPort);
+  ret = master_.sock.Connect(ip, kMasterPort);
   CHECK(ret == 0) << "executor has connected";
+
+  HostInfo host_info;
+  ret = GetIPFromStr(kListenIp.c_str(), &host_info.ip);
+  CHECK_NE(ret, 0);
+  host_info.port = kListenPort;
+  message::Helper::CreateMsg<
+    message::ExecutorIdentity>(&send_buff_, kId, host_info);
+  size_t sent_size = master_.sock.Send(&send_buff_);
+  CHECK(conn::CheckSendSize(send_buff_, sent_size));
 }
 
 }

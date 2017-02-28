@@ -9,6 +9,8 @@
 #include <orion/bosen/conn.hpp>
 #include <orion/bosen/host_info.hpp>
 #include <orion/bosen/util.hpp>
+#include <orion/bosen/message.hpp>
+
 namespace orion {
 namespace bosen {
 
@@ -23,6 +25,16 @@ class MasterThread {
 
     void *conn;
     ConnType type;
+  };
+
+  enum class State {
+    kInitialization = 0,
+      kRunning = 1
+  };
+
+  enum class Action {
+    kNone = 0,
+      kExecutorConnectToPeers = 1
   };
 
   const size_t kNumExecutors;
@@ -43,6 +55,9 @@ class MasterThread {
   size_t num_identified_executors_ {0};
   size_t num_started_executors_ {0};
   size_t num_closed_conns_ {0};
+
+  State state_ {State::kInitialization};
+  Action action_ {Action::kNone};
 
  public:
   MasterThread(const Config &config);
@@ -96,7 +111,8 @@ MasterThread::operator() () {
         } else {
           auto &recv_buff = HandleReadEvent(poll_conn_ptr);
           // repeat until receive buffer is exhausted
-          while (recv_buff.ReceivedFullMsg()) {
+          while (recv_buff.ReceivedFullMsg()
+                 && (!recv_buff.IsExepectingNextMsg())) {
             LOG(INFO) << "continue handling read from unexhausted buffer";
             HandleReadEvent(poll_conn_ptr);
           }
@@ -175,6 +191,50 @@ MasterThread::HandleReadEvent(PollConn *poll_conn_ptr) {
 
 bool
 MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
+  auto &sock_conn = *reinterpret_cast<conn::SocketConn*>(
+      poll_conn_ptr->conn);
+  auto &sock = sock_conn.sock;
+  auto &recv_buff = sock_conn.recv_buff;
+
+  if (!recv_buff.ReceivedFullMsg()) {
+    bool recv = sock.Recv(&recv_buff);
+    if (!recv) return false;
+  }
+
+  CHECK (!recv_buff.is_error()) << "driver error during receiving " << errno;
+  CHECK (!recv_buff.EOFAtIncompleteMsg()) << "driver error : early EOF";
+  // maybe EOF but not received anything
+  if (!recv_buff.ReceivedFullMsg()) return false;
+
+  auto msg_type = message::Helper::get_type(recv_buff);
+  switch (msg_type) {
+    case message::Type::kExecutorIdentity:
+      {
+
+        auto *msg = message::Helper::get_msg<message::ExecutorIdentity>(recv_buff);
+        //LOG(INFO) << "ExecutorIdentity from " << msg->executor_id;
+        host_info_[msg->executor_id] = msg->host_info;
+        executors_[msg->executor_id].reset(&sock_conn);
+        num_identified_executors_++;
+        if (state_ == State::kInitialization
+            && (num_identified_executors_ == kNumExecutors)) {
+          action_ = Action::kExecutorConnectToPeers;
+        }
+      }
+      break;
+    default:
+      LOG(FATAL) << "Unknown message type " << static_cast<int>(msg_type)
+                   << " from " << sock.get_fd();
+  }
+
+  switch (action_) {
+    case Action::kExecutorConnectToPeers:
+      break;
+    case Action::kNone:
+      break;
+    default:
+      LOG(FATAL) << "unknown";
+  }
   return true;
 }
 
@@ -184,7 +244,6 @@ MasterThread::AllocRecvMem() {
       + num_accepted_executors_
       * kCommBuffCapacity;
 }
-
 
 } // end namespace bosen
 } // end namespace orion

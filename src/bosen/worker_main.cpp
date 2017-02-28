@@ -2,7 +2,9 @@
 #include <gflags/gflags.h>
 #include <orion/bosen/worker.hpp>
 
-DEFINE_int32(num_executors_per_worker, 1, "number of executors");
+DEFINE_int32(num_executors, 1, "number of executors");
+
+DEFINE_int32(num_executors_per_worker, 1, "number of executors per worker");
 
 DEFINE_string(master_ip, "127.0.0.1",
               "IP address that the master thread listens to for "
@@ -22,12 +24,15 @@ DEFINE_int32(worker_port, 11000,
 
 DEFINE_uint64(comm_buff_capacity, 1024 * 4, "communication buffer capacity");
 
+DEFINE_int32(worker_id, 0, "worker id");
+
 int main(int argc, char *argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
   google::InitGoogleLogging(argv[0]);
-  orion::bosen::Config config(0, FLAGS_num_executors_per_worker, FLAGS_master_ip,
+  orion::bosen::Config config(FLAGS_num_executors,
+                              FLAGS_num_executors_per_worker, FLAGS_master_ip,
                               FLAGS_master_port, FLAGS_worker_ip, FLAGS_worker_port,
-                              FLAGS_comm_buff_capacity);
+                              FLAGS_comm_buff_capacity, FLAGS_worker_id);
   orion::bosen::Worker worker(config);
   worker.Run();
   worker.WaitUntilExit();

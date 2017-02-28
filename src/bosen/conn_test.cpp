@@ -4,6 +4,8 @@
 #include <string>
 #include <glog/logging.h>
 #include <iostream>
+#include <vector>
+#include <string.h>
 namespace orion {
 namespace test {
 
@@ -134,6 +136,60 @@ TEST_F(ConnTest, SocketBindConnectPresure) {
     connected[i].Close();
     client[i].Close();
   }
+  socket.Close();
+}
+
+TEST_F(ConnTest, SendRecvTest) {
+  uint32_t ip;
+  int ret = bosen::GetIPFromIF("lo", &ip);
+  ASSERT_EQ(ret, 0);
+  uint16_t port = 16000;
+  bosen::conn::Socket socket;
+  ret = socket.Bind(ip, port);
+  ASSERT_EQ(ret, 0);
+  ret = socket.Listen(64);
+  ASSERT_EQ(ret, 0);
+
+  bosen::conn::Socket client;
+  ret = client.Connect(ip, port);
+  ASSERT_EQ(ret, 0);
+  bool in, out;
+  ret = client.CheckInOutAvailability(&in, &out);
+  ASSERT_EQ(ret, 0);
+  EXPECT_FALSE(in);
+  EXPECT_TRUE(out);
+
+  bosen::conn::Socket connected;
+  ret = socket.Accept(&connected);
+  ASSERT_EQ(ret, 0);
+  ret = connected.CheckInOutAvailability(&in, &out);
+  ASSERT_EQ(ret, 0);
+  EXPECT_FALSE(in);
+  EXPECT_TRUE(out);
+
+  const size_t kBuffCapcity = 100;
+  const char *msg = "The great orion project is here!";
+  const size_t msg_len = strlen(msg) + 1;
+  std::vector<uint8_t> data_send(kBuffCapcity), data_recv(kBuffCapcity);
+
+  bosen::conn::SendBuffer send_buff(data_send.data(), kBuffCapcity);
+  bosen::conn::RecvBuffer recv_buff(data_recv.data(), kBuffCapcity);
+
+  memcpy(send_buff.get_payload_mem(), msg, msg_len);
+  send_buff.set_payload_size(msg_len);
+
+  size_t sent_size = client.Send(&send_buff);
+  EXPECT_TRUE(bosen::conn::CheckSendSize(send_buff, sent_size));
+
+  bool recved = connected.Recv(&recv_buff);
+  EXPECT_TRUE(recved);
+  EXPECT_TRUE(recv_buff.ReceivedFullMsg());
+  EXPECT_FALSE(recv_buff.is_error());
+  EXPECT_FALSE(recv_buff.EOFAtIncompleteMsg());
+  int same = memcmp(recv_buff.get_payload_mem(), msg, msg_len);
+  EXPECT_EQ(same, 0);
+  connected.Close();
+  client.Close();
   socket.Close();
 }
 
