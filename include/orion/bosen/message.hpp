@@ -41,11 +41,15 @@ static_assert(std::is_pod<Header>::value, "Header must be POD!");
 static_assert(sizeof(Header) < kMaxSize, "Message size is beyond limit.");
 
 struct ExecutorConnectToPeers {
+ public:
+  size_t num_executors;
  private:
   ExecutorConnectToPeers() = default;
   friend class DefaultPayloadCreator<Type::kExecutorConnectToPeers>;
  public:
-  void Init() { }
+  void Init(size_t _num_executors) {
+    num_executors = _num_executors;
+  }
   static constexpr Type get_type() { return Type::kExecutorConnectToPeers; }
   size_t get_payload_size() const { return 0; }
 };
@@ -63,6 +67,7 @@ struct ExecutorConnectToPeersAck {
   void Init() { }
   static constexpr Type get_type() { return Type::kExecutorConnectToPeersAck; }
   size_t get_payload_size() const { return 0; }
+
 };
 
 static_assert(std::is_pod<ExecutorConnectToPeersAck>::value,
