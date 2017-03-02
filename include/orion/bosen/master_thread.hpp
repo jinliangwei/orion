@@ -238,6 +238,7 @@ void
 MasterThread::BroadcastAllExecutors(void *mem, size_t mem_size) {
   for (int i = 0; i < kNumExecutors; ++i) {
     size_t nsent = executors_[i]->sock.Send(&send_buff_);
+    LOG(INFO) << "send size = " << nsent;
     CHECK(conn::CheckSendSize(send_buff_, nsent)) << "send only " << nsent;
     nsent = executors_[i]->sock.Send(mem, mem_size);
     CHECK_EQ(nsent, mem_size);

@@ -9,7 +9,7 @@ class EventHandler {
  private:
   conn::Poll poll_;
   std::function<void(PollConn*)> noread_event_handler_;
-  std::function<bool(PollConn*)> read_event_handler_;
+  std::function<int(PollConn*)> read_event_handler_;
   std::function<void(PollConn*)> closed_connection_handler_;
   void ReadAndRunReadEventHandler(PollConn* poll_conn);
   void RunReadEventHandler(PollConn* poll_conn);
@@ -17,7 +17,7 @@ class EventHandler {
   EventHandler();
   void SetNoreadEventHandler(const std::function<void(PollConn*)>&
                              noread_event_handler);
-  void SetReadEventHandler(const std::function<bool(PollConn*)>&
+  void SetReadEventHandler(const std::function<int(PollConn*)>&
                            read_event_handler);
   void SetClosedConnectionHandler(const std::function<void(PollConn*)>&
                                   closed_connection_handler);
@@ -43,7 +43,7 @@ EventHandler<PollConn>::SetNoreadEventHandler(
 template<typename PollConn>
 void
 EventHandler<PollConn>::SetReadEventHandler(
-    const std::function<bool(PollConn*)>& read_event_handler) {
+    const std::function<int(PollConn*)>& read_event_handler) {
   read_event_handler_ = read_event_handler;
 }
 
@@ -73,6 +73,10 @@ EventHandler<PollConn>::ReadAndRunReadEventHandler(PollConn* poll_conn_ptr) {
 
   bool recv = poll_conn_ptr->Receive();
   if (!recv) return;
+
+  if (recv_buff.is_eof()) {
+    LOG(INFO) << "size = " << recv_buff.get_size();
+  }
 
   CHECK (!recv_buff.is_error()) << "driver error during receiving " << errno;
   CHECK (!recv_buff.EOFAtIncompleteMsg()) << "driver error : early EOF";

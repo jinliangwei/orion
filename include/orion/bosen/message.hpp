@@ -9,8 +9,6 @@ namespace bosen {
 
 namespace message {
 
-static constexpr size_t kMaxSize = 1024 - sizeof(conn::beacon_t);
-
 enum class Type {
   kDriverMsg = 0,
     kExecutorConnectToPeers = 1,
@@ -38,7 +36,6 @@ struct Header {
 };
 
 static_assert(std::is_pod<Header>::value, "Header must be POD!");
-static_assert(sizeof(Header) < kMaxSize, "Message size is beyond limit.");
 
 struct ExecutorConnectToPeers {
  public:
@@ -56,8 +53,6 @@ struct ExecutorConnectToPeers {
 
 static_assert(std::is_pod<ExecutorConnectToPeers>::value,
               "ExecutorConnectToPeers must be POD!");
-static_assert(sizeof(ExecutorConnectToPeers) < kMaxSize,
-              "Message size is beyond limit.");
 
 struct ExecutorConnectToPeersAck {
  private:
@@ -72,8 +67,6 @@ struct ExecutorConnectToPeersAck {
 
 static_assert(std::is_pod<ExecutorConnectToPeersAck>::value,
                 "ExecutorConnectToPeersAck must be POD!");
-static_assert(sizeof(ExecutorConnectToPeersAck) < kMaxSize,
-              "Message size is beyond limit.");
 struct ExecutorStop {
  private:
   ExecutorStop() = default;
@@ -85,8 +78,6 @@ struct ExecutorStop {
 };
 static_assert(std::is_pod<ExecutorStop>::value,
               "ExecutorStop must be POD!");
-static_assert(sizeof(ExecutorStop) < kMaxSize,
-              "Message size is beyond limit.");
 
 struct ExecutorIdentity {
   int32_t executor_id;
@@ -104,8 +95,6 @@ struct ExecutorIdentity {
 };
 
 static_assert(std::is_pod<ExecutorIdentity>::value, "ExecutorIdentity must be POD!");
-static_assert(sizeof(ExecutorIdentity) < kMaxSize,
-              "Message size is beyond limit.");
 
 template<Type header_type>
 class DefaultPayloadCreator {
@@ -131,6 +120,8 @@ class Helper {
     header->type = PayloadCreator::get_header_type();
     Msg* msg = PayloadCreator::template CreateMsg<Msg, Args...>(send_buff->get_payload_mem()
                                                        + sizeof(Header), args...);
+    CHECK_GE(send_buff->get_payload_capacity(), sizeof(Header) + sizeof(Msg)
+             + msg->get_payload_size());
     header->payload_size = sizeof(Msg) + msg->get_payload_size();
     send_buff->set_payload_size(sizeof(Header) + header->payload_size);
     return msg;

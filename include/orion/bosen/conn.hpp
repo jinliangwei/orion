@@ -143,8 +143,7 @@ class RecvBuffer {
   bool EOFAtIncompleteMsg() const {
     return is_eof()
         && (
-            (!is_initialized()
-             && size_ > 0
+            (size_ > 0
              && size_ < sizeof(beacon_t))
             | (is_initialized()
                && size_ < expected_size_)
