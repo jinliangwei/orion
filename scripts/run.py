@@ -100,6 +100,7 @@ def get_arg_strs(args, pargs):
         'master_port' : pargs['master']['port'],
         'comm_buff_capacity' : pargs['master']['comm_buff_capacity'],
         'num_executors_per_worker' : pargs['worker']['num_executors_per_worker'],
+        'num_executors' : num_executors_total,
         'worker_port' : pargs['worker']['port']
     }
 

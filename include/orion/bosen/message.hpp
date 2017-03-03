@@ -10,11 +10,12 @@ namespace bosen {
 namespace message {
 
 enum class Type {
-  kDriverMsg = 0,
+  kMasterMsg = 0,
     kExecutorConnectToPeers = 1,
     kExecutorConnectToPeersAck = 2,
     kExecutorIdentity = 3,
-    kExecutorStop = 4
+    kExecutorReady = 4,
+    kExecutorStop = 10
 };
 
 class Helper;
@@ -67,6 +68,7 @@ struct ExecutorConnectToPeersAck {
 
 static_assert(std::is_pod<ExecutorConnectToPeersAck>::value,
                 "ExecutorConnectToPeersAck must be POD!");
+
 struct ExecutorStop {
  private:
   ExecutorStop() = default;

@@ -23,7 +23,8 @@ class MasterThread {
   struct PollConn {
     enum class ConnType {
       listen = 0,
-        executor = 1
+        executor = 1,
+        driver = 2
     };
 
     conn::SocketConn *conn;
@@ -48,7 +49,8 @@ class MasterThread {
 
   enum class Action {
     kNone = 0,
-      kExecutorConnectToPeers = 1
+      kExit = 1,
+      kExecutorConnectToPeers = 2
   };
 
   const size_t kNumExecutors;
@@ -59,7 +61,7 @@ class MasterThread {
   std::vector<uint8_t> send_mem_;
   EventHandler<PollConn> event_handler_;
   conn::SocketConn listen_;
-  conn::SocketConn client_;
+  conn::SocketConn driver_;
   std::vector<std::unique_ptr<conn::SocketConn>> executors_;
   std::vector<PollConn> poll_conns_;
   std::vector<HostInfo> host_info_;
@@ -67,7 +69,7 @@ class MasterThread {
 
   size_t num_accepted_executors_ {0};
   size_t num_identified_executors_ {0};
-  size_t num_started_executors_ {0};
+  size_t num_ready_executors_ {0};
   size_t num_closed_conns_ {0};
 
   State state_ {State::kInitialization};
@@ -83,6 +85,8 @@ class MasterThread {
   void HandleConnection(PollConn* poll_conn_ptr);
   void HandleClosedConnection(PollConn *poll_conn_ptr);
   conn::RecvBuffer& HandleReadEvent(PollConn* poll_conn_ptr);
+  int HandleMsg(PollConn *poll_conn_ptr);
+  int HandleDriverMsg(PollConn *poll_conn_ptr);
   int HandleExecutorMsg(PollConn *poll_conn_ptr);
 
   void BroadcastAllExecutors();
@@ -98,7 +102,7 @@ MasterThread::MasterThread(const Config &config):
     recv_mem_((kNumExecutors + 2) * config.kCommBuffCapacity),
     send_mem_(config.kCommBuffCapacity),
     listen_(conn::Socket(), recv_mem_.data(), kCommBuffCapacity),
-    client_(conn::Socket(), recv_mem_.data() + kCommBuffCapacity,
+    driver_(conn::Socket(), recv_mem_.data() + kCommBuffCapacity,
             kCommBuffCapacity),
     executors_(kNumExecutors),
     poll_conns_(kNumExecutors),
@@ -118,7 +122,7 @@ MasterThread::operator() () {
                 std::placeholders::_1));
 
   event_handler_.SetReadEventHandler(
-      std::bind(&MasterThread::HandleExecutorMsg, this,
+      std::bind(&MasterThread::HandleMsg, this,
                std::placeholders::_1));
 
   event_handler_.SetClosedConnectionHandler(
@@ -126,8 +130,9 @@ MasterThread::operator() () {
                 std::placeholders::_1));
 
   std::cout << kMasterReadyString << std::endl;
-  while (1) {
+  while (true) {
     event_handler_.WaitAndHandleEvent();
+    if (action_ == Action::kExit) break;
   }
 }
 
@@ -180,10 +185,44 @@ MasterThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
 }
 
 int
+MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
+  int ret = 0;
+  if (poll_conn_ptr->type == PollConn::ConnType::executor) {
+    ret = HandleExecutorMsg(poll_conn_ptr);
+  } else {
+    ret = HandleDriverMsg(poll_conn_ptr);
+  }
+
+  switch (action_) {
+    case Action::kExecutorConnectToPeers:
+      {
+        message::Helper::CreateMsg<message::ExecutorConnectToPeers>(
+            &send_buff_, kNumExecutors);
+        BroadcastAllExecutors(host_info_.data(),
+                              kNumExecutors*sizeof(HostInfo));
+        action_ = Action::kNone;
+      }
+      break;
+    case Action::kNone:
+    case Action::kExit:
+      break;
+    default:
+      LOG(FATAL) << "unknown";
+  }
+  return ret;
+}
+
+int
+MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
+  return 1;
+}
+
+int
 MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
   auto &recv_buff = poll_conn_ptr->get_recv_buff();
 
   auto msg_type = message::Helper::get_type(recv_buff);
+  int ret = 1;
   switch (msg_type) {
     case message::Type::kExecutorIdentity:
       {
@@ -197,6 +236,16 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
             && (num_identified_executors_ == kNumExecutors)) {
           action_ = Action::kExecutorConnectToPeers;
         }
+        ret = 1;
+      }
+      break;
+    case message::Type::kExecutorConnectToPeersAck:
+      {
+        num_ready_executors_++;
+        if (num_ready_executors_ == kNumExecutors) {
+          action_ = Action::kExit;
+        }
+        ret = 1;
       }
       break;
     default:
@@ -206,24 +255,7 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
                    << " from " << sock.get_fd();
       }
   }
-
-  switch (action_) {
-    case Action::kExecutorConnectToPeers:
-      {
-        message::Helper::CreateMsg<message::ExecutorConnectToPeers>(
-            &send_buff_, kNumExecutors);
-        BroadcastAllExecutors(host_info_.data(),
-                              kNumExecutors*sizeof(HostInfo));
-
-      }
-      break;
-    case Action::kNone:
-      break;
-    default:
-      LOG(FATAL) << "unknown";
-  }
-
-  return true;
+  return ret;
 }
 
 void
