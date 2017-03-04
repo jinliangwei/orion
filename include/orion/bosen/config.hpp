@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <glog/logging.h>
 
 namespace orion {
 namespace bosen {

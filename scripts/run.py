@@ -51,7 +51,8 @@ def get_default_config():
         'minloglevel' : "INFO",
         'v' : "0",
         'stderrthreshold' : "ERROR",
-        'alsologtostderr' : "false"
+        'alsologtostderr' : "false",
+        'logbuflevel' : '-1'
     }
     config['strace'] = {
         'master_output' : "/tmp/master.strace",
@@ -74,7 +75,8 @@ def get_env_str(pargs):
         'GLOG_minloglevel': pargs['log']['minloglevel'],
         'GLOG_stderrthreshold': pargs['log']['stderrthreshold'],
         'GLOG_log_dir' : pargs['log']['log_dir'],
-        'GLOG_alsologtostderr': pargs['log']['alsologtostderr']
+        'GLOG_alsologtostderr': pargs['log']['alsologtostderr'],
+        'GLOG_logbuflevel': pargs['log']['logbuflevel']
     }
 
     return "".join([" %s=%s" % (k, v) for (k, v) in env_vars.items()])
@@ -171,6 +173,7 @@ if __name__ == "__main__":
     print(cmd_master)
     print(cmd_worker)
 
+    print (cmd_master)
     master_proc = subprocess.Popen(cmd_master, shell=True, stdout=subprocess.PIPE)
     while True:
         line = master_proc.stdout.readline()

@@ -1,5 +1,6 @@
 #include <glog/logging.h>
 #include <gflags/gflags.h>
+#include <orion/bosen/config.hpp>
 
 #include <orion/bosen/master.hpp>
 
@@ -18,6 +19,7 @@ DEFINE_uint64(comm_buff_capacity, 1024 * 4, "communication buffer capacity");
 int main(int argc, char *argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
   google::InitGoogleLogging(argv[0]);
+  google::InstallFailureSignalHandler();
   LOG(INFO) << "hello!";
   orion::bosen::Config config(FLAGS_num_executors, 0, FLAGS_master_ip,
                               FLAGS_master_port, "", 0, FLAGS_comm_buff_capacity,

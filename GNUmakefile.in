@@ -14,10 +14,13 @@ PERF_COUNT_ON_FLAGS = -DSEDNA_PERF_COUNT
 endif
 
 # use -Wno-deprecated-declarations to turn off warnings from boost w/ g++-5
-CFLAGS = $(DFLAGS) $(SANITIZER_FLAGS) $(PERF_COUNT_ON_FLAGS) \
+CFLAGS = $(DFLAGS) $(PERF_COUNT_ON_FLAGS) \
 	-W -Wall -Werror -Wno-sign-compare \
-	-Wno-unused-parameter -fno-builtin-malloc -fno-builtin-calloc \
-	-fno-builtin-realloc -fno-builtin-free \
+	-fno-builtin-malloc \
+	-fno-builtin-calloc \
+	-fno-builtin-realloc \
+	-fno-builtin-free \
+	-Wno-unused-parameter \
 	-I$(ORION_HOME)/include
 
 LIBS = -lgtest \
@@ -30,7 +33,8 @@ LIBS = -lgtest \
 	-lcblas
 
 ifeq (@SANITIZER_ON@,address)
-SANITIZER_FLAGS += -fsanitize=address -fno-omit-frame-pointer
+SANITIZER_FLAGS = -fsanitize=address
+CFLAGS += -fno-omit-frame-pointer
 LIBS += -lasan
 endif
 

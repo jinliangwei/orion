@@ -1,5 +1,6 @@
 #pragma once
 
+#include <glog/logging.h>
 #include <thread>
 #include <orion/bosen/master_thread.hpp>
 #include <orion/bosen/config.hpp>
@@ -17,6 +18,7 @@ class Master {
   ~Master() { }
 
   void Run() {
+    LOG(INFO) << "here 4";
     runner_ = std::thread(
         &MasterThread::operator(),
         &master_thread_);

@@ -40,6 +40,9 @@ class MasterThread {
     bool is_noread_event() const {
       return type == ConnType::listen;
     }
+    int get_fd() const {
+      return conn->sock.get_fd();
+    }
   };
 
   enum class State {
@@ -158,8 +161,6 @@ void
 MasterThread::HandleConnection(PollConn *poll_conn_ptr) {
   conn::Socket accepted;
   listen_.sock.Accept(&accepted);
-  LOG(INFO) << "MasterThread " << __func__ << " socket fd = "
-	    << accepted.get_fd();
 
   uint8_t *recv_mem = AllocRecvMem();
   auto *sock_conn = new conn::SocketConn(
@@ -193,21 +194,23 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
     ret = HandleDriverMsg(poll_conn_ptr);
   }
 
-  switch (action_) {
-    case Action::kExecutorConnectToPeers:
-      {
-        message::Helper::CreateMsg<message::ExecutorConnectToPeers>(
-            &send_buff_, kNumExecutors);
-        BroadcastAllExecutors(host_info_.data(),
-                              kNumExecutors*sizeof(HostInfo));
-        action_ = Action::kNone;
-      }
-      break;
-    case Action::kNone:
-    case Action::kExit:
-      break;
-    default:
-      LOG(FATAL) << "unknown";
+  while (action_ != Action::kNone
+         && action_ != Action::kExit) {
+    switch (action_) {
+      case Action::kExecutorConnectToPeers:
+        {
+          message::Helper::CreateMsg<message::ExecutorConnectToPeers>(
+              &send_buff_, kNumExecutors);
+          BroadcastAllExecutors(host_info_.data(),
+                                kNumExecutors*sizeof(HostInfo));
+          action_ = Action::kNone;
+        }
+        break;
+      case Action::kExit:
+        break;
+      default:
+        LOG(FATAL) << "unknown";
+    }
   }
   return ret;
 }
@@ -227,7 +230,6 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
     case message::Type::kExecutorIdentity:
       {
         auto *msg = message::Helper::get_msg<message::ExecutorIdentity>(recv_buff);
-        //LOG(INFO) << "ExecutorIdentity from " << msg->executor_id;
         host_info_[msg->executor_id] = msg->host_info;
         auto* sock_conn = poll_conn_ptr->conn;
         executors_[msg->executor_id].reset(sock_conn);
@@ -243,6 +245,7 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
       {
         num_ready_executors_++;
         if (num_ready_executors_ == kNumExecutors) {
+          LOG(INFO) << "exit!";
           action_ = Action::kExit;
         }
         ret = 1;
@@ -270,7 +273,6 @@ void
 MasterThread::BroadcastAllExecutors(void *mem, size_t mem_size) {
   for (int i = 0; i < kNumExecutors; ++i) {
     size_t nsent = executors_[i]->sock.Send(&send_buff_);
-    LOG(INFO) << "send size = " << nsent;
     CHECK(conn::CheckSendSize(send_buff_, nsent)) << "send only " << nsent;
     nsent = executors_[i]->sock.Send(mem, mem_size);
     CHECK_EQ(nsent, mem_size);

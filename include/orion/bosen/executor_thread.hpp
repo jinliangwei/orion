@@ -150,12 +150,13 @@ ExecutorThread::operator() () {
   InitListener();
 
   PollConn listen_poll_conn = {&listen_, PollConn::ConnType::listen};
-  event_handler_.AddPollConn(listen_.sock.get_fd(), &listen_poll_conn);
-
+  int ret = event_handler_.AddPollConn(listen_.sock.get_fd(), &listen_poll_conn);
+  CHECK_EQ(ret, 0);
   ConnectToMaster();
 
   PollConn master_poll_conn = {&master_, PollConn::ConnType::master};
-  event_handler_.AddPollConn(master_.sock.get_fd(), &master_poll_conn);
+  ret = event_handler_.AddPollConn(master_.sock.get_fd(), &master_poll_conn);
+  CHECK_EQ(ret, 0);
 
   event_handler_.SetNoreadEventHandler(
       std::bind(&ExecutorThread::HandleConnection, this,
@@ -183,14 +184,13 @@ ExecutorThread::InitListener () {
   ret = listen_.sock.Bind(ip, kListenPort);
   CHECK_EQ(ret, 0);
   ret = listen_.sock.Listen(kNumExecutors);
+  CHECK_EQ(ret, 0);
 }
 
 void
 ExecutorThread::HandleConnection(PollConn* poll_conn_ptr) {
   conn::Socket accepted;
   listen_.sock.Accept(&accepted);
-  LOG(INFO) << "ExecutorThread " << __func__ << " socket fd = "
-	    << accepted.get_fd();
 
   uint8_t *recv_mem = peer_recv_mem_.data()
                       + kCommBuffCapacity*num_connected_peers_;
@@ -201,7 +201,8 @@ ExecutorThread::HandleConnection(PollConn* poll_conn_ptr) {
   auto &curr_poll_conn = peer_conn_[num_connected_peers_];
   curr_poll_conn.conn = sock_conn;
   curr_poll_conn.type = PollConn::ConnType::peer;
-  event_handler_.AddPollConn(accepted.get_fd(), &curr_poll_conn);
+  int ret = event_handler_.AddPollConn(accepted.get_fd(), &curr_poll_conn);
+  CHECK_EQ(ret, 0);
   num_connected_peers_++;
 }
 
@@ -235,7 +236,6 @@ ExecutorThread::ConnectToMaster() {
   ret = GetIPFromStr(kListenIp.c_str(), &host_info.ip);
   CHECK_NE(ret, 0);
   host_info.port = kListenPort;
-  LOG(INFO) << kId << " ip = " << ip << " port = " << kListenPort;
   message::Helper::CreateMsg<
     message::ExecutorIdentity>(&send_buff_, kId, host_info);
   size_t sent_size = master_.sock.Send(&send_buff_);
@@ -253,25 +253,28 @@ ExecutorThread::HandleMsg(PollConn* poll_conn_ptr) {
     ret = HandlePipeMsg(poll_conn_ptr);
   }
 
-  switch(action_) {
-    case Action::kConnectToPeers:
-      {
-        LOG(INFO) << "action = connectToPeers";
-        ConnectToPeers();
-        action_ = Action::kNone;
-      }
-      break;
-    case Action::kAckConnectToPeers:
-      {
-        message::Helper::CreateMsg<message::ExecutorConnectToPeersAck>(&send_buff_);
-        size_t sent_size = master_.sock.Send(&send_buff_);
-        CHECK(conn::CheckSendSize(send_buff_, sent_size));
-        action_ = Action::kNone;
-      }
-    case Action::kNone:
-      break;
-    default:
-      LOG(FATAL) << "unknown";
+  while (action_ != Action::kNone
+         && action_ != Action::kExit) {
+    switch(action_) {
+      case Action::kConnectToPeers:
+        {
+          ConnectToPeers();
+          if (kId == 0) action_ = Action::kAckConnectToPeers;
+          else action_ = Action::kNone;
+        }
+        break;
+      case Action::kAckConnectToPeers:
+        {
+          message::Helper::CreateMsg<message::ExecutorConnectToPeersAck>(&send_buff_);
+          size_t sent_size = master_.sock.Send(&send_buff_);
+          CHECK(conn::CheckSendSize(send_buff_, sent_size));
+          action_ = Action::kNone;
+        }
+      case Action::kExit:
+        break;
+      default:
+        LOG(FATAL) << "unknown";
+    }
   }
   return ret;
 }
@@ -336,7 +339,6 @@ ExecutorThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(poll_conn_ptr->conn);
         peer_[msg->executor_id].reset(sock_conn);
         num_identified_peers_++;
-        LOG(INFO) << "got identity from peer " << msg->executor_id;
         if (num_identified_peers_ == kId) {
           action_ = Action::kAckConnectToPeers;
         }
@@ -366,11 +368,7 @@ ExecutorThread::ConnectToPeers() {
   message::Helper::CreateMsg<
     message::ExecutorIdentity>(&send_buff_, kId, host_info);
 
-  LOG(INFO) << "kId = " << kId
-            << " NumExecutors = " << kNumExecutors;
-
   for (int i = kId + 1; i < kNumExecutors; i++) {
-    LOG(INFO) << kId << " connecting to " << i;
     uint32_t ip = host_info_[i].ip;
     uint16_t port = host_info_[i].port;
     conn::Socket peer_sock;
@@ -385,6 +383,8 @@ ExecutorThread::ConnectToPeers() {
 
     size_t sent_size = peer_[i]->sock.Send(&send_buff_);
     CHECK(conn::CheckSendSize(send_buff_, sent_size));
+    int ret = event_handler_.AddPollConn(peer_sock.get_fd(), &peer_conn_[i]);
+    CHECK_EQ(ret, 0);
   }
 }
 

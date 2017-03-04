@@ -29,6 +29,7 @@ DEFINE_int32(worker_id, 0, "worker id");
 int main(int argc, char *argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
   google::InitGoogleLogging(argv[0]);
+  google::InstallFailureSignalHandler();
   orion::bosen::Config config(FLAGS_num_executors,
                               FLAGS_num_executors_per_worker, FLAGS_master_ip,
                               FLAGS_master_port, FLAGS_worker_ip, FLAGS_worker_port,

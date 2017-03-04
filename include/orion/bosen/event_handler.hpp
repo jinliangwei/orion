@@ -7,7 +7,9 @@ namespace bosen {
 template<typename PollConn>
 class EventHandler {
  private:
+  static constexpr size_t kNumEvents = 100;
   conn::Poll poll_;
+  epoll_event es_[kNumEvents];
   std::function<void(PollConn*)> noread_event_handler_;
   std::function<int(PollConn*)> read_event_handler_;
   std::function<void(PollConn*)> closed_connection_handler_;
@@ -56,8 +58,8 @@ EventHandler<PollConn>::SetClosedConnectionHandler(
 
 template<typename PollConn>
 int
-EventHandler<PollConn>::AddPollConn(int fd, PollConn* poll_conn) {
-  return poll_.Add(fd, poll_conn);
+EventHandler<PollConn>::AddPollConn(int fd, PollConn* poll_conn_ptr) {
+  return poll_.Add(fd, poll_conn_ptr);
 }
 
 template<typename PollConn>
@@ -71,17 +73,15 @@ void
 EventHandler<PollConn>::ReadAndRunReadEventHandler(PollConn* poll_conn_ptr) {
   auto &recv_buff = poll_conn_ptr->get_recv_buff();
 
-  bool recv = poll_conn_ptr->Receive();
-  if (!recv) return;
+  if (!recv_buff.IsExepectingNextMsg()) {
+    bool recv = poll_conn_ptr->Receive();
+    if (!recv) return;
 
-  if (recv_buff.is_eof()) {
-    LOG(INFO) << "size = " << recv_buff.get_size();
+    CHECK (!recv_buff.is_error()) << "driver error during receiving " << errno;
+    CHECK (!recv_buff.EOFAtIncompleteMsg()) << "driver error : early EOF";
+    // maybe EOF but not received anything
+    if (!recv_buff.ReceivedFullMsg()) return;
   }
-
-  CHECK (!recv_buff.is_error()) << "driver error during receiving " << errno;
-  CHECK (!recv_buff.EOFAtIncompleteMsg()) << "driver error : early EOF";
-  // maybe EOF but not received anything
-  if (!recv_buff.ReceivedFullMsg()) return;
   RunReadEventHandler(poll_conn_ptr);
 }
 
@@ -101,13 +101,11 @@ EventHandler<PollConn>::RunReadEventHandler(PollConn* poll_conn_ptr) {
 template<typename PollConn>
 void
 EventHandler<PollConn>::WaitAndHandleEvent() {
-  static const size_t kNumEvents = 100;
-  static epoll_event es[kNumEvents];
-  int num_events = poll_.Wait(es, kNumEvents);
+  int num_events = poll_.Wait(es_, kNumEvents);
   CHECK(num_events > 0);
   for (int i = 0; i < num_events; ++i) {
-    PollConn *poll_conn_ptr = conn::Poll::EventConn<PollConn>(es, i);
-    if (es[i].events & EPOLLIN) {
+    PollConn *poll_conn_ptr = conn::Poll::EventConn<PollConn>(es_, i);
+    if (es_[i].events & EPOLLIN) {
       if (poll_conn_ptr->is_noread_event()
           && noread_event_handler_ != nullptr) {
         noread_event_handler_(poll_conn_ptr);
@@ -116,7 +114,6 @@ EventHandler<PollConn>::WaitAndHandleEvent() {
         auto& recv_buff = poll_conn_ptr->get_recv_buff();
         while (recv_buff.ReceivedFullMsg()
                && (!recv_buff.IsExepectingNextMsg())) {
-          LOG(INFO) << "continue handling read from unexhausted buffer";
           RunReadEventHandler(poll_conn_ptr);
         }
         if (recv_buff.is_eof()) {
@@ -125,7 +122,7 @@ EventHandler<PollConn>::WaitAndHandleEvent() {
         }
       }
     } else {
-      LOG(WARNING) << "unknown event happened happend: " << es[i].events;
+      LOG(WARNING) << "unknown event happened happend: " << es_[i].events;
     }
   }
 }

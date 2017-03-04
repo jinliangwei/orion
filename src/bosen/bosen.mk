@@ -40,10 +40,10 @@ $(BOSEN_COBJ): %.o: %.c $(BOSEN_HPP) $(BOSEN_H)
 	$(CXX) -fPIC $(CFLAGS) -c $< -o $@
 
 $(BOSEN_TEST_EXE): src/bosen/bosen_test_main.o orion_lib $(BOSEN_TEST_OBJ) bin/bosen
-	$(CXX) $< $(BOSEN_TEST_OBJ) $(LDFLAGS) $(ASAN_LIBS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
+	$(CXX) $(SANITIZER_FLAGS) $< $(BOSEN_TEST_OBJ) $(LDFLAGS) $(ASAN_LIBS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
 
 $(BOSEN_MAIN_EXE): bin/%: src/%_main.o orion_lib bin/bosen
-	$(CXX) $< $(LDFLAGS) $(ASAN_LIBS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
+	$(CXX) $(SANITIZER_FLAGS) $< $(LDFLAGS) $(ASAN_LIBS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
 
 bosen_clean:
 	rm -rf $(BOSEN_OBJ) $(BOSEN_COBJ)

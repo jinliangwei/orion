@@ -17,14 +17,12 @@ sudo apt-get --ignore-missing -y install \
     libsnappy-dev \
     libgtest-dev \
     cmake \
-    google-perftools \
+    libgoogle-perftools-dev \
     libgl1-mesa-glx \
     julia \
     openjdk-8-jdko \
     emacs \
     autoconf
-
-sudo ln -s /usr/lib/libtcmalloc.so.4.2.6 /usr/lib/libtcmalloc_minimal.so
 
 if [ ! -f /usr/lib/libcblas.so ]; then
     echo "link libcblas!!"
