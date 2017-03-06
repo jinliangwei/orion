@@ -7,15 +7,24 @@
 #include <unistd.h>
 #include <poll.h>
 #include <glog/logging.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 
 namespace orion {
 namespace bosen {
 namespace conn {
-static size_t write_all(int fd, const void *buf, size_t count) {
+static size_t WriteAllUntilBlock(int fd, const void *buf, size_t count) {
   size_t bytes_written = 0;
   do {
     ssize_t ret = write(fd, ((const char *) buf) + bytes_written, count - bytes_written);
-    if (ret == -1) return bytes_written;
+    if (ret == -1) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        return bytes_written;
+      } else {
+        LOG(FATAL) << "write failed, errno = " << errno;
+      }
+    }
     bytes_written += ret;
   } while (bytes_written < count);
   return bytes_written;
@@ -44,7 +53,14 @@ int Socket::Connect(uint32_t ip, uint16_t port) {
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = ip;
   addr.sin_port = htons(port);
-  return connect(socket_, (sockaddr *) &addr, sizeof(sockaddr_in));
+  int ret = connect(socket_, (sockaddr *) &addr, sizeof(sockaddr_in));
+  if (ret < 0) return -1;
+
+  int file_status_flags = fcntl(socket_, F_GETFL);
+  file_status_flags |= O_NONBLOCK;
+  ret = fcntl(socket_, F_SETFL, file_status_flags);
+  if (ret < 0) return -2;
+  return 0;
 }
 
 int Socket::CheckInOutAvailability(bool *in, bool *out) {
@@ -71,6 +87,11 @@ int Socket::Accept(Socket *socket) const {
   int sock = accept(socket_, 0, 0);
   if(sock < 0) return -1;
 
+  int file_status_flags = fcntl(sock, F_GETFL);
+  file_status_flags |= O_NONBLOCK;
+  int ret = fcntl(sock, F_SETFL, file_status_flags);
+  if (ret < 0) return -1;
+
   socket->socket_ = sock;
   return 0;
 }
@@ -89,6 +110,13 @@ int Pipe::CreateUniPipe(Pipe *read, Pipe *write) {
 
   write->read_ = 0;
   write->write_ = fd[1];
+
+  for (int i = 0; i < 2; i++) {
+    int file_status_flags = fcntl(fd[i], F_GETFL);
+    file_status_flags |= O_NONBLOCK;
+    int ret = fcntl(fd[i], F_SETFL, file_status_flags);
+    if (ret < 0) return -1;
+  }
 
   return 0;
 }
@@ -112,6 +140,20 @@ int Pipe::CreateBiPipe(Pipe pipes[2]) {
   pipes[1].read_ = fd2[0];
   pipes[1].write_ = fd[1];
 
+  for (int i = 0; i < 2; i++) {
+    int file_status_flags = fcntl(fd[i], F_GETFL);
+    file_status_flags |= O_NONBLOCK;
+    int ret = fcntl(fd[i], F_SETFL, file_status_flags);
+    if (ret < 0) return -1;
+  }
+
+  for (int i = 0; i < 2; i++) {
+    int file_status_flags = fcntl(fd2[i], F_GETFL);
+    file_status_flags |= O_NONBLOCK;
+    int ret = fcntl(fd2[i], F_SETFL, file_status_flags);
+    if (ret < 0) return -1;
+  }
+
   return 0;
 }
 
@@ -120,14 +162,25 @@ void Pipe::Close() const {
   if (write_) close(write_);
 }
 
-size_t Pipe::Send(const SendBuffer *buf) const {
-  size_t bytes_written = write_all(write_, buf->get_mem(), buf->get_size());
-  return bytes_written;
-}
+bool
+Pipe::Send(SendBuffer *buf) const {
+  size_t bytes_written = 0;
+  if (buf->get_remaining_to_send_size() > 0) {
+    bytes_written = WriteAllUntilBlock(
+        write_, buf->get_remaining_to_send_mem(),
+        buf->get_remaining_to_send_size());
+    buf->inc_sent_size(bytes_written);
+  }
 
-size_t Pipe::Send(const void *mem, size_t to_send) const {
-  size_t bytes_written = write_all(write_, mem, to_send);
-  return bytes_written;
+  if (buf->get_remaining_to_send_size() == 0) {
+    if (buf->get_remaining_next_to_send_size() == 0) return true;
+    bytes_written = WriteAllUntilBlock(
+        write_, buf->get_remaining_next_to_send_mem(),
+        buf->get_remaining_next_to_send_size());
+    buf->inc_next_to_send_sent_size(bytes_written);
+  }
+  if (buf->get_remaining_next_to_send_size() == 0) return true;
+  return false;
 }
 
 bool Pipe::Recv(RecvBuffer *buf) const {
@@ -170,14 +223,25 @@ bool Pipe::Recv(RecvBuffer *buf, void *mem) const {
   return false;
 }
 
-size_t Socket::Send(const SendBuffer *buf) const {
-  size_t bytes_written = write_all(socket_, buf->get_mem(), buf->get_size());
-  return bytes_written;
-}
+bool
+Socket::Send(SendBuffer *buf) const {
+  size_t bytes_written = 0;
+  if (buf->get_remaining_to_send_size() > 0) {
+    bytes_written = WriteAllUntilBlock(
+        socket_, buf->get_remaining_to_send_mem(),
+        buf->get_remaining_to_send_size());
+    buf->inc_sent_size(bytes_written);
+  }
 
-size_t Socket::Send(const void *mem, size_t to_send) const {
-  size_t bytes_written = write_all(socket_, mem, to_send);
-  return bytes_written;
+  if (buf->get_remaining_to_send_size() == 0) {
+    if (buf->get_remaining_next_to_send_size() == 0) return true;
+    bytes_written = WriteAllUntilBlock(
+        socket_, buf->get_remaining_next_to_send_mem(),
+        buf->get_remaining_next_to_send_size());
+    buf->inc_next_to_send_sent_size(bytes_written);
+  }
+  if (buf->get_remaining_next_to_send_size() == 0) return true;
+  return false;
 }
 
 bool Socket::Recv(RecvBuffer *buf) const {

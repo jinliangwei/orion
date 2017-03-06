@@ -34,13 +34,23 @@ class MasterThread {
       return conn->sock.Recv(&(conn->recv_buff));
     }
 
+    bool Send() {
+      return conn->sock.Send(&(conn->send_buff));
+    }
+
     conn::RecvBuffer& get_recv_buff() {
       return conn->recv_buff;
     }
-    bool is_noread_event() const {
+    conn::SendBuffer& get_send_buff() {
+      return conn->send_buff;
+    }
+    bool is_connect_event() const {
       return type == ConnType::listen;
     }
-    int get_fd() const {
+    int get_read_fd() const {
+      return conn->sock.get_fd();
+    }
+    int get_write_fd() const {
       return conn->sock.get_fd();
     }
   };
@@ -91,10 +101,7 @@ class MasterThread {
   int HandleMsg(PollConn *poll_conn_ptr);
   int HandleDriverMsg(PollConn *poll_conn_ptr);
   int HandleExecutorMsg(PollConn *poll_conn_ptr);
-
   void BroadcastAllExecutors();
-  void BroadcastAllExecutors(void *mem, size_t mem_size);
-  uint8_t* AllocRecvMem();
 };
 
 MasterThread::MasterThread(const Config &config):
@@ -103,14 +110,20 @@ MasterThread::MasterThread(const Config &config):
     kMasterIp(config.kMasterIp),
     kMasterPort(config.kMasterPort),
     recv_mem_((kNumExecutors + 2) * config.kCommBuffCapacity),
-    send_mem_(config.kCommBuffCapacity),
-    listen_(conn::Socket(), recv_mem_.data(), kCommBuffCapacity),
-    driver_(conn::Socket(), recv_mem_.data() + kCommBuffCapacity,
+    send_mem_((kNumExecutors + 3) * config.kCommBuffCapacity),
+    listen_(conn::Socket(),
+            recv_mem_.data(),
+            send_mem_.data(),
+            kCommBuffCapacity),
+    driver_(conn::Socket(),
+            recv_mem_.data() + kCommBuffCapacity,
+            send_mem_.data() + kCommBuffCapacity,
             kCommBuffCapacity),
     executors_(kNumExecutors),
     poll_conns_(kNumExecutors),
     host_info_(kNumExecutors),
-    send_buff_(send_mem_.data(), config.kCommBuffCapacity) { }
+    send_buff_(send_mem_.data() + 2*kCommBuffCapacity,
+               config.kCommBuffCapacity) { }
 
 MasterThread::~MasterThread() { }
 
@@ -119,8 +132,8 @@ MasterThread::operator() () {
   LOG(INFO) << "MasterThread is started";
   InitListener();
   PollConn listen_poll_conn = {&listen_, PollConn::ConnType::listen};
-  event_handler_.AddPollConn(listen_.sock.get_fd(), &listen_poll_conn);
-  event_handler_.SetNoreadEventHandler(
+  event_handler_.SetToReadOnly(&listen_poll_conn);
+  event_handler_.SetConnectEventHandler(
       std::bind(&MasterThread::HandleConnection, this,
                 std::placeholders::_1));
 
@@ -131,6 +144,8 @@ MasterThread::operator() () {
   event_handler_.SetClosedConnectionHandler(
       std::bind(&MasterThread::HandleClosedConnection, this,
                 std::placeholders::_1));
+
+  event_handler_.SetDefaultWriteEventHandler();
 
   std::cout << kMasterReadyString << std::endl;
   while (true) {
@@ -162,9 +177,15 @@ MasterThread::HandleConnection(PollConn *poll_conn_ptr) {
   conn::Socket accepted;
   listen_.sock.Accept(&accepted);
 
-  uint8_t *recv_mem = AllocRecvMem();
+  uint8_t *recv_mem = recv_mem_.data()
+                      + (num_accepted_executors_ + 2)
+                      * kCommBuffCapacity;
+  uint8_t *send_mem = send_mem_.data()
+                      + (num_accepted_executors_ + 3)
+                      * kCommBuffCapacity;
+
   auto *sock_conn = new conn::SocketConn(
-      accepted, recv_mem, kCommBuffCapacity);
+      accepted, recv_mem, send_mem, kCommBuffCapacity);
 
   auto &curr_poll_conn
       = poll_conns_[num_accepted_executors_];
@@ -172,7 +193,7 @@ MasterThread::HandleConnection(PollConn *poll_conn_ptr) {
   curr_poll_conn.conn = sock_conn;
   curr_poll_conn.type = PollConn::ConnType::executor;
 
-  event_handler_.AddPollConn(accepted.get_fd(), &curr_poll_conn);
+  event_handler_.SetToReadOnly(&curr_poll_conn);
   num_accepted_executors_++;
 }
 
@@ -181,7 +202,7 @@ MasterThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
   num_closed_conns_++;
   auto *sock_conn = poll_conn_ptr->conn;
   auto &sock = sock_conn->sock;
-  event_handler_.RemovePollConn(sock.get_fd());
+  event_handler_.Remove(poll_conn_ptr);
   sock.Close();
 }
 
@@ -201,8 +222,10 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
         {
           message::Helper::CreateMsg<message::ExecutorConnectToPeers>(
               &send_buff_, kNumExecutors);
-          BroadcastAllExecutors(host_info_.data(),
-                                kNumExecutors*sizeof(HostInfo));
+          send_buff_.set_next_to_send(host_info_.data(),
+                                      kNumExecutors*sizeof(HostInfo),
+                                      nullptr);
+          BroadcastAllExecutors();
           action_ = Action::kNone;
         }
         break;
@@ -264,26 +287,22 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
 void
 MasterThread::BroadcastAllExecutors() {
   for (int i = 0; i < kNumExecutors; ++i) {
-    size_t nsent = executors_[i]->sock.Send(&send_buff_);
-    CHECK(conn::CheckSendSize(send_buff_, nsent)) << "send only " << nsent;
+    conn::SendBuffer& send_buff = executors_[i]->send_buff;
+    if (send_buff.get_remaining_to_send_size() > 0
+        || send_buff.get_remaining_next_to_send_size() > 0) {
+      bool sent = executors_[i]->sock.Send(&send_buff);
+      while (!sent) {
+        sent = executors_[i]->sock.Send(&send_buff);
+      }
+      send_buff.clear_to_send();
+    }
+    bool sent = executors_[i]->sock.Send(&send_buff_);
+    if (!sent) {
+      send_buff.Copy(send_buff_);
+      event_handler_.SetToReadWrite(&poll_conns_[i]);
+    }
+    send_buff_.reset_sent_sizes();
   }
-}
-
-void
-MasterThread::BroadcastAllExecutors(void *mem, size_t mem_size) {
-  for (int i = 0; i < kNumExecutors; ++i) {
-    size_t nsent = executors_[i]->sock.Send(&send_buff_);
-    CHECK(conn::CheckSendSize(send_buff_, nsent)) << "send only " << nsent;
-    nsent = executors_[i]->sock.Send(mem, mem_size);
-    CHECK_EQ(nsent, mem_size);
-  }
-}
-
-uint8_t*
-MasterThread::AllocRecvMem() {
-  return recv_mem_.data()
-      + (num_accepted_executors_ + 2)
-      * kCommBuffCapacity;
 }
 
 } // end namespace bosen

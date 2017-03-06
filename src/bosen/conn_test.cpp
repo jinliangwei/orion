@@ -61,7 +61,7 @@ TEST_F(ConnTest, PollListenTest) {
   ret = poll.Init();
   ASSERT_EQ(ret, 0);
 
-  ret = poll.Add(socket.get_fd(), &socket);
+  ret = poll.Add(socket.get_fd(), &socket, EPOLLIN);
   ASSERT_EQ(ret, 0);
 
   bosen::conn::Socket client;

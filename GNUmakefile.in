@@ -35,7 +35,6 @@ LIBS = -lgtest \
 ifeq (@SANITIZER_ON@,address)
 SANITIZER_FLAGS = -fsanitize=address
 CFLAGS += -fno-omit-frame-pointer
-LIBS += -lasan
 endif
 
 LDFLAGS = -Wl,-rpath,$(ORION_HOME)/lib/ -L$(ORION_HOME)/lib

@@ -41,6 +41,18 @@ class ExecutorThread {
       }
     }
 
+    bool Send() {
+      if (type == ConnType::listen
+          || type == ConnType::master
+          || type == ConnType::peer) {
+        auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
+        return sock_conn->sock.Send(&(sock_conn->send_buff));
+      } else {
+        auto* pipe_conn = reinterpret_cast<conn::PipeConn*>(conn);
+        return pipe_conn->pipe.Send(&(pipe_conn->send_buff));
+      }
+    }
+
     conn::RecvBuffer& get_recv_buff() {
       if (type == ConnType::listen
           || type == ConnType::master
@@ -50,11 +62,22 @@ class ExecutorThread {
         return reinterpret_cast<conn::PipeConn*>(conn)->recv_buff;
       }
     }
-    bool is_noread_event() const {
+
+    conn::SendBuffer& get_send_buff() {
+      if (type == ConnType::listen
+          || type == ConnType::master
+          || type == ConnType::peer) {
+        return reinterpret_cast<conn::SocketConn*>(conn)->send_buff;
+      } else {
+        return reinterpret_cast<conn::PipeConn*>(conn)->send_buff;
+      }
+    }
+
+    bool is_connect_event() const {
       return type == ConnType::listen;
     }
 
-    int get_fd() const {
+    int get_read_fd() const {
       if (type == ConnType::listen
           || type == ConnType::master
           || type == ConnType::peer) {
@@ -63,6 +86,18 @@ class ExecutorThread {
       } else {
         auto* pipe_conn = reinterpret_cast<conn::PipeConn*>(conn);
         return pipe_conn->pipe.get_read_fd();
+      }
+    }
+
+    int get_write_fd() const {
+      if (type == ConnType::listen
+          || type == ConnType::master
+          || type == ConnType::peer) {
+        auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
+        return sock_conn->sock.get_fd();
+      } else {
+        auto* pipe_conn = reinterpret_cast<conn::PipeConn*>(conn);
+        return pipe_conn->pipe.get_write_fd();
       }
     }
   };
@@ -85,15 +120,19 @@ class ExecutorThread {
   const int32_t kId;
 
   EventHandler<PollConn> event_handler_;
+  std::vector<uint8_t> master_send_mem_;
   std::vector<uint8_t> master_recv_mem_;
   conn::SocketConn master_;
+  PollConn master_poll_conn_;
+  std::vector<uint8_t> listen_send_mem_;
   std::vector<uint8_t> listen_recv_mem_;
+  PollConn listen_poll_conn_;
   conn::SocketConn listen_;
   std::vector<uint8_t> send_mem_;
   conn::SendBuffer send_buff_;
   Action action_ {Action::kNone};
   //State state_;
-
+  std::vector<uint8_t> peer_send_mem_;
   std::vector<uint8_t> peer_recv_mem_;
   std::vector<std::unique_ptr<conn::SocketConn>> peer_;
   std::vector<PollConn> peer_conn_;
@@ -117,6 +156,8 @@ class ExecutorThread {
   int HandlePeerMsg(PollConn* poll_conn_ptr);
   int HandlePipeMsg(PollConn* poll_conn_ptr);
   void ConnectToPeers();
+  void Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn);
+  void Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn);
   //void SetUpLocalThreads();
 };
 
@@ -129,14 +170,21 @@ ExecutorThread::ExecutorThread(const Config& config, int32_t index):
     kListenIp(config.kWorkerIp),
     kListenPort(config.kWorkerPort + index * kPortSpan),
     kId(config.kWorkerId*config.kNumExecutorsPerWorker + index),
+    master_send_mem_(kCommBuffCapacity),
     master_recv_mem_(kCommBuffCapacity),
-    master_(conn::Socket(), master_recv_mem_.data(),
+    master_(conn::Socket(),
+            master_recv_mem_.data(),
+            master_send_mem_.data(),
             kCommBuffCapacity),
+    listen_send_mem_(kCommBuffCapacity),
     listen_recv_mem_(kCommBuffCapacity),
-    listen_(conn::Socket(), listen_recv_mem_.data(),
+    listen_(conn::Socket(),
+            listen_recv_mem_.data(),
+            listen_send_mem_.data(),
             kCommBuffCapacity),
     send_mem_(kCommBuffCapacity),
     send_buff_(send_mem_.data(), kCommBuffCapacity),
+    peer_send_mem_(config.kCommBuffCapacity*config.kNumExecutors),
     peer_recv_mem_(config.kCommBuffCapacity*config.kNumExecutors),
     peer_(config.kNumExecutors),
     peer_conn_(config.kNumExecutors),
@@ -149,16 +197,27 @@ void
 ExecutorThread::operator() () {
   InitListener();
 
-  PollConn listen_poll_conn = {&listen_, PollConn::ConnType::listen};
-  int ret = event_handler_.AddPollConn(listen_.sock.get_fd(), &listen_poll_conn);
+  listen_poll_conn_ = {&listen_, PollConn::ConnType::listen};
+  int ret = event_handler_.SetToReadOnly(&listen_poll_conn_);
   CHECK_EQ(ret, 0);
   ConnectToMaster();
 
-  PollConn master_poll_conn = {&master_, PollConn::ConnType::master};
-  ret = event_handler_.AddPollConn(master_.sock.get_fd(), &master_poll_conn);
+  master_poll_conn_ = {&master_, PollConn::ConnType::master};
+  ret = event_handler_.SetToReadOnly(&master_poll_conn_);
   CHECK_EQ(ret, 0);
 
-  event_handler_.SetNoreadEventHandler(
+  {
+    HostInfo host_info;
+    ret = GetIPFromStr(kListenIp.c_str(), &host_info.ip);
+    CHECK_NE(ret, 0);
+    host_info.port = kListenPort;
+
+    message::Helper::CreateMsg<
+      message::ExecutorIdentity>(&send_buff_, kId, host_info);
+    Send(&master_poll_conn_, &master_);
+  }
+
+  event_handler_.SetConnectEventHandler(
       std::bind(&ExecutorThread::HandleConnection, this,
                 std::placeholders::_1));
 
@@ -168,6 +227,8 @@ ExecutorThread::operator() () {
 
   event_handler_.SetReadEventHandler(
       std::bind(&ExecutorThread::HandleMsg, this, std::placeholders::_1));
+
+  event_handler_.SetDefaultWriteEventHandler();
 
   while (true) {
     event_handler_.WaitAndHandleEvent();
@@ -195,13 +256,16 @@ ExecutorThread::HandleConnection(PollConn* poll_conn_ptr) {
   uint8_t *recv_mem = peer_recv_mem_.data()
                       + kCommBuffCapacity*num_connected_peers_;
 
+  uint8_t *send_mem = peer_send_mem_.data()
+                      + kCommBuffCapacity*(num_connected_peers_ + 1);
+
   auto *sock_conn = new conn::SocketConn(
-      accepted, recv_mem, kCommBuffCapacity);
+      accepted, recv_mem, send_mem, kCommBuffCapacity);
 
   auto &curr_poll_conn = peer_conn_[num_connected_peers_];
   curr_poll_conn.conn = sock_conn;
   curr_poll_conn.type = PollConn::ConnType::peer;
-  int ret = event_handler_.AddPollConn(accepted.get_fd(), &curr_poll_conn);
+  int ret = event_handler_.SetToReadOnly(&curr_poll_conn);
   CHECK_EQ(ret, 0);
   num_connected_peers_++;
 }
@@ -212,11 +276,9 @@ ExecutorThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
   if (type == PollConn::ConnType::listen
       || type == PollConn::ConnType::pipe
       || type == PollConn::ConnType::peer) {
-    int fd = poll_conn_ptr->get_fd();
-    event_handler_.RemovePollConn(fd);
+    event_handler_.Remove(poll_conn_ptr);
   } else {
-    int fd = poll_conn_ptr->get_fd();
-    event_handler_.RemovePollConn(fd);
+    event_handler_.Remove(poll_conn_ptr);
     auto* conn = reinterpret_cast<conn::SocketConn*>(poll_conn_ptr->conn);
     conn->sock.Close();
     action_ = Action::kExit;
@@ -231,15 +293,6 @@ ExecutorThread::ConnectToMaster() {
 
   ret = master_.sock.Connect(ip, kMasterPort);
   CHECK(ret == 0) << "executor failed connecting to master";
-
-  HostInfo host_info;
-  ret = GetIPFromStr(kListenIp.c_str(), &host_info.ip);
-  CHECK_NE(ret, 0);
-  host_info.port = kListenPort;
-  message::Helper::CreateMsg<
-    message::ExecutorIdentity>(&send_buff_, kId, host_info);
-  size_t sent_size = master_.sock.Send(&send_buff_);
-  CHECK(conn::CheckSendSize(send_buff_, sent_size));
 }
 
 int
@@ -266,8 +319,7 @@ ExecutorThread::HandleMsg(PollConn* poll_conn_ptr) {
       case Action::kAckConnectToPeers:
         {
           message::Helper::CreateMsg<message::ExecutorConnectToPeersAck>(&send_buff_);
-          size_t sent_size = master_.sock.Send(&send_buff_);
-          CHECK(conn::CheckSendSize(send_buff_, sent_size));
+          Send(&master_poll_conn_, &master_);
           action_ = Action::kNone;
         }
       case Action::kExit:
@@ -377,15 +429,52 @@ ExecutorThread::ConnectToPeers() {
                     << " ip = " << ip << " port = " << port;
     peer_[i].reset(new conn::SocketConn(peer_sock,
                                         peer_recv_mem_.data() + kCommBuffCapacity*i,
+                                        peer_send_mem_.data() + kCommBuffCapacity*i,
                                         kCommBuffCapacity));
     peer_conn_[i].conn = peer_[i].get();
     peer_conn_[i].type = PollConn::ConnType::peer;
-
-    size_t sent_size = peer_[i]->sock.Send(&send_buff_);
-    CHECK(conn::CheckSendSize(send_buff_, sent_size));
-    int ret = event_handler_.AddPollConn(peer_sock.get_fd(), &peer_conn_[i]);
+    Send(&peer_conn_[i], peer_[i].get());
+    int ret = event_handler_.SetToReadOnly(&peer_conn_[i]);
     CHECK_EQ(ret, 0);
   }
+}
+
+void
+ExecutorThread::Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn) {
+  auto& send_buff = poll_conn_ptr->get_send_buff();
+  if (send_buff.get_remaining_to_send_size() > 0
+      || send_buff.get_remaining_next_to_send_size() > 0) {
+    bool sent = sock_conn->sock.Send(&send_buff);
+    while (!sent) {
+      sent = sock_conn->sock.Send(&send_buff);
+    }
+    send_buff.clear_to_send();
+  }
+  bool sent = sock_conn->sock.Send(&send_buff_);
+  if (!sent) {
+    send_buff.Copy(send_buff_);
+    event_handler_.SetToReadWrite(poll_conn_ptr);
+  }
+  send_buff_.reset_sent_sizes();
+}
+
+void
+ExecutorThread::Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn) {
+  auto& send_buff = poll_conn_ptr->get_send_buff();
+  if (send_buff.get_remaining_to_send_size() > 0
+      || send_buff.get_remaining_next_to_send_size() > 0) {
+    bool sent = pipe_conn->pipe.Send(&send_buff);
+    while (!sent) {
+      sent = pipe_conn->pipe.Send(&send_buff);
+    }
+    send_buff.clear_to_send();
+  }
+  bool sent = pipe_conn->pipe.Send(&send_buff_);
+  if (!sent) {
+    send_buff.Copy(send_buff_);
+    event_handler_.SetToReadWrite(poll_conn_ptr);
+  }
+  send_buff_.reset_sent_sizes();
 }
 
 }

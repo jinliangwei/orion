@@ -10,22 +10,30 @@ class EventHandler {
   static constexpr size_t kNumEvents = 100;
   conn::Poll poll_;
   epoll_event es_[kNumEvents];
-  std::function<void(PollConn*)> noread_event_handler_;
+  std::function<void(PollConn*)> connect_event_handler_;
   std::function<int(PollConn*)> read_event_handler_;
   std::function<void(PollConn*)> closed_connection_handler_;
+  std::function<void(PollConn*)> write_event_handler_;
   void ReadAndRunReadEventHandler(PollConn* poll_conn);
   void RunReadEventHandler(PollConn* poll_conn);
+
  public:
   EventHandler();
-  void SetNoreadEventHandler(const std::function<void(PollConn*)>&
-                             noread_event_handler);
+  void SetConnectEventHandler(const std::function<void(PollConn*)>&
+                             connect_event_handler);
   void SetReadEventHandler(const std::function<int(PollConn*)>&
                            read_event_handler);
+  void SetWriteEventHandler(const std::function<void(PollConn*)>&
+                           write_event_handler);
+  void SetDefaultWriteEventHandler();
   void SetClosedConnectionHandler(const std::function<void(PollConn*)>&
                                   closed_connection_handler);
-  int AddPollConn(int fd, PollConn* poll_conn);
-  int RemovePollConn(int fd);
+  int SetToReadWrite(PollConn* poll_conn_ptr);
+  int SetToReadOnly(PollConn* poll_conn_ptr);
+  int SetToWriteOnly(PollConn* poll_conn_ptr);
+  int Remove(PollConn* poll_conn_ptr);
   void WaitAndHandleEvent();
+  void HandleWriteEvent(PollConn* poll_conn_ptr);
 };
 
 template<typename PollConn>
@@ -36,9 +44,9 @@ EventHandler<PollConn>::EventHandler() {
 
 template<typename PollConn>
 void
-EventHandler<PollConn>::SetNoreadEventHandler(
-    const std::function<void(PollConn*)>& noread_event_handler) {
-  noread_event_handler_ = noread_event_handler;
+EventHandler<PollConn>::SetConnectEventHandler(
+    const std::function<void(PollConn*)>& connect_event_handler) {
+  connect_event_handler_ = connect_event_handler;
 
 }
 
@@ -57,15 +65,115 @@ EventHandler<PollConn>::SetClosedConnectionHandler(
 }
 
 template<typename PollConn>
-int
-EventHandler<PollConn>::AddPollConn(int fd, PollConn* poll_conn_ptr) {
-  return poll_.Add(fd, poll_conn_ptr);
+void
+EventHandler<PollConn>::SetWriteEventHandler(
+    const std::function<void(PollConn*)>& write_event_handler) {
+  write_event_handler_ = write_event_handler;
+}
+
+template<typename PollConn>
+void
+EventHandler<PollConn>::SetDefaultWriteEventHandler() {
+  write_event_handler_ = std::bind(&EventHandler<PollConn>::HandleWriteEvent,
+                                   this, std::placeholders::_1);
 }
 
 template<typename PollConn>
 int
-EventHandler<PollConn>::RemovePollConn(int fd) {
-  return poll_.Remove(fd);
+EventHandler<PollConn>::SetToReadWrite(PollConn* poll_conn_ptr) {
+  int read_fd = poll_conn_ptr->get_read_fd();
+  int write_fd = poll_conn_ptr->get_write_fd();
+  int ret = 0;
+  if (read_fd == write_fd) {
+    ret = poll_.Add(read_fd, poll_conn_ptr, EPOLLIN | EPOLLOUT);
+    if (ret == 0) return ret;
+    if (ret < 0 && errno == EEXIST)
+      return poll_.Set(read_fd, poll_conn_ptr, EPOLLIN | EPOLLOUT);
+    return ret;
+  } else {
+    ret = poll_.Add(read_fd, poll_conn_ptr, EPOLLIN);
+    if (ret < 0 && errno == EEXIST)
+      ret = poll_.Set(read_fd, poll_conn_ptr, EPOLLIN);
+    if(ret < 0) return ret;
+
+    ret = poll_.Add(write_fd, poll_conn_ptr, EPOLLOUT);
+    if (ret < 0 && errno == EEXIST)
+      ret = poll_.Set(write_fd, poll_conn_ptr, EPOLLOUT);
+    return ret;
+  }
+}
+
+template<typename PollConn>
+int
+EventHandler<PollConn>::SetToReadOnly(PollConn* poll_conn_ptr) {
+  int read_fd = poll_conn_ptr->get_read_fd();
+  int write_fd = poll_conn_ptr->get_write_fd();
+  int ret = 0;
+  if (read_fd == write_fd) {
+    ret = poll_.Add(read_fd, poll_conn_ptr, EPOLLIN);
+    if (ret == 0) return ret;
+    if (ret < 0 && errno == EEXIST)
+      return poll_.Set(read_fd, poll_conn_ptr, EPOLLIN);
+    return ret;
+  } else {
+    ret = poll_.Add(read_fd, poll_conn_ptr, EPOLLIN);
+    if (ret < 0 && errno == EEXIST)
+      ret = poll_.Set(read_fd, poll_conn_ptr, EPOLLIN);
+    if(ret < 0) return ret;
+
+    ret = poll_.Remove(write_fd);
+    if (ret < 0 && errno == ENOENT)
+      return 0;
+    return ret;
+  }
+}
+
+template<typename PollConn>
+int
+EventHandler<PollConn>::SetToWriteOnly(PollConn* poll_conn_ptr) {
+  int read_fd = poll_conn_ptr->get_read_fd();
+  int write_fd = poll_conn_ptr->get_write_fd();
+  int ret = 0;
+  if (read_fd == write_fd) {
+    ret = poll_.Add(write_fd, poll_conn_ptr, EPOLLOUT);
+    if (ret == 0) return ret;
+    if (ret < 0 && errno == EEXIST)
+      return poll_.Set(write_fd, poll_conn_ptr, EPOLLOUT);
+    return ret;
+  } else {
+    ret = poll_.Add(write_fd, poll_conn_ptr, EPOLLOUT);
+    if (ret < 0 && errno == EEXIST)
+      ret = poll_.Set(write_fd, poll_conn_ptr, EPOLLOUT);
+    if(ret < 0) return ret;
+
+    ret = poll_.Remove(read_fd);
+    if (ret < 0 && errno == ENOENT) return 0;
+
+    return ret;
+  }
+}
+
+template<typename PollConn>
+int
+EventHandler<PollConn>::Remove(PollConn* poll_conn_ptr) {
+  int read_fd = poll_conn_ptr->get_read_fd();
+  int write_fd = poll_conn_ptr->get_write_fd();
+  int ret = 0;
+  if (read_fd == write_fd) {
+    ret = poll_.Remove(read_fd);
+    return ret;
+  } else {
+    bool read_noent = false;
+    ret = poll_.Remove(read_fd);
+    if (ret < 0 && errno == ENOENT) read_noent = true;
+    if (ret < 0 && errno != ENOENT) return ret;
+
+    ret = poll_.Remove(write_fd);
+    if (ret < 0 && errno != ENOENT) return ret;
+    if (ret < 0 && errno == ENOENT && read_noent) return -1;
+    return 0;
+  }
+
 }
 
 template<typename PollConn>
@@ -95,7 +203,18 @@ EventHandler<PollConn>::RunReadEventHandler(PollConn* poll_conn_ptr) {
   } else if (clear_code == 2) {
     recv_buff.ClearOneAndNextMsg();
   }
+}
 
+template<typename PollConn>
+void
+EventHandler<PollConn>::HandleWriteEvent(PollConn* poll_conn_ptr) {
+  bool sent = poll_conn_ptr->Send();
+
+  if (sent) {
+    auto &send_buff = poll_conn_ptr->get_send_buff();
+    send_buff.clear_to_send();
+    SetToReadOnly(poll_conn_ptr);
+  }
 }
 
 template<typename PollConn>
@@ -106,9 +225,9 @@ EventHandler<PollConn>::WaitAndHandleEvent() {
   for (int i = 0; i < num_events; ++i) {
     PollConn *poll_conn_ptr = conn::Poll::EventConn<PollConn>(es_, i);
     if (es_[i].events & EPOLLIN) {
-      if (poll_conn_ptr->is_noread_event()
-          && noread_event_handler_ != nullptr) {
-        noread_event_handler_(poll_conn_ptr);
+      if (poll_conn_ptr->is_connect_event()
+          && connect_event_handler_ != nullptr) {
+        connect_event_handler_(poll_conn_ptr);
       } else {
         ReadAndRunReadEventHandler(poll_conn_ptr);
         auto& recv_buff = poll_conn_ptr->get_recv_buff();
@@ -119,11 +238,19 @@ EventHandler<PollConn>::WaitAndHandleEvent() {
         if (recv_buff.is_eof()) {
           LOG(INFO) << "someone has closed";
           closed_connection_handler_(poll_conn_ptr);
+          continue;
         }
       }
-    } else {
-      LOG(WARNING) << "unknown event happened happend: " << es_[i].events;
     }
+
+    if (es_[i].events & EPOLLOUT) {
+      write_event_handler_(poll_conn_ptr);
+    }
+
+    //if (!(es_[i].events & EPOLLIN)
+    //    || !(es_[i].events & EPOLLOUT)) {
+    //  LOG(WARNING) << "unknown event happened happend: " << es_[i].events;
+    //}
   }
 }
 

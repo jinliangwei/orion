@@ -34,7 +34,7 @@ bin/bosen: bin
 	mkdir -p bin/bosen
 
 $(BOSEN_OBJ): %.o: %.cpp $(BOSEN_HPP) $(BOSEN_H)
-	$(CXX) -fPIC $(CFLAGS) -c $< -o $@
+	$(CXX) -fPIC $(CFLAGS) $(SANITIZER_FLAGS) -c $< -o $@
 
 $(BOSEN_COBJ): %.o: %.c $(BOSEN_HPP) $(BOSEN_H)
 	$(CXX) -fPIC $(CFLAGS) -c $< -o $@

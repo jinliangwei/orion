@@ -5,6 +5,7 @@
 #include <cstring>
 #include <utility>
 #include <glog/logging.h>
+#include <functional>
 
 #include <orion/noncopyable.hpp>
 
@@ -190,7 +191,13 @@ class SendBuffer {
   /* the size to be sent, has 2 parts: 1) beacon and 2) payload */
   beacon_t &size_;
   const size_t capacity_;
+  size_t sent_size_ {0};
 
+  size_t next_to_send_size_ {0};
+  size_t next_to_send_sent_size_ {0};
+  uint8_t* next_to_send_mem_ {nullptr};
+
+  std::function<void(void*, size_t)> next_to_send_clean_up_ {nullptr};
   DISALLOW_COPY(SendBuffer);
 
  public:
@@ -248,12 +255,70 @@ class SendBuffer {
     size_ = 0;
   }
 
+  void Copy(const SendBuffer &send_buff) {
+    memcpy(mem_, send_buff.mem_, send_buff.get_size());
+    sent_size_ = send_buff.sent_size_;
+    next_to_send_mem_ = send_buff.next_to_send_mem_;
+    next_to_send_size_ = send_buff.next_to_send_size_;
+    next_to_send_sent_size_ = send_buff.next_to_send_sent_size_;
+  }
+
   void Copy(const RecvBuffer &recv_buff) {
     memcpy(mem_, recv_buff.get_mem(), recv_buff.get_expected_size());
+    reset_sent_sizes();
   }
 
   size_t get_payload_capacity() const {
     return capacity_ - sizeof(beacon_t);
+  }
+
+  void set_next_to_send(void *mem, size_t to_send_size,
+                        std::function<void(void*, size_t)> clean_up) {
+    next_to_send_mem_  = reinterpret_cast<uint8_t*>(mem);
+    next_to_send_size_ = to_send_size;
+    next_to_send_sent_size_ = 0;
+    next_to_send_clean_up_ = clean_up;
+  }
+
+  void inc_sent_size(size_t sent_size) {
+    sent_size_ += sent_size;
+  }
+
+  uint8_t* get_remaining_to_send_mem() {
+    return mem_ + sent_size_;
+  }
+
+  size_t get_remaining_to_send_size() const {
+    return size_ - sent_size_;
+  }
+
+  void inc_next_to_send_sent_size(size_t sent_size) {
+    next_to_send_sent_size_ += sent_size;
+  }
+
+  uint8_t* get_remaining_next_to_send_mem() {
+    return next_to_send_mem_ + next_to_send_sent_size_;
+  }
+
+  size_t get_remaining_next_to_send_size() {
+    return next_to_send_size_ - next_to_send_sent_size_;
+  }
+
+  void reset_sent_sizes() {
+    sent_size_ = 0;
+    next_to_send_sent_size_ = 0;
+  }
+
+  void clear_to_send() {
+    size_ = 0;
+    sent_size_ = 0;
+    next_to_send_size_ = 0;
+    next_to_send_sent_size_ = 0;
+    next_to_send_mem_ = nullptr;
+
+    if (next_to_send_clean_up_ != nullptr) {
+      next_to_send_clean_up_(next_to_send_mem_, next_to_send_size_);
+    }
   }
 };
 
@@ -297,8 +362,7 @@ class Socket {
 
   int CheckInOutAvailability(bool *in, bool *out);
 
-  size_t Send(const SendBuffer *buf) const;
-  size_t Send(const void *mem, size_t to_send) const;
+  bool Send(SendBuffer *buf) const;
   bool Recv(RecvBuffer *buf) const;
 
   /*
@@ -364,8 +428,7 @@ class Pipe {
 
   void Close() const;
 
-  size_t Send(const SendBuffer *buf) const;
-  size_t Send(const void *mem, size_t to_send) const;
+  bool Send(SendBuffer *buf) const;
   /*
    * Return true if
    * 1) received an complete message (EOF may or may not be set);
@@ -411,18 +474,27 @@ class Poll {
     return (PollConn*) es[i].data.ptr;
   }
 
-  int Add(int fd, void *conn) {
+  int Add(int fd, void *conn, uint32_t event) {
     struct epoll_event ev;
-    ev.events = EPOLLIN;
+    ev.events = event;
     ev.data.ptr = conn;
-    int r = epoll_ctl(epollfd_, EPOLL_CTL_ADD, fd, &ev);
-    if (r != 0) return -1;
+    int ret = epoll_ctl(epollfd_, EPOLL_CTL_ADD, fd, &ev);
+    if (ret != 0) return ret;
+    return 0;
+  }
+
+  int Set(int fd, void *conn, uint32_t event) {
+    struct epoll_event ev;
+    ev.events = event;
+    ev.data.ptr = conn;
+    int ret = epoll_ctl(epollfd_, EPOLL_CTL_MOD, fd, &ev);
+    if (ret != 0) return ret;
     return 0;
   }
 
   int Remove(int fd) {
-    int r = epoll_ctl(epollfd_, EPOLL_CTL_DEL, fd, 0);
-    if (r != 0) return -1;
+    int ret = epoll_ctl(epollfd_, EPOLL_CTL_DEL, fd, 0);
+    if (ret != 0) return ret;
     return 0;
   }
 };
@@ -430,11 +502,13 @@ class Poll {
 struct SocketConn {
   Socket sock;
   RecvBuffer recv_buff;
-
+  SendBuffer send_buff;
   SocketConn(Socket _sock,
-             void *recv_mem, size_t recv_capacity):
+             void *recv_mem,
+             void *send_mem, size_t buff_capacity):
       sock(_sock),
-      recv_buff(recv_mem, recv_capacity) { }
+      recv_buff(recv_mem, buff_capacity),
+      send_buff(send_mem, buff_capacity) { }
   ~SocketConn() { }
 
   DISALLOW_COPY(SocketConn);
@@ -443,12 +517,13 @@ struct SocketConn {
 struct PipeConn {
   Pipe pipe;
   RecvBuffer recv_buff;
-
+  SendBuffer send_buff;
   PipeConn(Pipe _pipe,
            void *recv_mem,
-           size_t recv_capacity):
+           void *send_mem, size_t buff_capacity):
       pipe(_pipe),
-      recv_buff(recv_mem, recv_capacity) { }
+      recv_buff(recv_mem, buff_capacity),
+      send_buff(send_mem, buff_capacity) { }
 
   DISALLOW_COPY(PipeConn);
 };
