@@ -26,6 +26,8 @@ DEFINE_uint64(comm_buff_capacity, 1024 * 4, "communication buffer capacity");
 
 DEFINE_int32(worker_id, 0, "worker id");
 
+DEFINE_uint64(executor_thread_pool_size, 4, "thread pool size");
+
 int main(int argc, char *argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
   google::InitGoogleLogging(argv[0]);
@@ -33,7 +35,8 @@ int main(int argc, char *argv[]) {
   orion::bosen::Config config(FLAGS_num_executors,
                               FLAGS_num_executors_per_worker, FLAGS_master_ip,
                               FLAGS_master_port, FLAGS_worker_ip, FLAGS_worker_port,
-                              FLAGS_comm_buff_capacity, FLAGS_worker_id);
+                              FLAGS_comm_buff_capacity, FLAGS_worker_id,
+                              FLAGS_executor_thread_pool_size);
   orion::bosen::Worker worker(config);
   worker.Run();
   worker.WaitUntilExit();

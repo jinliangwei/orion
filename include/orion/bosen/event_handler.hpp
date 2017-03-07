@@ -1,5 +1,6 @@
 #include <orion/bosen/conn.hpp>
 #include <functional>
+#include <glog/logging.h>
 
 namespace orion {
 namespace bosen {
@@ -83,6 +84,7 @@ int
 EventHandler<PollConn>::SetToReadWrite(PollConn* poll_conn_ptr) {
   int read_fd = poll_conn_ptr->get_read_fd();
   int write_fd = poll_conn_ptr->get_write_fd();
+  if (read_fd == 0 || write_fd == 0) return -1;
   int ret = 0;
   if (read_fd == write_fd) {
     ret = poll_.Add(read_fd, poll_conn_ptr, EPOLLIN | EPOLLOUT);
@@ -108,6 +110,7 @@ int
 EventHandler<PollConn>::SetToReadOnly(PollConn* poll_conn_ptr) {
   int read_fd = poll_conn_ptr->get_read_fd();
   int write_fd = poll_conn_ptr->get_write_fd();
+  if (read_fd == 0) return -1;
   int ret = 0;
   if (read_fd == write_fd) {
     ret = poll_.Add(read_fd, poll_conn_ptr, EPOLLIN);
@@ -120,6 +123,7 @@ EventHandler<PollConn>::SetToReadOnly(PollConn* poll_conn_ptr) {
     if (ret < 0 && errno == EEXIST)
       ret = poll_.Set(read_fd, poll_conn_ptr, EPOLLIN);
     if(ret < 0) return ret;
+    if (write_fd == 0) return 0;
 
     ret = poll_.Remove(write_fd);
     if (ret < 0 && errno == ENOENT)
@@ -133,6 +137,7 @@ int
 EventHandler<PollConn>::SetToWriteOnly(PollConn* poll_conn_ptr) {
   int read_fd = poll_conn_ptr->get_read_fd();
   int write_fd = poll_conn_ptr->get_write_fd();
+  if (write_fd == 0) return -1;
   int ret = 0;
   if (read_fd == write_fd) {
     ret = poll_.Add(write_fd, poll_conn_ptr, EPOLLOUT);
@@ -146,6 +151,7 @@ EventHandler<PollConn>::SetToWriteOnly(PollConn* poll_conn_ptr) {
       ret = poll_.Set(write_fd, poll_conn_ptr, EPOLLOUT);
     if(ret < 0) return ret;
 
+    if (read_fd == 0) return 0;
     ret = poll_.Remove(read_fd);
     if (ret < 0 && errno == ENOENT) return 0;
 
@@ -185,10 +191,8 @@ EventHandler<PollConn>::ReadAndRunReadEventHandler(PollConn* poll_conn_ptr) {
     bool recv = poll_conn_ptr->Receive();
     if (!recv) return;
 
-    CHECK (!recv_buff.is_error()) << "driver error during receiving " << errno;
-    CHECK (!recv_buff.EOFAtIncompleteMsg()) << "driver error : early EOF";
-    // maybe EOF but not received anything
-    if (!recv_buff.ReceivedFullMsg()) return;
+    CHECK (!recv_buff.is_error()) << "error during receiving " << errno;
+    CHECK (!recv_buff.EOFAtIncompleteMsg()) << "error : early EOF";
   }
   RunReadEventHandler(poll_conn_ptr);
 }

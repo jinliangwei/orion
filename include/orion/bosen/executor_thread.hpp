@@ -13,6 +13,7 @@
 #include <orion/bosen/server_thread.hpp>
 #include <orion/bosen/client_thread.hpp>
 #include <orion/bosen/event_handler.hpp>
+#include <orion/bosen/thread_pool.hpp>
 
 namespace orion {
 namespace bosen {
@@ -117,6 +118,7 @@ class ExecutorThread {
   const uint16_t kMasterPort;
   const std::string kListenIp;
   const uint16_t kListenPort;
+  const size_t kThreadPoolSize;
   const int32_t kId;
 
   EventHandler<PollConn> event_handler_;
@@ -131,11 +133,16 @@ class ExecutorThread {
   std::vector<uint8_t> send_mem_;
   conn::SendBuffer send_buff_;
   Action action_ {Action::kNone};
-  //State state_;
   std::vector<uint8_t> peer_send_mem_;
   std::vector<uint8_t> peer_recv_mem_;
   std::vector<std::unique_ptr<conn::SocketConn>> peer_;
   std::vector<PollConn> peer_conn_;
+  std::vector<uint8_t> thread_pool_recv_mem_;
+  std::vector<uint8_t> thread_pool_send_mem_;
+  std::vector<std::unique_ptr<conn::PipeConn>> compute_;
+  std::vector<PollConn> compute_conn_;
+  ThreadPool thread_pool_;
+
   size_t num_connected_peers_ {0};
   size_t num_identified_peers_ {0};
   std::vector<HostInfo> host_info_;
@@ -158,7 +165,7 @@ class ExecutorThread {
   void ConnectToPeers();
   void Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn);
   void Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn);
-  //void SetUpLocalThreads();
+  void SetUpThreadPool();
 };
 
 ExecutorThread::ExecutorThread(const Config& config, int32_t index):
@@ -169,6 +176,7 @@ ExecutorThread::ExecutorThread(const Config& config, int32_t index):
     kMasterPort(config.kMasterPort),
     kListenIp(config.kWorkerIp),
     kListenPort(config.kWorkerPort + index * kPortSpan),
+    kThreadPoolSize(config.kExecutorThreadPoolSize),
     kId(config.kWorkerId*config.kNumExecutorsPerWorker + index),
     master_send_mem_(kCommBuffCapacity),
     master_recv_mem_(kCommBuffCapacity),
@@ -188,6 +196,11 @@ ExecutorThread::ExecutorThread(const Config& config, int32_t index):
     peer_recv_mem_(config.kCommBuffCapacity*config.kNumExecutors),
     peer_(config.kNumExecutors),
     peer_conn_(config.kNumExecutors),
+    thread_pool_recv_mem_(kCommBuffCapacity*kThreadPoolSize),
+    thread_pool_send_mem_(kCommBuffCapacity*kThreadPoolSize),
+    compute_(kThreadPoolSize),
+    compute_conn_(kThreadPoolSize),
+    thread_pool_(config.kExecutorThreadPoolSize, config.kCommBuffCapacity),
     host_info_(kNumExecutors) { }
 
 

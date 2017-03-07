@@ -43,7 +43,8 @@ def get_default_config():
     }
     config['worker'] = {
         'port' : "11000",
-        'num_executors_per_worker' : "1"
+        'num_executors_per_worker' : "1",
+        'executor_thread_pool_size' : "4"
     }
     config['log'] = {
         'log_dir' : "",
@@ -103,7 +104,8 @@ def get_arg_strs(args, pargs):
         'comm_buff_capacity' : pargs['master']['comm_buff_capacity'],
         'num_executors_per_worker' : pargs['worker']['num_executors_per_worker'],
         'num_executors' : num_executors_total,
-        'worker_port' : pargs['worker']['port']
+        'worker_port' : pargs['worker']['port'],
+        'executor_thread_pool_size' : pargs['worker']['executor_thread_pool_size']
     }
 
     master_arg_str = "".join([" --%s=%s" % (k, v) for (k, v) in master_args.items()])

@@ -247,12 +247,9 @@ class SendBuffer {
     return mem_ + size_;
   }
 
+
   size_t get_remaining_payload_capacity() const {
     return capacity_ - size_;
-  }
-
-  void reset() {
-    size_ = 0;
   }
 
   void Copy(const SendBuffer &send_buff) {

@@ -16,6 +16,7 @@ struct Config {
   const uint16_t kWorkerPort;
   const size_t kCommBuffCapacity {1024 * 4};
   const int32_t kWorkerId;
+  const size_t kExecutorThreadPoolSize;
 
   Config(size_t num_executors,
          size_t num_executors_per_worker,
@@ -24,7 +25,8 @@ struct Config {
          std::string worker_ip,
          uint16_t worker_port,
          uint64_t comm_buff_capacity,
-         int32_t worker_id):
+         int32_t worker_id,
+         size_t executor_thread_pool_size):
       kNumExecutors(num_executors),
       kNumExecutorsPerWorker(num_executors_per_worker),
       kMasterIp(master_ip),
@@ -32,7 +34,8 @@ struct Config {
       kWorkerIp(worker_ip),
       kWorkerPort(worker_port),
       kCommBuffCapacity(comm_buff_capacity),
-      kWorkerId(worker_id) { }
+      kWorkerId(worker_id),
+      kExecutorThreadPoolSize(executor_thread_pool_size) { }
 };
 
 }

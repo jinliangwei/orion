@@ -114,7 +114,6 @@ TEST_F(ConnTest, SocketBindConnectPresure) {
   for (int i = 0; i < num_clients; i++) {
     ret = client[i].Connect(ip, port);
     ASSERT_EQ(ret, 0);
-    std::cout << i << std::endl;
     ret = client[i].CheckInOutAvailability(&in, &out);
     ASSERT_EQ(ret, 0);
     EXPECT_FALSE(in);
@@ -125,7 +124,6 @@ TEST_F(ConnTest, SocketBindConnectPresure) {
   for (int i = 0; i < num_clients; i++) {
     ret = socket.Accept(&connected[i]);
     ASSERT_EQ(ret, 0);
-    std::cout << i << std::endl;
     ret = connected[i].CheckInOutAvailability(&in, &out);
     ASSERT_EQ(ret, 0);
     EXPECT_FALSE(in);
@@ -178,12 +176,17 @@ TEST_F(ConnTest, SendRecvTest) {
   memcpy(send_buff.get_payload_mem(), msg, msg_len);
   send_buff.set_payload_size(msg_len);
 
-  size_t sent_size = client.Send(&send_buff);
-  EXPECT_TRUE(bosen::conn::CheckSendSize(send_buff, sent_size));
+  bool sent = client.Send(&send_buff);
+  while (!sent) {
+    client.Send(&send_buff);
+  }
 
   bool recved = connected.Recv(&recv_buff);
   EXPECT_TRUE(recved);
-  EXPECT_TRUE(recv_buff.ReceivedFullMsg());
+  while (!recv_buff.ReceivedFullMsg()) {
+    recved = connected.Recv(&recv_buff);
+    EXPECT_TRUE(recved);
+  }
   EXPECT_FALSE(recv_buff.is_error());
   EXPECT_FALSE(recv_buff.EOFAtIncompleteMsg());
   int same = memcmp(recv_buff.get_payload_mem(), msg, msg_len);
