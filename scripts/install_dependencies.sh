@@ -19,7 +19,6 @@ sudo apt-get --ignore-missing -y install \
     cmake \
     libgoogle-perftools-dev \
     libgl1-mesa-glx \
-    julia \
     openjdk-8-jdko \
     emacs \
     autoconf
@@ -29,9 +28,12 @@ if [ ! -f /usr/lib/libcblas.so ]; then
     sudo ln -s /usr/lib/libcblas.so.3 /usr/lib/libcblas.so
 fi
 
-
 pushd /usr/src/gtest
 sudo cmake CMakeLists.txt
 sudo make
 sudo cp *.a /usr/lib
 popd
+
+wget https://github.com/JuliaLang/julia/releases/download/v0.5.1/julia-0.5.1.tar.gz
+tar xvzf julia-0.5.1.tar.gz
+julia-0.5.1; make -j4; cd

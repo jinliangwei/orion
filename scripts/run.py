@@ -44,7 +44,8 @@ def get_default_config():
     config['worker'] = {
         'port' : "11000",
         'num_executors_per_worker' : "1",
-        'executor_thread_pool_size' : "4"
+        'executor_thread_pool_size' : "4",
+        'julia_bin' : "/home/ubuntu/julia-0.5.1/usr/bin"
     }
     config['log'] = {
         'log_dir' : "",
@@ -77,7 +78,8 @@ def get_env_str(pargs):
         'GLOG_stderrthreshold': pargs['log']['stderrthreshold'],
         'GLOG_log_dir' : pargs['log']['log_dir'],
         'GLOG_alsologtostderr': pargs['log']['alsologtostderr'],
-        'GLOG_logbuflevel': pargs['log']['logbuflevel']
+        'GLOG_logbuflevel': pargs['log']['logbuflevel'],
+        'JULIA_HOME' : pargs['worker']['julia_bin']
     }
 
     return "".join([" %s=%s" % (k, v) for (k, v) in env_vars.items()])
@@ -183,18 +185,23 @@ if __name__ == "__main__":
             print ("Master is ready; starting workers now!")
             break
 
+    num_executors_per_worker = int(pargs['worker']['num_executors_per_worker'])
     if args.deploy_mode == 'local':
-        subprocess.Popen(cmd_worker, shell=True)
+        for i in range(0, num_executors_per_worker):
+            curr_cmd_worker = cmd_worker + " --local_executor_index=" + str(i)
+            subprocess.Popen(curr_cmd_worker, shell=True)
     else:
         worker_id = 0
         for host in hosts:
-            print("starting worker ", worker_id)
-            ssh_cmd_worker = cmd_worker + " --worker_ip=" + host.strip() \
-              + " --worker_id=" + str(worker_id)
-            print(ssh_cmd_worker)
-            subprocess.Popen(["ssh", "-oStrictHostKeyChecking=no",
-                             "-oUserKnownHostsFile=/dev/null",
-                             "-oLogLevel=quiet",
-                             "%s" % host,
-                              ssh_cmd_worker], shell=False)
+            for i in range(0, num_executors_per_worker):
+                print("starting %d-th executor on worker %d" % (i, worker_id))
+                ssh_cmd_worker = cmd_worker + " --worker_ip=" + host.strip() \
+                                + " --worker_id=" + str(worker_id) \
+                                + " --local_executor_index=" + str(i)
+                print(ssh_cmd_worker)
+                subprocess.Popen(["ssh", "-oStrictHostKeyChecking=no",
+                                  "-oUserKnownHostsFile=/dev/null",
+                                  "-oLogLevel=quiet",
+                                  "%s" % host,
+                                  ssh_cmd_worker], shell=False)
             worker_id += 1

@@ -13,10 +13,10 @@ class EventHandler {
   epoll_event es_[kNumEvents];
   std::function<void(PollConn*)> connect_event_handler_;
   std::function<int(PollConn*)> read_event_handler_;
-  std::function<void(PollConn*)> closed_connection_handler_;
+  std::function<int(PollConn*)> closed_connection_handler_;
   std::function<void(PollConn*)> write_event_handler_;
-  void ReadAndRunReadEventHandler(PollConn* poll_conn);
-  void RunReadEventHandler(PollConn* poll_conn);
+  bool ReadAndRunReadEventHandler(PollConn* poll_conn);
+  bool RunReadEventHandler(PollConn* poll_conn);
 
  public:
   EventHandler();
@@ -27,7 +27,7 @@ class EventHandler {
   void SetWriteEventHandler(const std::function<void(PollConn*)>&
                            write_event_handler);
   void SetDefaultWriteEventHandler();
-  void SetClosedConnectionHandler(const std::function<void(PollConn*)>&
+  void SetClosedConnectionHandler(const std::function<int(PollConn*)>&
                                   closed_connection_handler);
   int SetToReadWrite(PollConn* poll_conn_ptr);
   int SetToReadOnly(PollConn* poll_conn_ptr);
@@ -35,6 +35,11 @@ class EventHandler {
   int Remove(PollConn* poll_conn_ptr);
   void WaitAndHandleEvent();
   void HandleWriteEvent(PollConn* poll_conn_ptr);
+
+  static constexpr int kNoAction = 0x0;
+  static constexpr int kClearOneMsg = 0x1;
+  static constexpr int kClearOneAndNextMsg = 0x2;
+  static constexpr int kExit = 0x4;
 };
 
 template<typename PollConn>
@@ -61,7 +66,7 @@ EventHandler<PollConn>::SetReadEventHandler(
 template<typename PollConn>
 void
 EventHandler<PollConn>::SetClosedConnectionHandler(
-    const std::function<void(PollConn*)>& closed_connection_handler) {
+    const std::function<int(PollConn*)>& closed_connection_handler) {
   closed_connection_handler_ = closed_connection_handler;
 }
 
@@ -183,30 +188,32 @@ EventHandler<PollConn>::Remove(PollConn* poll_conn_ptr) {
 }
 
 template<typename PollConn>
-void
+bool
 EventHandler<PollConn>::ReadAndRunReadEventHandler(PollConn* poll_conn_ptr) {
   auto &recv_buff = poll_conn_ptr->get_recv_buff();
 
   if (!recv_buff.IsExepectingNextMsg()) {
     bool recv = poll_conn_ptr->Receive();
-    if (!recv) return;
+    if (!recv) return false;
 
     CHECK (!recv_buff.is_error()) << "error during receiving " << errno;
     CHECK (!recv_buff.EOFAtIncompleteMsg()) << "error : early EOF";
   }
-  RunReadEventHandler(poll_conn_ptr);
+  return RunReadEventHandler(poll_conn_ptr);
 }
 
 template<typename PollConn>
-void
+bool
 EventHandler<PollConn>::RunReadEventHandler(PollConn* poll_conn_ptr) {
   int clear_code = read_event_handler_(poll_conn_ptr);
   auto &recv_buff = poll_conn_ptr->get_recv_buff();
-  if (clear_code == 1) {
+  if (clear_code & kClearOneMsg) {
     recv_buff.ClearOneMsg();
-  } else if (clear_code == 2) {
+  } else if (clear_code & kClearOneAndNextMsg) {
     recv_buff.ClearOneAndNextMsg();
   }
+  if (clear_code & kExit) return true;
+  return false;
 }
 
 template<typename PollConn>
@@ -233,16 +240,19 @@ EventHandler<PollConn>::WaitAndHandleEvent() {
           && connect_event_handler_ != nullptr) {
         connect_event_handler_(poll_conn_ptr);
       } else {
-        ReadAndRunReadEventHandler(poll_conn_ptr);
+        bool exit = ReadAndRunReadEventHandler(poll_conn_ptr);
+        if (exit) break;
         auto& recv_buff = poll_conn_ptr->get_recv_buff();
         while (recv_buff.ReceivedFullMsg()
                && (!recv_buff.IsExepectingNextMsg())) {
-          RunReadEventHandler(poll_conn_ptr);
+          exit = RunReadEventHandler(poll_conn_ptr);
+          if (exit) break;
         }
+        if (exit) break;
         if (recv_buff.is_eof()) {
           LOG(INFO) << "someone has closed";
-          closed_connection_handler_(poll_conn_ptr);
-          continue;
+          int clear_code = closed_connection_handler_(poll_conn_ptr);
+          if (clear_code & kExit) break;
         }
       }
     }
@@ -250,11 +260,6 @@ EventHandler<PollConn>::WaitAndHandleEvent() {
     if (es_[i].events & EPOLLOUT) {
       write_event_handler_(poll_conn_ptr);
     }
-
-    //if (!(es_[i].events & EPOLLIN)
-    //    || !(es_[i].events & EPOLLOUT)) {
-    //  LOG(WARNING) << "unknown event happened happend: " << es_[i].events;
-    //}
   }
 }
 

@@ -32,6 +32,7 @@ AC_ARG_ENABLE([sanitizer],
 [  --enable-sanitizer    Turn on google sanitizer],
 [case "${enableval}" in
   address) sanitizer=address ;;
+  thread) sanitizer=thread;;
   none)  sanitizer=none ;;
   *) AC_MSG_ERROR([bad value ${enableval} for --enable-sanitizer]) ;;
 esac],[sanitizer=none])
@@ -49,6 +50,7 @@ AC_SUBST(PERF_COUNT_ON, [$perfcount])
 AC_SUBST(THIRD_PARTY_HOME)
 AC_SUBST(HADOOP_HOME)
 AC_SUBST(JAVA_LIB_HOME)
+AC_SUBST(JULIA_HOME)
 
 dnl Builtins
 

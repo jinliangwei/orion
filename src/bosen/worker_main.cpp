@@ -1,6 +1,6 @@
 #include <glog/logging.h>
 #include <gflags/gflags.h>
-#include <orion/bosen/worker.hpp>
+#include <orion/bosen/executor.hpp>
 
 DEFINE_int32(num_executors, 1, "number of executors");
 
@@ -26,6 +26,8 @@ DEFINE_uint64(comm_buff_capacity, 1024 * 4, "communication buffer capacity");
 
 DEFINE_int32(worker_id, 0, "worker id");
 
+DEFINE_int32(local_executor_index, 0, "executor id");
+
 DEFINE_uint64(executor_thread_pool_size, 4, "thread pool size");
 
 int main(int argc, char *argv[]) {
@@ -37,9 +39,8 @@ int main(int argc, char *argv[]) {
                               FLAGS_master_port, FLAGS_worker_ip, FLAGS_worker_port,
                               FLAGS_comm_buff_capacity, FLAGS_worker_id,
                               FLAGS_executor_thread_pool_size);
-  orion::bosen::Worker worker(config);
-  worker.Run();
-  worker.WaitUntilExit();
+  orion::bosen::Executor executor(config, FLAGS_local_executor_index);
+  executor.operator()();
 
   return 0;
 }

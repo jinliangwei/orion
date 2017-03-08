@@ -78,7 +78,6 @@ class ThreadPool {
   }
 
   void SchedTask(std::function<void(ComputeThreadContext*)> task) {
-    LOG(ERROR) << __func__;
     std::unique_lock<std::mutex> lock(mtx_);
     task_queue_.push(task);
     cv_.notify_one();
@@ -102,7 +101,6 @@ class ThreadPool {
  private:
   void RunTask(ComputeThreadContext* compute_thread_ctx) {
     while (true) {
-      LOG(ERROR) << __func__;
       std::unique_lock<std::mutex> lock(mtx_);
       cv_.wait(lock, [this]{ return this->stop_ || (this->task_queue_.size() > 0); });
       if (stop_) break;

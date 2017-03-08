@@ -14,17 +14,18 @@
 #include <orion/bosen/client_thread.hpp>
 #include <orion/bosen/event_handler.hpp>
 #include <orion/bosen/thread_pool.hpp>
+#include <orion/bosen/julia_evaluator.hpp>
 
 namespace orion {
 namespace bosen {
 
-class ExecutorThread {
+class Executor {
  private:
   struct PollConn {
     enum class ConnType {
       listen = 0,
         master = 1,
-        pipe = 2,
+        compute = 2,
         peer = 3
     };
     void* conn;
@@ -143,32 +144,39 @@ class ExecutorThread {
   std::vector<PollConn> compute_conn_;
   ThreadPool thread_pool_;
 
+  std::vector<uint8_t> julia_eval_recv_mem_;
+  std::vector<uint8_t> julia_eval_send_mem_;
+  std::unique_ptr<conn::PipeConn> julia_eval_;
+  PollConn julia_eval_conn_;
+  JuliaEvaluator julia_eval_ctx_;
+
   size_t num_connected_peers_ {0};
   size_t num_identified_peers_ {0};
   std::vector<HostInfo> host_info_;
   size_t host_info_recved_size_ {0};
 
  public:
-  ExecutorThread(const Config& config, int32_t id);
-  ~ExecutorThread();
-  DISALLOW_COPY(ExecutorThread);
+  Executor(const Config& config, int32_t id);
+  ~Executor();
+  DISALLOW_COPY(Executor);
   void operator() ();
  private:
   void InitListener();
   void HandleConnection(PollConn* poll_conn_ptr);
-  void HandleClosedConnection(PollConn *poll_conn_ptr);
+  int HandleClosedConnection(PollConn *poll_conn_ptr);
   void ConnectToMaster();
   int HandleMsg(PollConn* poll_conn_ptr);
   int HandleMasterMsg();
   int HandlePeerMsg(PollConn* poll_conn_ptr);
   int HandlePipeMsg(PollConn* poll_conn_ptr);
   void ConnectToPeers();
+  void SetUpThreadPool();
+  void ClearBeforeExit();
   void Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn);
   void Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn);
-  void SetUpThreadPool();
 };
 
-ExecutorThread::ExecutorThread(const Config& config, int32_t index):
+Executor::Executor(const Config& config, int32_t index):
     kCommBuffCapacity(config.kCommBuffCapacity),
     kNumExecutors(config.kNumExecutors),
     kNumLocalExecutors(config.kNumExecutorsPerWorker),
@@ -201,13 +209,15 @@ ExecutorThread::ExecutorThread(const Config& config, int32_t index):
     compute_(kThreadPoolSize),
     compute_conn_(kThreadPoolSize),
     thread_pool_(config.kExecutorThreadPoolSize, config.kCommBuffCapacity),
+    julia_eval_recv_mem_(kCommBuffCapacity),
+    julia_eval_send_mem_(kCommBuffCapacity),
+    julia_eval_ctx_(kCommBuffCapacity),
     host_info_(kNumExecutors) { }
 
-
-ExecutorThread::~ExecutorThread() { }
+Executor::~Executor() { }
 
 void
-ExecutorThread::operator() () {
+Executor::operator() () {
   InitListener();
 
   listen_poll_conn_ = {&listen_, PollConn::ConnType::listen};
@@ -231,26 +241,28 @@ ExecutorThread::operator() () {
   }
 
   event_handler_.SetConnectEventHandler(
-      std::bind(&ExecutorThread::HandleConnection, this,
+      std::bind(&Executor::HandleConnection, this,
                 std::placeholders::_1));
 
   event_handler_.SetClosedConnectionHandler(
-      std::bind(&ExecutorThread::HandleClosedConnection, this,
+      std::bind(&Executor::HandleClosedConnection, this,
                 std::placeholders::_1));
 
   event_handler_.SetReadEventHandler(
-      std::bind(&ExecutorThread::HandleMsg, this, std::placeholders::_1));
+      std::bind(&Executor::HandleMsg, this, std::placeholders::_1));
 
   event_handler_.SetDefaultWriteEventHandler();
+  SetUpThreadPool();
 
   while (true) {
     event_handler_.WaitAndHandleEvent();
     if (action_ == Action::kExit) break;
   }
+  ClearBeforeExit();
 }
 
 void
-ExecutorThread::InitListener () {
+Executor::InitListener () {
   uint32_t ip;
   int ret = GetIPFromStr(kListenIp.c_str(), &ip);
   CHECK_NE(ret, 0);
@@ -262,7 +274,7 @@ ExecutorThread::InitListener () {
 }
 
 void
-ExecutorThread::HandleConnection(PollConn* poll_conn_ptr) {
+Executor::HandleConnection(PollConn* poll_conn_ptr) {
   conn::Socket accepted;
   listen_.sock.Accept(&accepted);
 
@@ -283,23 +295,28 @@ ExecutorThread::HandleConnection(PollConn* poll_conn_ptr) {
   num_connected_peers_++;
 }
 
-void
-ExecutorThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
+int
+Executor::HandleClosedConnection(PollConn *poll_conn_ptr) {
+  int ret = EventHandler<PollConn>::kNoAction;
   auto type = poll_conn_ptr->type;
   if (type == PollConn::ConnType::listen
-      || type == PollConn::ConnType::pipe
+      || type == PollConn::ConnType::compute
       || type == PollConn::ConnType::peer) {
-    event_handler_.Remove(poll_conn_ptr);
+    int ret = event_handler_.Remove(poll_conn_ptr);
+    CHECK_EQ(ret, 0);
   } else {
-    event_handler_.Remove(poll_conn_ptr);
+    int ret = event_handler_.Remove(poll_conn_ptr);
+    CHECK_EQ(ret, 0);
     auto* conn = reinterpret_cast<conn::SocketConn*>(poll_conn_ptr->conn);
     conn->sock.Close();
     action_ = Action::kExit;
+    ret |= EventHandler<PollConn>::kExit;
   }
+  return ret;
 }
 
 void
-ExecutorThread::ConnectToMaster() {
+Executor::ConnectToMaster() {
   uint32_t ip;
   int ret = GetIPFromStr(kMasterIp.c_str(), &ip);
   CHECK_NE(ret, 0);
@@ -309,7 +326,7 @@ ExecutorThread::ConnectToMaster() {
 }
 
 int
-ExecutorThread::HandleMsg(PollConn* poll_conn_ptr) {
+Executor::HandleMsg(PollConn* poll_conn_ptr) {
   int ret = 0;
   if (poll_conn_ptr->type == PollConn::ConnType::master) {
     ret = HandleMasterMsg();
@@ -345,18 +362,18 @@ ExecutorThread::HandleMsg(PollConn* poll_conn_ptr) {
 }
 
 int
-ExecutorThread::HandleMasterMsg() {
+Executor::HandleMasterMsg() {
   auto &sock = master_.sock;
   auto &recv_buff = master_.recv_buff;
 
   auto msg_type = message::Helper::get_type(recv_buff);
-  int ret = 0;
+  int ret = EventHandler<PollConn>::kNoAction;
   switch (msg_type) {
     case message::Type::kExecutorConnectToPeers:
       {
         if (recv_buff.IsExepectingNextMsg()) {
           bool recv = sock.Recv(&recv_buff, host_info_.data() + host_info_recved_size_);
-          if (!recv) return 0;
+          if (!recv) return EventHandler<PollConn>::kNoAction;
           CHECK (!recv_buff.is_error()) << "driver error during receiving "
                                         << errno;
           CHECK (!recv_buff.EOFAtIncompleteMsg()) << "driver error : early EOF";
@@ -377,9 +394,9 @@ ExecutorThread::HandleMasterMsg() {
         }
         if (recv_buff.ReceivedFullNextMsg()) {
           LOG(INFO) << "got all host info";
-          ret = 2;
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kConnectToPeers;
-        } else ret = 0;
+        } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
     default:
@@ -392,11 +409,11 @@ ExecutorThread::HandleMasterMsg() {
 }
 
 int
-ExecutorThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
+Executor::HandlePeerMsg(PollConn* poll_conn_ptr) {
   auto &recv_buff = poll_conn_ptr->get_recv_buff();
 
   auto msg_type = message::Helper::get_type(recv_buff);
-  int ret = 1;
+  int ret = EventHandler<PollConn>::kClearOneMsg;
   switch (msg_type) {
     case message::Type::kExecutorIdentity:
       {
@@ -407,7 +424,7 @@ ExecutorThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
         if (num_identified_peers_ == kId) {
           action_ = Action::kAckConnectToPeers;
         }
-        ret = 1;
+        ret = EventHandler<PollConn>::kClearOneMsg;
       }
       break;
     default:
@@ -420,12 +437,12 @@ ExecutorThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
 }
 
 int
-ExecutorThread::HandlePipeMsg(PollConn* poll_conn_ptr) {
-  return 1;
+Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
+  return EventHandler<PollConn>::kClearOneMsg;
 }
 
 void
-ExecutorThread::ConnectToPeers() {
+Executor::ConnectToPeers() {
   HostInfo host_info;
   int ret = GetIPFromStr(kListenIp.c_str(), &host_info.ip);
   CHECK_NE(ret, 0);
@@ -453,7 +470,38 @@ ExecutorThread::ConnectToPeers() {
 }
 
 void
-ExecutorThread::Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn) {
+Executor::SetUpThreadPool() {
+  auto read_pipe = julia_eval_ctx_.get_read_pipe();
+  julia_eval_ = std::make_unique<conn::PipeConn>(
+      read_pipe, julia_eval_recv_mem_.data(),
+      julia_eval_send_mem_.data(), kCommBuffCapacity);
+  julia_eval_conn_.type = PollConn::ConnType::compute;
+  julia_eval_conn_.conn = julia_eval_.get();
+  int ret = event_handler_.SetToReadOnly(&julia_eval_conn_);
+  CHECK_EQ(ret, 0);
+  julia_eval_ctx_.Start();
+  for (int i = 0; i < kThreadPoolSize; ++i) {
+    auto read_pipe = thread_pool_.get_read_pipe(i);
+    compute_[i] = std::make_unique<conn::PipeConn>(
+        read_pipe, thread_pool_recv_mem_.data() + kCommBuffCapacity*i,
+        thread_pool_send_mem_.data() + kCommBuffCapacity*i,
+        kCommBuffCapacity);
+    compute_conn_[i].type = PollConn::ConnType::compute;
+    compute_conn_[i].conn = compute_[i].get();
+    int ret = event_handler_.SetToReadOnly(&compute_conn_[i]);
+    CHECK_EQ(ret, 0);
+  }
+  thread_pool_.Start();
+}
+
+void
+Executor::ClearBeforeExit() {
+  julia_eval_ctx_.Stop();
+  thread_pool_.StopAll();
+}
+
+void
+Executor::Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn) {
   auto& send_buff = poll_conn_ptr->get_send_buff();
   if (send_buff.get_remaining_to_send_size() > 0
       || send_buff.get_remaining_next_to_send_size() > 0) {
@@ -472,7 +520,7 @@ ExecutorThread::Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn) {
 }
 
 void
-ExecutorThread::Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn) {
+Executor::Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn) {
   auto& send_buff = poll_conn_ptr->get_send_buff();
   if (send_buff.get_remaining_to_send_size() > 0
       || send_buff.get_remaining_next_to_send_size() > 0) {

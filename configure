@@ -620,6 +620,7 @@ ac_includes_default="\
 
 ac_subst_vars='LTLIBOBJS
 LIBOBJS
+JULIA_HOME
 JAVA_LIB_HOME
 HADOOP_HOME
 THIRD_PARTY_HOME
@@ -4221,6 +4222,7 @@ DEBUG_ON=$debug
 if test "${enable_sanitizer+set}" = set; then :
   enableval=$enable_sanitizer; case "${enableval}" in
   address) sanitizer=address ;;
+  thread) sanitizer=thread;;
   none)  sanitizer=none ;;
   *) as_fn_error $? "bad value ${enableval} for --enable-sanitizer" "$LINENO" 5 ;;
 esac
@@ -4243,6 +4245,7 @@ else
 fi
 
 PERF_COUNT_ON=$perfcount
+
 
 
 

@@ -3,6 +3,10 @@ AR = ar
 CC = gcc
 CXX = g++-5 -std=c++14
 
+ifeq (@JULIA_HOMW@,)
+$(error JULIA_HOME is not set)
+endif
+
 ifeq (@DEBUG_ON@,true)
 DFLAGS = -g -O0
 else
@@ -23,6 +27,10 @@ CFLAGS = $(DFLAGS) $(PERF_COUNT_ON_FLAGS) \
 	-Wno-unused-parameter \
 	-I$(ORION_HOME)/include
 
+JULIA_HOME=@JULIA_HOME@
+
+CFLAGS += -I$(JULIA_HOME)/usr/include -I$(JULIA_HOME)/src -I$(JULIA_HOME)/src/support
+
 LIBS = -lgtest \
 	-lglog \
 	-lgflags \
@@ -37,7 +45,13 @@ SANITIZER_FLAGS = -fsanitize=address
 CFLAGS += -fno-omit-frame-pointer
 endif
 
+ifeq (@SANITIZER_ON@,thread)
+SANITIZER_FLAGS = -fsanitize=thread
+endif
+
 LDFLAGS = -Wl,-rpath,$(ORION_HOME)/lib/ -L$(ORION_HOME)/lib
+LDFLAGS += -Wl,-rpath,$(JULIA_HOME)/usr/lib -L$(JULIA_HOME)/usr/lib
+LIBS += -ljulia
 
 ifneq (@HADOOP_HOME@,)
 CFLAGS += -I@HADOOP_HOME@/include

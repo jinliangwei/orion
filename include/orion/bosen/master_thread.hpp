@@ -96,7 +96,7 @@ class MasterThread {
  private:
   void InitListener();
   void HandleConnection(PollConn* poll_conn_ptr);
-  void HandleClosedConnection(PollConn *poll_conn_ptr);
+  int HandleClosedConnection(PollConn *poll_conn_ptr);
   conn::RecvBuffer& HandleReadEvent(PollConn* poll_conn_ptr);
   int HandleMsg(PollConn *poll_conn_ptr);
   int HandleDriverMsg(PollConn *poll_conn_ptr);
@@ -197,18 +197,19 @@ MasterThread::HandleConnection(PollConn *poll_conn_ptr) {
   num_accepted_executors_++;
 }
 
-void
+int
 MasterThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
   num_closed_conns_++;
   auto *sock_conn = poll_conn_ptr->conn;
   auto &sock = sock_conn->sock;
   event_handler_.Remove(poll_conn_ptr);
   sock.Close();
+  return EventHandler<PollConn>::kNoAction;
 }
 
 int
 MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
-  int ret = 0;
+  int ret = EventHandler<PollConn>::kNoAction;
   if (poll_conn_ptr->type == PollConn::ConnType::executor) {
     ret = HandleExecutorMsg(poll_conn_ptr);
   } else {
@@ -240,7 +241,7 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
 
 int
 MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
-  return 1;
+  return EventHandler<PollConn>::kClearOneMsg;
 }
 
 int
@@ -248,7 +249,7 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
   auto &recv_buff = poll_conn_ptr->get_recv_buff();
 
   auto msg_type = message::Helper::get_type(recv_buff);
-  int ret = 1;
+  int ret = EventHandler<PollConn>::kClearOneMsg;
   switch (msg_type) {
     case message::Type::kExecutorIdentity:
       {
@@ -261,7 +262,7 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
             && (num_identified_executors_ == kNumExecutors)) {
           action_ = Action::kExecutorConnectToPeers;
         }
-        ret = 1;
+        ret = EventHandler<PollConn>::kClearOneMsg;
       }
       break;
     case message::Type::kExecutorConnectToPeersAck:
@@ -271,7 +272,7 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
           LOG(INFO) << "exit!";
           action_ = Action::kExit;
         }
-        ret = 1;
+        ret = EventHandler<PollConn>::kClearOneMsg;
       }
       break;
     default:

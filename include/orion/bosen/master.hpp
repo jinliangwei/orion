@@ -18,7 +18,6 @@ class Master {
   ~Master() { }
 
   void Run() {
-    LOG(INFO) << "here 4";
     runner_ = std::thread(
         &MasterThread::operator(),
         &master_thread_);

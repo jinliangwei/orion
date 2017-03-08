@@ -1,7 +1,6 @@
 #include <glog/logging.h>
 #include <gflags/gflags.h>
 #include <orion/bosen/config.hpp>
-
 #include <orion/bosen/master.hpp>
 
 DEFINE_int32(num_executors, 1, "number of executors");
@@ -27,5 +26,6 @@ int main(int argc, char *argv[]) {
   orion::bosen::Master master(config);
   master.Run();
   master.WaitUntilExit();
+
   return 0;
 }
