@@ -177,13 +177,13 @@ if __name__ == "__main__":
     print(cmd_master)
     print(cmd_worker)
 
-    print (cmd_master)
-    master_proc = subprocess.Popen(cmd_master, shell=True, stdout=subprocess.PIPE)
-    while True:
-        line = master_proc.stdout.readline()
-        if line.decode("utf-8").strip() == "Master is ready!":
-            print ("Master is ready; starting workers now!")
-            break
+    master_proc = subprocess.Popen(cmd_master, shell=True)
+    time.sleep(5)
+#    while True:
+#        line = master_proc.stdout.readline()
+#        if line.decode("utf-8").strip() == "Master is ready!":
+#            print ("Master is ready; starting workers now!")
+#            break
 
     num_executors_per_worker = int(pargs['worker']['num_executors_per_worker'])
     if args.deploy_mode == 'local':
@@ -205,3 +205,4 @@ if __name__ == "__main__":
                                   "%s" % host,
                                   ssh_cmd_worker], shell=False)
             worker_id += 1
+    master_proc.wait()

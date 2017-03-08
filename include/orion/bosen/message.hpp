@@ -11,10 +11,11 @@ namespace message {
 
 enum class Type {
   kMasterMsg = 0,
-    kExecutorConnectToPeers = 1,
-    kExecutorConnectToPeersAck = 2,
-    kExecutorIdentity = 3,
-    kExecutorReady = 4,
+    kClientMsg = 1,
+    kExecutorConnectToPeers = 2,
+    kExecutorConnectToPeersAck = 3,
+    kExecutorIdentity = 4,
+    kExecutorReady = 5,
     kExecutorStop = 10
 };
 

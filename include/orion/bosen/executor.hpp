@@ -393,7 +393,6 @@ Executor::HandleMasterMsg() {
           }
         }
         if (recv_buff.ReceivedFullNextMsg()) {
-          LOG(INFO) << "got all host info";
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kConnectToPeers;
         } else ret = EventHandler<PollConn>::kNoAction;

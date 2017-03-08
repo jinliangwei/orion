@@ -19,12 +19,13 @@ namespace bosen {
 class MasterThread {
  private:
   static constexpr const char *kMasterReadyString = "Master is ready!";
+  static constexpr const char *kClusterReadyString = "Your Orion cluster is ready!";
 
   struct PollConn {
     enum class ConnType {
       listen = 0,
         executor = 1,
-        driver = 2
+        driver = 2,
     };
 
     conn::SocketConn *conn;
@@ -70,15 +71,26 @@ class MasterThread {
   const size_t kCommBuffCapacity;
   const std::string kMasterIp;
   const uint16_t kMasterPort;
-  std::vector<uint8_t> recv_mem_;
-  std::vector<uint8_t> send_mem_;
   EventHandler<PollConn> event_handler_;
+
+  std::vector<uint8_t> listen_recv_mem_;
+  std::vector<uint8_t> listen_send_mem_;
   conn::SocketConn listen_;
+  PollConn listen_poll_conn_;
+
+  std::vector<uint8_t> driver_recv_mem_;
+  std::vector<uint8_t> driver_send_mem_;
   conn::SocketConn driver_;
+  PollConn driver_poll_conn_;
+
+  std::vector<uint8_t> executor_recv_mem_;
+  std::vector<uint8_t> executor_send_mem_;
   std::vector<std::unique_ptr<conn::SocketConn>> executors_;
-  std::vector<PollConn> poll_conns_;
-  std::vector<HostInfo> host_info_;
+  std::vector<PollConn> executor_poll_conn_;
+
+  std::vector<uint8_t> send_mem_;
   conn::SendBuffer send_buff_;
+  std::vector<HostInfo> host_info_;
 
   size_t num_accepted_executors_ {0};
   size_t num_identified_executors_ {0};
@@ -109,30 +121,33 @@ MasterThread::MasterThread(const Config &config):
     kCommBuffCapacity(config.kCommBuffCapacity),
     kMasterIp(config.kMasterIp),
     kMasterPort(config.kMasterPort),
-    recv_mem_((kNumExecutors + 2) * config.kCommBuffCapacity),
-    send_mem_((kNumExecutors + 3) * config.kCommBuffCapacity),
+    listen_recv_mem_(config.kCommBuffCapacity),
+    listen_send_mem_(config.kCommBuffCapacity),
     listen_(conn::Socket(),
-            recv_mem_.data(),
-            send_mem_.data(),
-            kCommBuffCapacity),
+            listen_recv_mem_.data(),
+            listen_send_mem_.data(),
+            config.kCommBuffCapacity),
+    driver_recv_mem_(config.kCommBuffCapacity),
+    driver_send_mem_(config.kCommBuffCapacity),
     driver_(conn::Socket(),
-            recv_mem_.data() + kCommBuffCapacity,
-            send_mem_.data() + kCommBuffCapacity,
-            kCommBuffCapacity),
-    executors_(kNumExecutors),
-    poll_conns_(kNumExecutors),
-    host_info_(kNumExecutors),
-    send_buff_(send_mem_.data() + 2*kCommBuffCapacity,
-               config.kCommBuffCapacity) { }
+            driver_recv_mem_.data(),
+            driver_send_mem_.data(),
+            config.kCommBuffCapacity),
+    executor_recv_mem_(config.kCommBuffCapacity*config.kNumExecutors),
+    executor_send_mem_(config.kCommBuffCapacity*config.kNumExecutors),
+    executors_(config.kNumExecutors),
+    executor_poll_conn_(config.kNumExecutors),
+    send_mem_(config.kCommBuffCapacity),
+    send_buff_(send_mem_.data(), config.kCommBuffCapacity),
+    host_info_(config.kNumExecutors) { }
 
 MasterThread::~MasterThread() { }
 
 void
 MasterThread::operator() () {
-  LOG(INFO) << "MasterThread is started";
   InitListener();
-  PollConn listen_poll_conn = {&listen_, PollConn::ConnType::listen};
-  event_handler_.SetToReadOnly(&listen_poll_conn);
+  listen_poll_conn_ = {&listen_, PollConn::ConnType::listen};
+  event_handler_.SetToReadOnly(&listen_poll_conn_);
   event_handler_.SetConnectEventHandler(
       std::bind(&MasterThread::HandleConnection, this,
                 std::placeholders::_1));
@@ -152,6 +167,7 @@ MasterThread::operator() () {
     event_handler_.WaitAndHandleEvent();
     if (action_ == Action::kExit) break;
   }
+  LOG(INFO) << "master exiting!";
 }
 
 void
@@ -177,24 +193,21 @@ MasterThread::HandleConnection(PollConn *poll_conn_ptr) {
   conn::Socket accepted;
   listen_.sock.Accept(&accepted);
 
-  uint8_t *recv_mem = recv_mem_.data()
-                      + (num_accepted_executors_ + 2)
-                      * kCommBuffCapacity;
-  uint8_t *send_mem = send_mem_.data()
-                      + (num_accepted_executors_ + 3)
-                      * kCommBuffCapacity;
-
-  auto *sock_conn = new conn::SocketConn(
-      accepted, recv_mem, send_mem, kCommBuffCapacity);
-
-  auto &curr_poll_conn
-      = poll_conns_[num_accepted_executors_];
-
-  curr_poll_conn.conn = sock_conn;
-  curr_poll_conn.type = PollConn::ConnType::executor;
-
-  event_handler_.SetToReadOnly(&curr_poll_conn);
-  num_accepted_executors_++;
+  if (num_accepted_executors_ < kNumExecutors) {
+    uint8_t *recv_mem = executor_recv_mem_.data()
+                        + num_accepted_executors_*kCommBuffCapacity;
+    uint8_t *send_mem = executor_send_mem_.data()
+                        + num_accepted_executors_*kCommBuffCapacity;
+    auto *sock_conn = new conn::SocketConn(
+        accepted, recv_mem, send_mem, kCommBuffCapacity);
+    auto &curr_poll_conn
+        = executor_poll_conn_[num_accepted_executors_];
+    curr_poll_conn.conn = sock_conn;
+    curr_poll_conn.type = PollConn::ConnType::executor;
+    event_handler_.SetToReadOnly(&curr_poll_conn);
+    num_accepted_executors_++;
+  } else {
+  }
 }
 
 int
@@ -269,8 +282,9 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
       {
         num_ready_executors_++;
         if (num_ready_executors_ == kNumExecutors) {
-          LOG(INFO) << "exit!";
-          action_ = Action::kExit;
+          std::cout << kClusterReadyString << std::endl;
+          std::cout << "Connect your client application to "
+                    << kMasterIp << ":" << kMasterPort << std::endl;
         }
         ret = EventHandler<PollConn>::kClearOneMsg;
       }
@@ -300,7 +314,7 @@ MasterThread::BroadcastAllExecutors() {
     bool sent = executors_[i]->sock.Send(&send_buff_);
     if (!sent) {
       send_buff.Copy(send_buff_);
-      event_handler_.SetToReadWrite(&poll_conns_[i]);
+      event_handler_.SetToReadWrite(&executor_poll_conn_[i]);
     }
     send_buff_.reset_sent_sizes();
   }
