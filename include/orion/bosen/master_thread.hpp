@@ -11,6 +11,7 @@
 #include <orion/bosen/host_info.hpp>
 #include <orion/bosen/util.hpp>
 #include <orion/bosen/message.hpp>
+#include <orion/bosen/driver_message.hpp>
 #include <orion/bosen/event_handler.hpp>
 
 namespace orion {
@@ -18,9 +19,6 @@ namespace bosen {
 
 class MasterThread {
  private:
-  static constexpr const char *kMasterReadyString = "Master is ready!";
-  static constexpr const char *kClusterReadyString = "Your Orion cluster is ready!";
-
   struct PollConn {
     enum class ConnType {
       listen = 0,
@@ -96,6 +94,7 @@ class MasterThread {
   size_t num_identified_executors_ {0};
   size_t num_ready_executors_ {0};
   size_t num_closed_conns_ {0};
+  bool stopped_all_ {false};
 
   State state_ {State::kInitialization};
   Action action_ {Action::kNone};
@@ -162,7 +161,8 @@ MasterThread::operator() () {
 
   event_handler_.SetDefaultWriteEventHandler();
 
-  std::cout << kMasterReadyString << std::endl;
+  std::cout << "Master is ready to receive connection from executors!"
+            << std::endl;
   while (true) {
     event_handler_.WaitAndHandleEvent();
     if (action_ == Action::kExit) break;
@@ -202,22 +202,42 @@ MasterThread::HandleConnection(PollConn *poll_conn_ptr) {
         accepted, recv_mem, send_mem, kCommBuffCapacity);
     auto &curr_poll_conn
         = executor_poll_conn_[num_accepted_executors_];
-    curr_poll_conn.conn = sock_conn;
-    curr_poll_conn.type = PollConn::ConnType::executor;
+    curr_poll_conn = {sock_conn, PollConn::ConnType::executor};
     event_handler_.SetToReadOnly(&curr_poll_conn);
     num_accepted_executors_++;
   } else {
+    LOG(INFO) << "driver is connected";
+    driver_.sock = accepted;
+    driver_poll_conn_ = {&driver_, PollConn::ConnType::driver};
+    event_handler_.SetToReadOnly(&driver_poll_conn_);
   }
 }
 
 int
 MasterThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
-  num_closed_conns_++;
-  auto *sock_conn = poll_conn_ptr->conn;
-  auto &sock = sock_conn->sock;
-  event_handler_.Remove(poll_conn_ptr);
-  sock.Close();
-  return EventHandler<PollConn>::kNoAction;
+  int ret = EventHandler<PollConn>::kNoAction;
+  if (poll_conn_ptr->type == PollConn::ConnType::driver) {
+    LOG(INFO) << "Lost connection to driver";
+    if (!stopped_all_) {
+      LOG(INFO) << "Command executors to stop";
+      message::Helper::CreateMsg<message::ExecutorStop>(&send_buff_);
+      BroadcastAllExecutors();
+      stopped_all_ = true;
+    }
+    driver_.sock.Close();
+  } else {
+    LOG(INFO) << "An executor has disconnected";
+    num_closed_conns_++;
+    auto *sock_conn = poll_conn_ptr->conn;
+    auto &sock = sock_conn->sock;
+    event_handler_.Remove(poll_conn_ptr);
+    sock.Close();
+  }
+  if (num_closed_conns_ == kNumExecutors) {
+    action_ = Action::kExit;
+    ret = EventHandler<PollConn>::kExit;
+  }
+  return ret;
 }
 
 int
@@ -254,7 +274,31 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
 
 int
 MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
-  return EventHandler<PollConn>::kClearOneMsg;
+  auto &recv_buff = poll_conn_ptr->get_recv_buff();
+  auto msg_type = message::Helper::get_type(recv_buff);
+  CHECK(msg_type == message::Type::kDriverMsg);
+
+  auto driver_msg_type = message::DriverMsgHelper::get_type(recv_buff);
+  int ret = EventHandler<PollConn>::kClearOneMsg;
+  switch (driver_msg_type) {
+    case message::DriverMsgType::kStop:
+      {
+        message::Helper::CreateMsg<message::ExecutorStop>(&send_buff_);
+        BroadcastAllExecutors();
+        stopped_all_ = true;
+      }
+      break;
+    case message::DriverMsgType::kExecuteOnAny:
+      {
+
+      }
+      break;
+    default:
+      auto& sock = poll_conn_ptr->conn->sock;
+      LOG(FATAL) << "Unknown driver message type " << static_cast<int>(driver_msg_type)
+                 << " from " << sock.get_fd();
+  }
+  return ret;
 }
 
 int
@@ -282,7 +326,7 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
       {
         num_ready_executors_++;
         if (num_ready_executors_ == kNumExecutors) {
-          std::cout << kClusterReadyString << std::endl;
+          std::cout << "Your Orion cluster is ready!" << std::endl;
           std::cout << "Connect your client application to "
                     << kMasterIp << ":" << kMasterPort << std::endl;
         }

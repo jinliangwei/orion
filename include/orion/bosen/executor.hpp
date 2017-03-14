@@ -398,6 +398,12 @@ Executor::HandleMasterMsg() {
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
+    case message::Type::kExecutorStop:
+      {
+        action_ = Action::kExit;
+        ret = EventHandler<PollConn>::kClearOneMsg | EventHandler<PollConn>::kExit;
+      }
+      break;
     default:
       {
         LOG(FATAL) << "unknown message type " << static_cast<int>(msg_type);

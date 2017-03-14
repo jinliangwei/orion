@@ -195,7 +195,7 @@ EventHandler<PollConn>::ReadAndRunReadEventHandler(PollConn* poll_conn_ptr) {
   if (!recv_buff.IsExepectingNextMsg()) {
     bool recv = poll_conn_ptr->Receive();
     if (!recv) return false;
-
+    if (recv_buff.is_eof()) return false;
     CHECK (!recv_buff.is_error()) << "error during receiving " << errno;
     CHECK (!recv_buff.EOFAtIncompleteMsg()) << "error : early EOF";
   }
@@ -245,12 +245,12 @@ EventHandler<PollConn>::WaitAndHandleEvent() {
         auto& recv_buff = poll_conn_ptr->get_recv_buff();
         while (recv_buff.ReceivedFullMsg()
                && (!recv_buff.IsExepectingNextMsg())) {
+          LOG(INFO) << "run readeventhandler";
           exit = RunReadEventHandler(poll_conn_ptr);
           if (exit) break;
         }
         if (exit) break;
         if (recv_buff.is_eof()) {
-          LOG(INFO) << "someone has closed";
           int clear_code = closed_connection_handler_(poll_conn_ptr);
           if (clear_code & kExit) break;
         }

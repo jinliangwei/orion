@@ -11,7 +11,7 @@ namespace message {
 
 enum class Type {
   kMasterMsg = 0,
-    kClientMsg = 1,
+    kDriverMsg = 1,
     kExecutorConnectToPeers = 2,
     kExecutorConnectToPeersAck = 3,
     kExecutorIdentity = 4,
@@ -20,21 +20,17 @@ enum class Type {
 };
 
 class Helper;
-
-template<Type header_type>
-class DefaultPayloadCreator;
+class DefaultMsgCreator;
 
 struct Header {
   Type type;
-  size_t payload_size;
   uint64_t seq, ack;
  private:
   Header() = default;
   friend class Helper;
  public:
   Header (Type _type):
-      type(_type),
-      payload_size(0) { }
+      type(_type) { }
 };
 
 static_assert(std::is_pod<Header>::value, "Header must be POD!");
@@ -44,13 +40,12 @@ struct ExecutorConnectToPeers {
   size_t num_executors;
  private:
   ExecutorConnectToPeers() = default;
-  friend class DefaultPayloadCreator<Type::kExecutorConnectToPeers>;
+  friend class DefaultMsgCreator;
  public:
   void Init(size_t _num_executors) {
     num_executors = _num_executors;
   }
   static constexpr Type get_type() { return Type::kExecutorConnectToPeers; }
-  size_t get_payload_size() const { return 0; }
 };
 
 static_assert(std::is_pod<ExecutorConnectToPeers>::value,
@@ -59,12 +54,10 @@ static_assert(std::is_pod<ExecutorConnectToPeers>::value,
 struct ExecutorConnectToPeersAck {
  private:
   ExecutorConnectToPeersAck() = default;
-  friend class DefaultPayloadCreator<Type::kExecutorConnectToPeersAck>;
+  friend class DefaultMsgCreator;
  public:
   void Init() { }
   static constexpr Type get_type() { return Type::kExecutorConnectToPeersAck; }
-  size_t get_payload_size() const { return 0; }
-
 };
 
 static_assert(std::is_pod<ExecutorConnectToPeersAck>::value,
@@ -73,11 +66,10 @@ static_assert(std::is_pod<ExecutorConnectToPeersAck>::value,
 struct ExecutorStop {
  private:
   ExecutorStop() = default;
-  friend class DefaultPayloadCreator<Type::kExecutorStop>;
+  friend class DefaultMsgCreator;
  public:
   void Init() { }
   static constexpr Type get_type() { return Type::kExecutorStop; }
-  size_t get_payload_size() const { return 0; }
 };
 static_assert(std::is_pod<ExecutorStop>::value,
               "ExecutorStop must be POD!");
@@ -87,20 +79,36 @@ struct ExecutorIdentity {
   HostInfo host_info;
  private:
   ExecutorIdentity() = default;
-  friend class DefaultPayloadCreator<Type::kExecutorIdentity>;
+  friend class DefaultMsgCreator;
  public:
   void Init(int32_t _executor_id, HostInfo _host_info) {
     executor_id = _executor_id;
     host_info = _host_info;
   }
   static constexpr Type get_type() { return Type::kExecutorIdentity; }
-  size_t get_payload_size() const { return 0; }
 };
 
 static_assert(std::is_pod<ExecutorIdentity>::value, "ExecutorIdentity must be POD!");
 
-template<Type header_type>
-class DefaultPayloadCreator {
+enum class DriverMsgType {
+  kStop = 0,
+    kExecuteOnAny = 1
+};
+
+struct DriverMsg {
+  DriverMsgType driver_msg_type;
+ private:
+  DriverMsg() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init() { }
+  static constexpr Type get_type() { return Type::kDriverMsg; }
+};
+
+static_assert(std::is_pod<DriverMsg>::value,
+              "DriverMsg must be POD!");
+
+class DefaultMsgCreator {
  public:
   template<typename Msg, typename... Args>
   static Msg* CreateMsg(uint8_t* mem, Args... args) {
@@ -108,25 +116,21 @@ class DefaultPayloadCreator {
     msg->Init(args...);
     return msg;
   }
-  static Type get_header_type() {
-    return header_type;
-  }
 };
 
 class Helper {
  public:
-  template<typename Msg, typename PayloadCreator = DefaultPayloadCreator<Msg::get_type()>,
+  template<typename Msg,
+           typename MsgCreator = DefaultMsgCreator,
            typename... Args>
   static Msg* CreateMsg(conn::SendBuffer *send_buff,
                         Args... args) {
     auto header = new (send_buff->get_payload_mem()) Header();
-    header->type = PayloadCreator::get_header_type();
-    Msg* msg = PayloadCreator::template CreateMsg<Msg, Args...>(send_buff->get_payload_mem()
-                                                       + sizeof(Header), args...);
-    CHECK_GE(send_buff->get_payload_capacity(), sizeof(Header) + sizeof(Msg)
-             + msg->get_payload_size());
-    header->payload_size = sizeof(Msg) + msg->get_payload_size();
-    send_buff->set_payload_size(sizeof(Header) + header->payload_size);
+    header->type = Msg::get_type();
+    Msg* msg = MsgCreator::template CreateMsg<Msg, Args...>(
+        send_buff->get_payload_mem() + sizeof(Header), args...);
+    CHECK_GE(send_buff->get_payload_capacity(), sizeof(Header) + sizeof(Msg));
+    send_buff->set_payload_size(sizeof(Header) + sizeof(Msg));
     return msg;
   }
 
@@ -134,21 +138,19 @@ class Helper {
     return reinterpret_cast<const Header*>(recv_buff.get_payload_mem())->type;
   }
 
-  static Type get_type(void* payload_mem) {
-    return reinterpret_cast<const Header*>(payload_mem)->type;
-  }
-
-  static size_t get_payload_capacity(const conn::SendBuffer &send_buff) {
-    return send_buff.get_payload_capacity() - sizeof(Header);
-  }
-
   template<typename Msg>
   static Msg* get_msg(conn::RecvBuffer &recv_buff) {
     return reinterpret_cast<Msg*>(recv_buff.get_payload_mem() + sizeof(Header));
   }
 
-  static uint8_t* get_payload_mem(conn::RecvBuffer &recv_buff) {
-    return recv_buff.get_payload_mem() + sizeof(Header);
+  template<typename Msg>
+  static uint8_t* get_remaining_mem(conn::RecvBuffer &recv_buff) {
+    return recv_buff.get_payload_mem() + sizeof(Header) + sizeof(Msg);
+  }
+
+  template<typename Msg>
+  static size_t get_remaining_size(const conn::RecvBuffer &recv_buff) {
+    return recv_buff.get_payload_capacity() - sizeof(Header) - sizeof(Msg);
   }
 };
 

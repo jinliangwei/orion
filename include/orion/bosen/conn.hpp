@@ -56,6 +56,7 @@ class RecvBuffer {
       expected_size_(*((beacon_t*) (recv_buff.mem_))),
       size_(recv_buff.size_),
       status_(recv_buff.status_) {
+    memset(mem_, 0, capacity_);
     recv_buff.size_ = 0;
   }
 
@@ -206,6 +207,7 @@ class SendBuffer {
       size_(*((beacon_t*) (mem))),
       capacity_(capacity) {
     size_ = 0;
+    memset(mem_, 0, capacity_);
   }
 
   ~SendBuffer() { }
