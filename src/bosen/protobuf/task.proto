@@ -1,0 +1,44 @@
+package orion.bosen.task;
+
+enum DepType {
+  EXCLUSIVE = 0;
+  SHARED = 1;
+}
+
+message TableDep {
+  required int32 table_id = 1;
+  required DepType dep_type = 2;
+}
+
+enum ExecuteGranularity {
+  PER_RECORD = 0;
+  PER_PARTITION = 1;
+  PER_EXECUTOR = 2;
+}
+
+message Execute {
+  required bytes code = 1;
+  optional int32 base_table = 2;
+  repeated TableDep read_dep = 3;
+  repeated TableDep write_dep = 4;
+  required ExecuteGranularity granularity = 5;
+  required int32 repetition = 6;
+  required int32 result_type = 7;
+}
+
+message LoadFile {
+  required string file_path = 1;
+  required int32 table_id = 2;
+  required bytes code = 3;
+}
+
+message Map {
+  required int32 src_table = 1;
+  required int32 dst_table = 2;
+  required bytes code = 3;
+}
+
+message Shuffle {
+  required int32 src_table = 1;
+  required bytes code = 2;
+}

@@ -9,12 +9,17 @@
 #include <orion/bosen/conn.hpp>
 #include <orion/bosen/util.hpp>
 #include <orion/bosen/message.hpp>
+#include <orion/bosen/execute_message.hpp>
 #include <orion/bosen/host_info.hpp>
 #include <orion/bosen/server_thread.hpp>
 #include <orion/bosen/client_thread.hpp>
 #include <orion/bosen/event_handler.hpp>
 #include <orion/bosen/thread_pool.hpp>
 #include <orion/bosen/julia_evaluator.hpp>
+#include <orion/bosen/blob.hpp>
+#include <orion/bosen/byte_buffer.hpp>
+#include <orion/bosen/task.pb.h>
+#include <orion/bosen/recv_arbitrary_bytes.hpp>
 
 namespace orion {
 namespace bosen {
@@ -108,7 +113,8 @@ class Executor {
     kNone = 0,
       kExit = 1,
       kConnectToPeers = 2,
-      kAckConnectToPeers = 3
+      kAckConnectToPeers = 3,
+      kExecute = 4
   };
 
   static const int32_t kPortSpan = 100;
@@ -123,32 +129,34 @@ class Executor {
   const int32_t kId;
 
   EventHandler<PollConn> event_handler_;
-  std::vector<uint8_t> master_send_mem_;
-  std::vector<uint8_t> master_recv_mem_;
+  Blob master_send_mem_;
+  Blob master_recv_mem_;
   conn::SocketConn master_;
   PollConn master_poll_conn_;
-  std::vector<uint8_t> listen_send_mem_;
-  std::vector<uint8_t> listen_recv_mem_;
+  Blob listen_send_mem_;
+  Blob listen_recv_mem_;
   PollConn listen_poll_conn_;
   conn::SocketConn listen_;
-  std::vector<uint8_t> send_mem_;
+  Blob send_mem_;
   conn::SendBuffer send_buff_;
   Action action_ {Action::kNone};
-  std::vector<uint8_t> peer_send_mem_;
-  std::vector<uint8_t> peer_recv_mem_;
+  Blob peer_send_mem_;
+  Blob peer_recv_mem_;
   std::vector<std::unique_ptr<conn::SocketConn>> peer_;
   std::vector<PollConn> peer_conn_;
-  std::vector<uint8_t> thread_pool_recv_mem_;
-  std::vector<uint8_t> thread_pool_send_mem_;
+  Blob thread_pool_recv_mem_;
+  Blob thread_pool_send_mem_;
   std::vector<std::unique_ptr<conn::PipeConn>> compute_;
   std::vector<PollConn> compute_conn_;
   ThreadPool thread_pool_;
 
-  std::vector<uint8_t> julia_eval_recv_mem_;
-  std::vector<uint8_t> julia_eval_send_mem_;
+  Blob julia_eval_recv_mem_;
+  Blob julia_eval_send_mem_;
   std::unique_ptr<conn::PipeConn> julia_eval_;
   PollConn julia_eval_conn_;
   JuliaEvaluator julia_eval_ctx_;
+
+  ByteBuffer byte_buff_;
 
   size_t num_connected_peers_ {0};
   size_t num_identified_peers_ {0};
@@ -169,11 +177,13 @@ class Executor {
   int HandleMasterMsg();
   int HandlePeerMsg(PollConn* poll_conn_ptr);
   int HandlePipeMsg(PollConn* poll_conn_ptr);
+  int HandleExecuteMsg();
   void ConnectToPeers();
   void SetUpThreadPool();
   void ClearBeforeExit();
   void Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn);
   void Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn);
+  void Execute();
 };
 
 Executor::Executor(const Config& config, int32_t index):
@@ -352,6 +362,13 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           Send(&master_poll_conn_, &master_);
           action_ = Action::kNone;
         }
+        break;
+      case Action::kExecute:
+        {
+          Execute();
+          action_ = Action::kNone;
+        }
+        break;
       case Action::kExit:
         break;
       default:
@@ -371,28 +388,14 @@ Executor::HandleMasterMsg() {
   switch (msg_type) {
     case message::Type::kExecutorConnectToPeers:
       {
-        if (recv_buff.IsExepectingNextMsg()) {
-          bool recv = sock.Recv(&recv_buff, host_info_.data() + host_info_recved_size_);
-          if (!recv) return EventHandler<PollConn>::kNoAction;
-          CHECK (!recv_buff.is_error()) << "driver error during receiving "
-                                        << errno;
-          CHECK (!recv_buff.EOFAtIncompleteMsg()) << "driver error : early EOF";
-          host_info_recved_size_ = recv_buff.get_next_recved_size();
-        } else {
-          auto *msg = message::Helper::get_msg<message::ExecutorConnectToPeers>(
+        auto *msg = message::Helper::get_msg<message::ExecutorConnectToPeers>(
               recv_buff);
-          recv_buff.set_next_expected_size(msg->num_executors*sizeof(HostInfo));
-          if (recv_buff.get_size() > recv_buff.get_expected_size()) {
-            size_t size_to_copy = recv_buff.get_size()
-                                  - recv_buff.get_expected_size();
-            memcpy(host_info_.data(),
-                   recv_buff.get_mem() + recv_buff.get_expected_size(),
-                   size_to_copy);
-            host_info_recved_size_ += size_to_copy;
-            recv_buff.IncNextRecvedSize(size_to_copy);
-          }
-        }
-        if (recv_buff.ReceivedFullNextMsg()) {
+        size_t expected_size = msg->num_executors*sizeof(HostInfo);
+        bool received_next_msg =
+            ReceiveArbitraryBytes(sock, &recv_buff,
+                                  reinterpret_cast<uint8_t*>(host_info_.data()), &host_info_recved_size_,
+                                  expected_size);
+        if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kConnectToPeers;
         } else ret = EventHandler<PollConn>::kNoAction;
@@ -402,6 +405,11 @@ Executor::HandleMasterMsg() {
       {
         action_ = Action::kExit;
         ret = EventHandler<PollConn>::kClearOneMsg | EventHandler<PollConn>::kExit;
+      }
+      break;
+    case message::Type::kExecuteMsg:
+      {
+        ret = HandleExecuteMsg();
       }
       break;
     default:
@@ -444,6 +452,39 @@ Executor::HandlePeerMsg(PollConn* poll_conn_ptr) {
 int
 Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
   return EventHandler<PollConn>::kClearOneMsg;
+}
+
+int
+Executor::HandleExecuteMsg() {
+  auto &recv_buff = master_.recv_buff;
+  auto msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
+  int ret = EventHandler<PollConn>::kClearOneMsg;
+  switch (msg_type) {
+    case message::ExecuteMsgType::kExecute:
+      {
+        auto* msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgExecute>(recv_buff);
+        size_t expected_size = msg->task_size;
+        bool received_next_msg
+            = ReceiveArbitraryBytes(master_.sock, &recv_buff, &byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kExecute;
+        } else {
+          ret = EventHandler<PollConn>::kNoAction;
+          action_ = Action::kNone;
+        }
+      }
+      break;
+    default:
+      {
+        LOG(FATAL) << "unknown message type " << static_cast<int>(msg_type);
+      }
+      break;
+  }
+
+  return ret;
 }
 
 void
@@ -541,6 +582,20 @@ Executor::Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn) {
     event_handler_.SetToReadWrite(poll_conn_ptr);
   }
   send_buff_.reset_sent_sizes();
+}
+
+void
+Executor::Execute() {
+  LOG(INFO) << __func__;
+  std::string task_str(reinterpret_cast<const char*>(byte_buff_.GetBytes()),
+                       byte_buff_.GetSize());
+  task::Execute execute;
+  execute.ParseFromString(task_str);
+  // TODO:
+
+  Task julia_task;
+  julia_task.code = execute.code();
+  julia_eval_ctx_.SchedTask(julia_task);
 }
 
 }

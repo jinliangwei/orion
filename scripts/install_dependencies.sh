@@ -20,6 +20,7 @@ sudo apt-get --ignore-missing -y install \
     libgoogle-perftools-dev \
     libgl1-mesa-glx \
     openjdk-8-jdko \
+    libprotobuf-dev \
     emacs \
     autoconf
 

@@ -13,7 +13,7 @@ namespace orion {
 namespace bosen {
 
 struct Task {
-  const char* julia_code;
+  std::string code;
 };
 
 class JuliaEvaluator {
@@ -72,9 +72,10 @@ class JuliaEvaluator {
       cv_.wait(lock, [this]{ return this->stop_ || (this->task_queue_.size() > 0); });
       if (stop_) break;
       Task task = task_queue_.front();
+      LOG(INFO) << "got task " << task.code;
       task_queue_.pop();
       lock.unlock();
-      jl_eval_string(task.julia_code);
+      jl_eval_string(task.code.c_str());
     }
     jl_atexit_hook(0);
   }

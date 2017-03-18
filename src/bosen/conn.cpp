@@ -184,17 +184,19 @@ Pipe::Send(SendBuffer *buf) const {
 }
 
 bool Pipe::Recv(RecvBuffer *buf) const {
-  ssize_t ret = read(read_, buf->GetAvailableMem(),
+  ssize_t ret = read(read_, buf->get_recv_mem(),
                      buf->get_capacity() - buf->get_size());
 
   if (ret < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK)
+      return false;
     buf->set_error();
     return true;
   } else if (ret == 0) {
     buf->set_eof();
     return true;
   } else {
-    buf->IncSize(ret);
+    buf->inc_size(ret);
   }
 
   if (buf->is_initialized())
@@ -210,13 +212,15 @@ bool Pipe::Recv(RecvBuffer *buf, void *mem) const {
                      - buf->get_next_recved_size());
 
   if (ret < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK)
+      return false;
     buf->set_error();
     return true;
   } else if (ret == 0) {
     buf->set_eof();
     return true;
   } else {
-    buf->IncNextRecvedSize(ret);
+    buf->inc_next_recved_size(ret);
   }
 
   if (buf->ReceivedFullNextMsg()) return true;
@@ -245,7 +249,7 @@ Socket::Send(SendBuffer *buf) const {
 }
 
 bool Socket::Recv(RecvBuffer *buf) const {
-  ssize_t ret = read(socket_, buf->GetAvailableMem(),
+  ssize_t ret = read(socket_, buf->get_recv_mem(),
                      buf->get_capacity() - buf->get_size());
   if (ret < 0) {
     buf->set_error();
@@ -254,7 +258,7 @@ bool Socket::Recv(RecvBuffer *buf) const {
     buf->set_eof();
     return true;
   } else {
-    buf->IncSize(ret);
+    buf->inc_size(ret);
   }
 
   if (buf->is_initialized())
@@ -275,7 +279,7 @@ bool Socket::Recv(RecvBuffer *buf, void *mem) const {
     buf->set_eof();
     return true;
   } else {
-    buf->IncNextRecvedSize(ret);
+    buf->inc_next_recved_size(ret);
   }
 
   if (buf->ReceivedFullNextMsg()) return true;

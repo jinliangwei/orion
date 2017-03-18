@@ -9,6 +9,7 @@ namespace bosen {
 namespace type {
 
 enum class PrimitiveType {
+  kVoid = 0,
   kInt8 = 1,
     kUInt8 = 2,
     kInt16 = 3,
@@ -20,43 +21,47 @@ enum class PrimitiveType {
     kString = 9
 };
 
-size_t SizeOf(PrimitiveType type) {
+int SizeOf(PrimitiveType type) {
   switch (type) {
-    case kInt8:
+    case PrimitiveType::kVoid:
+      {
+        return 0;
+      }
+    case PrimitiveType::kInt8:
       {
         return sizeof(int8_t);
       }
-    case kUInt8:
+    case PrimitiveType::kUInt8:
       {
         return sizeof(uint8_t);
       }
-    case kInt16:
+    case PrimitiveType::kInt16:
       {
         return sizeof(int16_t);
       }
-    case kUInt16:
+    case PrimitiveType::kUInt16:
       {
         return sizeof(uint16_t);
       }
-    case kInt32:
+    case PrimitiveType::kInt32:
       {
         return sizeof(int32_t);
       }
-    case kUInt32:
+    case PrimitiveType::kUInt32:
       {
         return sizeof(uint32_t);
       }
-    case kInt64:
+    case PrimitiveType::kInt64:
       {
         return sizeof(int64_t);
       }
-    case kUInt64:
+    case PrimitiveType::kUInt64:
       {
         return sizeof(uint64_t);
       }
-    case kString:
+    case PrimitiveType::kString:
       {
-        return 0;
+        return -1;
       }
     default:
       return 0;

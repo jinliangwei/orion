@@ -6,7 +6,8 @@
 #include <utility>
 #include <glog/logging.h>
 #include <functional>
-
+#include <cstddef>
+#include <orion/bosen/util.hpp>
 #include <orion/noncopyable.hpp>
 
 namespace orion {
@@ -22,12 +23,13 @@ bool CheckSendSize(const SendBuffer &send_buff, size_t sent_size);
 class RecvBuffer {
  private:
   uint8_t * const mem_;
-  const size_t capacity_;
+  const uint8_t *const mem_end_;
   /* set when receving data,
      which the number of bytes constituting the full message,
      consists of two parts, 1) beacon and 2) payload
   */
   beacon_t &expected_size_;
+  uint8_t * const payload_mem_;
   size_t size_;
   uint8_t status_;
   // if nonzero, the next message is likely to exceed the buffer's memory capacity
@@ -39,12 +41,14 @@ class RecvBuffer {
   static const uint8_t kErrorBit = 0x4;
 
   DISALLOW_COPY(RecvBuffer);
+  friend class SendBuffer;
 
  public:
   RecvBuffer(void *mem, size_t capacity):
-      mem_((uint8_t*) mem),
-      capacity_(capacity),
-      expected_size_(*((beacon_t*) (mem))),
+      mem_((uint8_t*) get_aligned(mem, alignof(std::max_align_t))),
+      mem_end_((uint8_t*) mem + capacity),
+      expected_size_(*((beacon_t*) (mem_))),
+      payload_mem_(mem_ + sizeof(beacon_t)),
       size_(0),
       status_(0) {
     expected_size_ = 0;
@@ -52,62 +56,33 @@ class RecvBuffer {
 
   RecvBuffer(RecvBuffer && recv_buff):
       mem_(recv_buff.mem_),
-      capacity_(recv_buff.capacity_),
+      mem_end_(recv_buff.mem_end_),
       expected_size_(*((beacon_t*) (recv_buff.mem_))),
+      payload_mem_(recv_buff.payload_mem_),
       size_(recv_buff.size_),
       status_(recv_buff.status_) {
-    memset(mem_, 0, capacity_);
+    memset(mem_, 0, mem_end_ - mem_);
     recv_buff.size_ = 0;
   }
 
-  void set_next_expected_size(size_t next_expected_size) {
-    next_expected_size_ = next_expected_size;
-  }
-
-  void IncNextRecvedSize(size_t delta) {
-    next_recved_size_ += delta;
-  }
-
-  size_t get_next_expected_size() const {
-    return next_expected_size_;
-  }
-
-  size_t get_next_recved_size() const {
-    return next_recved_size_;
-  }
-
-  void ResetNextRecv() {
-    next_expected_size_ = 0;
-    next_recved_size_ = 0;
-  }
-
-  bool ReceivedFullNextMsg() const {
-    CHECK_LE(next_recved_size_, next_expected_size_);
-    return (next_recved_size_ == next_expected_size_);
-  }
-
-  bool IsExepectingNextMsg() const {
-    return (next_expected_size_ > 0);
-  }
-
-  uint8_t *get_mem() {
-    return mem_;
-  }
-
-  const uint8_t *get_mem() const {
-    return mem_;
-  }
-
-  uint8_t *GetAvailableMem() {
+  uint8_t *get_recv_mem() {
     return mem_ + size_;
   }
 
   uint8_t *get_payload_mem() {
-    return mem_ + sizeof(beacon_t);
+    return payload_mem_;
+  }
+
+  const uint8_t *get_payload_mem() const {
+    return payload_mem_;
+  }
+
+  uint8_t *get_curr_msg_end_mem() {
+    return mem_ + expected_size_;
   }
 
   size_t get_payload_capacity() const {
-    return capacity_ - sizeof(beacon_t);
+    return mem_end_ - payload_mem_;
   }
 
   bool is_initialized() const {
@@ -139,7 +114,7 @@ class RecvBuffer {
   }
 
   size_t get_capacity() const {
-    return capacity_;
+    return mem_end_ - mem_;
   }
 
   bool EOFAtIncompleteMsg() const {
@@ -152,7 +127,7 @@ class RecvBuffer {
             );
   }
 
-  void IncSize(size_t delta) {
+  void inc_size(size_t delta) {
     size_ += delta;
   }
 
@@ -164,6 +139,36 @@ class RecvBuffer {
     size_ -= last_expected_size;
   }
 
+  void set_next_expected_size(size_t next_expected_size) {
+    next_expected_size_ = next_expected_size;
+  }
+
+  void inc_next_recved_size(size_t delta) {
+    next_recved_size_ += delta;
+  }
+
+  size_t get_next_expected_size() const {
+    return next_expected_size_;
+  }
+
+  size_t get_next_recved_size() const {
+    return next_recved_size_;
+  }
+
+  void reset_next_recv() {
+    next_expected_size_ = 0;
+    next_recved_size_ = 0;
+  }
+
+  bool ReceivedFullNextMsg() const {
+    CHECK_LE(next_recved_size_, next_expected_size_);
+    return (next_recved_size_ == next_expected_size_);
+  }
+
+  bool IsExepectingNextMsg() const {
+    return (next_expected_size_ > 0);
+  }
+
   void ClearOneAndNextMsg() {
     if (size_ > expected_size_) {
       size_t size_to_clear = std::min(size_,
@@ -173,7 +178,7 @@ class RecvBuffer {
     } else {
       size_ -= expected_size_;
     }
-    ResetNextRecv();
+    reset_next_recv();
   }
 
   void Reset() {
@@ -189,44 +194,38 @@ class RecvBuffer {
 class SendBuffer {
  private:
   uint8_t * const mem_;
+  const uint8_t * const mem_end_;
   /* the size to be sent, has 2 parts: 1) beacon and 2) payload */
   beacon_t &size_;
-  const size_t capacity_;
+  uint8_t * const payload_mem_;
   size_t sent_size_ {0};
 
   size_t next_to_send_size_ {0};
   size_t next_to_send_sent_size_ {0};
-  uint8_t* next_to_send_mem_ {nullptr};
+  uint8_t const * next_to_send_mem_ {nullptr};
 
-  std::function<void(void*, size_t)> next_to_send_clean_up_ {nullptr};
   DISALLOW_COPY(SendBuffer);
 
  public:
   SendBuffer(void *mem, size_t capacity):
-      mem_((uint8_t*) mem),
-      size_(*((beacon_t*) (mem))),
-      capacity_(capacity) {
-    size_ = 0;
-    memset(mem_, 0, capacity_);
+      mem_((uint8_t*) get_aligned(mem, alignof(std::max_align_t))),
+      mem_end_((uint8_t*) mem + capacity),
+      size_(*((beacon_t*) (mem_))),
+      payload_mem_(mem_ + sizeof(beacon_t)) {
+    size_ = payload_mem_ - mem_;
+    memset(mem_, 0, mem_end_ - mem_);
   }
 
   ~SendBuffer() { }
 
   SendBuffer(SendBuffer &&send_buff):
       mem_(send_buff.mem_),
+      mem_end_(send_buff.mem_end_),
       size_(*((beacon_t*) (send_buff.mem_))),
-      capacity_(send_buff.capacity_) { }
-
-  uint8_t *get_mem() {
-    return mem_;
-  }
-
-  const uint8_t *get_mem() const {
-    return mem_;
-  }
+      payload_mem_(send_buff.payload_mem_) { }
 
   uint8_t *get_payload_mem() {
-    return mem_ + sizeof(beacon_t);
+    return payload_mem_;
   }
 
   size_t get_size() const {
@@ -234,13 +233,13 @@ class SendBuffer {
   }
 
   void set_payload_size(size_t payload_size) {
-    CHECK(payload_size < get_payload_capacity())
+    CHECK(payload_mem_ + payload_size < mem_end_)
         << "message is too large and won't fit in the send buffer";
-    size_ = payload_size + sizeof(beacon_t);
+    size_ = payload_mem_ - mem_ + payload_size;
   }
 
   void inc_payload_size(size_t delta) {
-    CHECK(size_ + delta < get_payload_capacity())
+    CHECK(mem_ + size_ + delta < mem_end_)
         << "message is too large and won't fit in the send buffer";
     size_ += delta;
   }
@@ -249,9 +248,8 @@ class SendBuffer {
     return mem_ + size_;
   }
 
-
-  size_t get_remaining_payload_capacity() const {
-    return capacity_ - size_;
+  size_t get_payload_capacity() const {
+    return mem_end_ - payload_mem_;
   }
 
   void Copy(const SendBuffer &send_buff) {
@@ -263,20 +261,14 @@ class SendBuffer {
   }
 
   void Copy(const RecvBuffer &recv_buff) {
-    memcpy(mem_, recv_buff.get_mem(), recv_buff.get_expected_size());
+    memcpy(mem_, recv_buff.mem_, recv_buff.get_expected_size());
     reset_sent_sizes();
   }
 
-  size_t get_payload_capacity() const {
-    return capacity_ - sizeof(beacon_t);
-  }
-
-  void set_next_to_send(void *mem, size_t to_send_size,
-                        std::function<void(void*, size_t)> clean_up) {
-    next_to_send_mem_  = reinterpret_cast<uint8_t*>(mem);
+  void set_next_to_send(const void *mem, size_t to_send_size) {
+    next_to_send_mem_  = reinterpret_cast<const uint8_t*>(mem);
     next_to_send_size_ = to_send_size;
     next_to_send_sent_size_ = 0;
-    next_to_send_clean_up_ = clean_up;
   }
 
   void inc_sent_size(size_t sent_size) {
@@ -295,7 +287,7 @@ class SendBuffer {
     next_to_send_sent_size_ += sent_size;
   }
 
-  uint8_t* get_remaining_next_to_send_mem() {
+  const uint8_t* get_remaining_next_to_send_mem() {
     return next_to_send_mem_ + next_to_send_sent_size_;
   }
 
@@ -309,15 +301,11 @@ class SendBuffer {
   }
 
   void clear_to_send() {
-    size_ = 0;
+    size_ = payload_mem_ - mem_;
     sent_size_ = 0;
     next_to_send_size_ = 0;
     next_to_send_sent_size_ = 0;
     next_to_send_mem_ = nullptr;
-
-    if (next_to_send_clean_up_ != nullptr) {
-      next_to_send_clean_up_(next_to_send_mem_, next_to_send_size_);
-    }
   }
 };
 

@@ -10,9 +10,14 @@
 #include <orion/bosen/conn.hpp>
 #include <orion/bosen/host_info.hpp>
 #include <orion/bosen/util.hpp>
+#include <orion/bosen/event_handler.hpp>
+#include <orion/bosen/byte_buffer.hpp>
+
 #include <orion/bosen/message.hpp>
 #include <orion/bosen/driver_message.hpp>
-#include <orion/bosen/event_handler.hpp>
+#include <orion/bosen/execute_message.hpp>
+#include <orion/bosen/blob.hpp>
+#include <orion/bosen/recv_arbitrary_bytes.hpp>
 
 namespace orion {
 namespace bosen {
@@ -62,7 +67,9 @@ class MasterThread {
   enum class Action {
     kNone = 0,
       kExit = 1,
-      kExecutorConnectToPeers = 2
+      kExecutorConnectToPeers = 2,
+      kExecuteOnOne = 3,
+      kExecuteOnAll = 4
   };
 
   const size_t kNumExecutors;
@@ -71,24 +78,26 @@ class MasterThread {
   const uint16_t kMasterPort;
   EventHandler<PollConn> event_handler_;
 
-  std::vector<uint8_t> listen_recv_mem_;
-  std::vector<uint8_t> listen_send_mem_;
+  Blob listen_recv_mem_;
+  Blob listen_send_mem_;
   conn::SocketConn listen_;
   PollConn listen_poll_conn_;
 
-  std::vector<uint8_t> driver_recv_mem_;
-  std::vector<uint8_t> driver_send_mem_;
+  Blob driver_recv_mem_;
+  Blob driver_send_mem_;
   conn::SocketConn driver_;
   PollConn driver_poll_conn_;
 
-  std::vector<uint8_t> executor_recv_mem_;
-  std::vector<uint8_t> executor_send_mem_;
+  Blob executor_recv_mem_;
+  Blob executor_send_mem_;
   std::vector<std::unique_ptr<conn::SocketConn>> executors_;
   std::vector<PollConn> executor_poll_conn_;
 
-  std::vector<uint8_t> send_mem_;
+  Blob send_mem_;
   conn::SendBuffer send_buff_;
   std::vector<HostInfo> host_info_;
+  ByteBuffer byte_buff_;
+  int32_t executor_to_work_ {0};
 
   size_t num_accepted_executors_ {0};
   size_t num_identified_executors_ {0};
@@ -113,6 +122,7 @@ class MasterThread {
   int HandleDriverMsg(PollConn *poll_conn_ptr);
   int HandleExecutorMsg(PollConn *poll_conn_ptr);
   void BroadcastAllExecutors();
+  void SendToExecutor(int executor_index);
 };
 
 MasterThread::MasterThread(const Config &config):
@@ -192,7 +202,6 @@ void
 MasterThread::HandleConnection(PollConn *poll_conn_ptr) {
   conn::Socket accepted;
   listen_.sock.Accept(&accepted);
-
   if (num_accepted_executors_ < kNumExecutors) {
     uint8_t *recv_mem = executor_recv_mem_.data()
                         + num_accepted_executors_*kCommBuffCapacity;
@@ -257,9 +266,19 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           message::Helper::CreateMsg<message::ExecutorConnectToPeers>(
               &send_buff_, kNumExecutors);
           send_buff_.set_next_to_send(host_info_.data(),
-                                      kNumExecutors*sizeof(HostInfo),
-                                      nullptr);
+                                      kNumExecutors*sizeof(HostInfo));
           BroadcastAllExecutors();
+          action_ = Action::kNone;
+        }
+        break;
+      case Action::kExecuteOnOne:
+        {
+          message::ExecuteMsgHelper::CreateMsg<
+            message::ExecuteMsgExecute>(
+                &send_buff_, byte_buff_.GetSize());
+          send_buff_.set_next_to_send(byte_buff_.GetBytes(),
+                                      byte_buff_.GetSize());
+          SendToExecutor(executor_to_work_);
           action_ = Action::kNone;
         }
         break;
@@ -288,9 +307,19 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         stopped_all_ = true;
       }
       break;
-    case message::DriverMsgType::kExecuteOnAny:
+    case message::DriverMsgType::kExecuteOnOne:
       {
-
+        auto *msg = message::DriverMsgHelper::get_msg<
+            message::DriverMsgExecuteOnOne>(recv_buff);
+        size_t expected_size = msg->task_size;
+        executor_to_work_ = msg->executor_id;
+        bool received_next_msg
+            = ReceiveArbitraryBytes(driver_.sock, &recv_buff, &byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kExecuteOnOne;
+        } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
     default:
@@ -362,6 +391,26 @@ MasterThread::BroadcastAllExecutors() {
     }
     send_buff_.reset_sent_sizes();
   }
+}
+
+void
+MasterThread::SendToExecutor(int executor_index) {
+  conn::SocketConn* executor = executors_[executor_index].get();
+  conn::SendBuffer& send_buff = executor->send_buff;
+  if (send_buff.get_remaining_to_send_size() > 0
+      || send_buff.get_remaining_next_to_send_size() > 0) {
+    bool sent = executor->sock.Send(&send_buff);
+    while (!sent) {
+      sent = executor->sock.Send(&send_buff);
+    }
+    send_buff.clear_to_send();
+  }
+  bool sent = executor->sock.Send(&send_buff_);
+  if (!sent) {
+    send_buff.Copy(send_buff_);
+    event_handler_.SetToReadWrite(&executor_poll_conn_[executor_index]);
+  }
+  send_buff_.clear_to_send();
 }
 
 } // end namespace bosen

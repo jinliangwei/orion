@@ -3,6 +3,7 @@
 #include <orion/noncopyable.hpp>
 #include <orion/bosen/host_info.hpp>
 #include <orion/bosen/conn.hpp>
+#include <orion/bosen/util.hpp>
 
 namespace orion {
 namespace bosen {
@@ -16,6 +17,7 @@ enum class Type {
     kExecutorConnectToPeersAck = 3,
     kExecutorIdentity = 4,
     kExecutorReady = 5,
+    kExecuteMsg = 6,
     kExecutorStop = 10
 };
 
@@ -92,7 +94,12 @@ static_assert(std::is_pod<ExecutorIdentity>::value, "ExecutorIdentity must be PO
 
 enum class DriverMsgType {
   kStop = 0,
-    kExecuteOnAny = 1
+    kExecuteOnOne = 1,
+    kExecuteOnAll = 2,
+    kLoadFile = 3,
+    kMap = 4,
+    kShuffle = 5,
+    kExecuteResponse = 6
 };
 
 struct DriverMsg {
@@ -107,6 +114,20 @@ struct DriverMsg {
 
 static_assert(std::is_pod<DriverMsg>::value,
               "DriverMsg must be POD!");
+
+enum class ExecuteMsgType {
+  kExecute = 0
+};
+
+struct ExecuteMsg {
+  ExecuteMsgType execute_msg_type;
+ private:
+  ExecuteMsg() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init() { }
+  static constexpr Type get_type() { return Type::kExecuteMsg; }
+};
 
 class DefaultMsgCreator {
  public:
@@ -125,32 +146,63 @@ class Helper {
            typename... Args>
   static Msg* CreateMsg(conn::SendBuffer *send_buff,
                         Args... args) {
-    auto header = new (send_buff->get_payload_mem()) Header();
+    // create Header
+    uint8_t *payload_mem = send_buff->get_payload_mem();
+    uint8_t *aligned_mem = reinterpret_cast<uint8_t*>(
+        get_aligned(payload_mem, alignof(Header)));
+    auto header = new (aligned_mem) Header();
     header->type = Msg::get_type();
-    Msg* msg = MsgCreator::template CreateMsg<Msg, Args...>(
-        send_buff->get_payload_mem() + sizeof(Header), args...);
-    CHECK_GE(send_buff->get_payload_capacity(), sizeof(Header) + sizeof(Msg));
-    send_buff->set_payload_size(sizeof(Header) + sizeof(Msg));
+    send_buff->set_payload_size(aligned_mem + sizeof(Header) - payload_mem);
+
+    // create Msg
+    uint8_t *avai_mem = send_buff->get_avai_payload_mem();
+    aligned_mem = reinterpret_cast<uint8_t*>(
+        get_aligned(avai_mem, alignof(Msg)));
+    Msg* msg = MsgCreator::template CreateMsg<Msg, Args...>(aligned_mem,
+                                                            args...);
+    CHECK_GE(send_buff->get_payload_capacity(),
+             aligned_mem - payload_mem + sizeof(Msg));
+    send_buff->set_payload_size(aligned_mem - payload_mem + sizeof(Msg));
     return msg;
   }
 
   static Type get_type(conn::RecvBuffer& recv_buff) {
-    return reinterpret_cast<const Header*>(recv_buff.get_payload_mem())->type;
+    uint8_t* payload_mem = recv_buff.get_payload_mem();
+    uint8_t *aligned_mem = reinterpret_cast<uint8_t*>(
+        get_aligned(payload_mem, alignof(Header)));
+    return reinterpret_cast<const Header*>(aligned_mem)->type;
   }
 
   template<typename Msg>
   static Msg* get_msg(conn::RecvBuffer &recv_buff) {
-    return reinterpret_cast<Msg*>(recv_buff.get_payload_mem() + sizeof(Header));
+    uint8_t* payload_mem = recv_buff.get_payload_mem();
+    uint8_t *aligned_mem = reinterpret_cast<uint8_t*>(
+        get_aligned(payload_mem, alignof(Header)));
+    aligned_mem = reinterpret_cast<uint8_t*>(
+        get_aligned(aligned_mem + sizeof(Header), alignof(Msg)));
+    return reinterpret_cast<Msg*>(aligned_mem);
   }
 
   template<typename Msg>
   static uint8_t* get_remaining_mem(conn::RecvBuffer &recv_buff) {
-    return recv_buff.get_payload_mem() + sizeof(Header) + sizeof(Msg);
+    uint8_t* payload_mem = recv_buff.get_payload_mem();
+    uint8_t *aligned_mem = reinterpret_cast<uint8_t*>(
+        get_aligned(payload_mem, alignof(Header)));
+    aligned_mem = reinterpret_cast<uint8_t*>(
+        get_aligned(aligned_mem + sizeof(Header), alignof(Msg)));
+
+    return aligned_mem + sizeof(Msg);
   }
 
   template<typename Msg>
-  static size_t get_remaining_size(const conn::RecvBuffer &recv_buff) {
-    return recv_buff.get_payload_capacity() - sizeof(Header) - sizeof(Msg);
+  static size_t get_remaining_size(conn::RecvBuffer &recv_buff) {
+    uint8_t* payload_mem = recv_buff.get_payload_mem();
+    uint8_t *aligned_mem = reinterpret_cast<uint8_t*>(
+        get_aligned(payload_mem, alignof(Header)));
+    aligned_mem = reinterpret_cast<uint8_t*>(
+        get_aligned(aligned_mem + sizeof(Header), alignof(Msg)));
+    return recv_buff.get_payload_capacity()
+        - (aligned_mem + sizeof(Msg) - recv_buff.get_payload_mem());
   }
 };
 
