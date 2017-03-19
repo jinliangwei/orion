@@ -27,13 +27,10 @@ main(int argc, char* argv[]) {
   orion::bosen::Driver driver(driver_config);
   driver.ConnectToMaster();
   orion::bosen::ByteBuffer result_buff;
-  std::vector<orion::bosen::task::TableDep> read_dep, write_dep;
-  orion::bosen::task::ExecuteGranularity granularity = orion::bosen::task::PER_EXECUTOR;
-  size_t repetition = 1;
+
   auto result_type = orion::bosen::type::PrimitiveType::kInt32;
-  driver.ExecuteOnOne(0, "function f()\n\tprintln(sqrt(2.0))\nend\nf()",
-                      -1, read_dep, write_dep, granularity,
-                      repetition, result_type, &result_buff);
+  driver.ExecuteCodeOnOne(0, "function f()\n\tprintln(sqrt(2.0))\nend\nf()",
+                          result_type, &result_buff);
 
   driver.Stop();
 }

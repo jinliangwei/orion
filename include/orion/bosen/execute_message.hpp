@@ -6,17 +6,17 @@ namespace orion {
 namespace bosen {
 namespace message {
 
-struct ExecuteMsgExecute {
+struct ExecuteMsgExecuteCode {
   size_t task_size;
  private:
-  ExecuteMsgExecute() = default;
+  ExecuteMsgExecuteCode() = default;
   friend class DefaultMsgCreator;
  public:
   void Init(size_t _task_size) {
     task_size = _task_size;
   }
   static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kExecute; }
+    return ExecuteMsgType::kExecuteCode; }
 };
 
 class ExecuteMsgHelper {

@@ -17,42 +17,42 @@ struct DriverMsgStop {
   static constexpr DriverMsgType get_type() { return DriverMsgType::kStop; }
 };
 
-struct DriverMsgExecuteOnOne {
+struct DriverMsgExecuteCodeOnOne {
   int32_t executor_id;
   size_t task_size;
  private:
-  DriverMsgExecuteOnOne() = default;
+  DriverMsgExecuteCodeOnOne() = default;
   friend class DefaultMsgCreator;
  public:
   void Init(int32_t _executor_id) {
     executor_id = _executor_id;
   }
   static constexpr DriverMsgType get_type() {
-    return DriverMsgType::kExecuteOnOne; }
+    return DriverMsgType::kExecuteCodeOnOne; }
 };
 
-struct DriverMsgExecuteOnAll {
+struct DriverMsgExecuteCodeOnAll {
   size_t task_size;
  private:
-  DriverMsgExecuteOnAll() = default;
+  DriverMsgExecuteCodeOnAll() = default;
   friend class DefaultMsgCreator;
  public:
   void Init() { }
   static constexpr DriverMsgType get_type() {
-    return DriverMsgType::kExecuteOnOne; }
+    return DriverMsgType::kExecuteCodeOnAll; }
 };
 
-struct DriverMsgExecuteResponse {
+struct DriverMsgExecuteCodeResponse {
   size_t result_bytes;
  private:
-  DriverMsgExecuteResponse() = default;
+  DriverMsgExecuteCodeResponse() = default;
   friend class DefaultMsgCreator;
  public:
   void Init(size_t _result_bytes) {
     result_bytes = _result_bytes;
   }
   static constexpr DriverMsgType get_type() {
-    return DriverMsgType::kExecuteResponse;
+    return DriverMsgType::kExecuteCodeResponse;
   }
 };
 

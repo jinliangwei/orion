@@ -68,8 +68,8 @@ class MasterThread {
     kNone = 0,
       kExit = 1,
       kExecutorConnectToPeers = 2,
-      kExecuteOnOne = 3,
-      kExecuteOnAll = 4
+      kExecuteCodeOnOne = 3,
+      kExecuteCodeOnAll = 4
   };
 
   const size_t kNumExecutors;
@@ -271,10 +271,10 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           action_ = Action::kNone;
         }
         break;
-      case Action::kExecuteOnOne:
+      case Action::kExecuteCodeOnOne:
         {
           message::ExecuteMsgHelper::CreateMsg<
-            message::ExecuteMsgExecute>(
+            message::ExecuteMsgExecuteCode>(
                 &send_buff_, byte_buff_.GetSize());
           send_buff_.set_next_to_send(byte_buff_.GetBytes(),
                                       byte_buff_.GetSize());
@@ -307,10 +307,10 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         stopped_all_ = true;
       }
       break;
-    case message::DriverMsgType::kExecuteOnOne:
+    case message::DriverMsgType::kExecuteCodeOnOne:
       {
         auto *msg = message::DriverMsgHelper::get_msg<
-            message::DriverMsgExecuteOnOne>(recv_buff);
+            message::DriverMsgExecuteCodeOnOne>(recv_buff);
         size_t expected_size = msg->task_size;
         executor_to_work_ = msg->executor_id;
         bool received_next_msg
@@ -318,7 +318,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
                                     expected_size);
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kExecuteOnOne;
+          action_ = Action::kExecuteCodeOnOne;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;

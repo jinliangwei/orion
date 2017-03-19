@@ -94,12 +94,14 @@ static_assert(std::is_pod<ExecutorIdentity>::value, "ExecutorIdentity must be PO
 
 enum class DriverMsgType {
   kStop = 0,
-    kExecuteOnOne = 1,
-    kExecuteOnAll = 2,
-    kLoadFile = 3,
-    kMap = 4,
-    kShuffle = 5,
-    kExecuteResponse = 6
+    kExecuteCodeOnOne = 1,
+    kExecuteCodeOnAll = 2,
+    kCallFuncOnOne = 3,
+    kCallFuncOnAll = 4,
+    kLoadFile = 5,
+    kMap = 6,
+    kShuffle = 7,
+    kExecuteCodeResponse = 8
 };
 
 struct DriverMsg {
@@ -116,7 +118,7 @@ static_assert(std::is_pod<DriverMsg>::value,
               "DriverMsg must be POD!");
 
 enum class ExecuteMsgType {
-  kExecute = 0
+  kExecuteCode = 0
 };
 
 struct ExecuteMsg {

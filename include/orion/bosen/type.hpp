@@ -18,7 +18,9 @@ enum class PrimitiveType {
     kUInt32 = 6,
     kInt64 = 7,
     kUInt64 = 8,
-    kString = 9
+    kFloat32 = 9,
+    kFloat64 = 10,
+    kString = 11
 };
 
 int SizeOf(PrimitiveType type) {
@@ -29,35 +31,43 @@ int SizeOf(PrimitiveType type) {
       }
     case PrimitiveType::kInt8:
       {
-        return sizeof(int8_t);
+        return 1;
       }
     case PrimitiveType::kUInt8:
       {
-        return sizeof(uint8_t);
+        return 1;
       }
     case PrimitiveType::kInt16:
       {
-        return sizeof(int16_t);
+        return 2;
       }
     case PrimitiveType::kUInt16:
       {
-        return sizeof(uint16_t);
+        return 2;
       }
     case PrimitiveType::kInt32:
       {
-        return sizeof(int32_t);
+        return 4;
       }
     case PrimitiveType::kUInt32:
       {
-        return sizeof(uint32_t);
+        return 4;
       }
     case PrimitiveType::kInt64:
       {
-        return sizeof(int64_t);
+        return 4;
       }
     case PrimitiveType::kUInt64:
       {
-        return sizeof(uint64_t);
+        return 4;
+      }
+    case PrimitiveType::kFloat32:
+      {
+        return 4;
+      }
+    case PrimitiveType::kFloat64:
+      {
+        return 8;
       }
     case PrimitiveType::kString:
       {

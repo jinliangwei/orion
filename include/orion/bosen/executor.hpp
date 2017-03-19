@@ -15,7 +15,7 @@
 #include <orion/bosen/client_thread.hpp>
 #include <orion/bosen/event_handler.hpp>
 #include <orion/bosen/thread_pool.hpp>
-#include <orion/bosen/julia_evaluator.hpp>
+#include <orion/bosen/julia_eval_thread.hpp>
 #include <orion/bosen/blob.hpp>
 #include <orion/bosen/byte_buffer.hpp>
 #include <orion/bosen/task.pb.h>
@@ -114,7 +114,7 @@ class Executor {
       kExit = 1,
       kConnectToPeers = 2,
       kAckConnectToPeers = 3,
-      kExecute = 4
+      kExecuteCode = 4
   };
 
   static const int32_t kPortSpan = 100;
@@ -154,7 +154,7 @@ class Executor {
   Blob julia_eval_send_mem_;
   std::unique_ptr<conn::PipeConn> julia_eval_;
   PollConn julia_eval_conn_;
-  JuliaEvaluator julia_eval_ctx_;
+  JuliaEvalThread julia_eval_thread_;
 
   ByteBuffer byte_buff_;
 
@@ -183,7 +183,7 @@ class Executor {
   void ClearBeforeExit();
   void Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn);
   void Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn);
-  void Execute();
+  void ExecuteCode();
 };
 
 Executor::Executor(const Config& config, int32_t index):
@@ -221,7 +221,7 @@ Executor::Executor(const Config& config, int32_t index):
     thread_pool_(config.kExecutorThreadPoolSize, config.kCommBuffCapacity),
     julia_eval_recv_mem_(kCommBuffCapacity),
     julia_eval_send_mem_(kCommBuffCapacity),
-    julia_eval_ctx_(kCommBuffCapacity),
+    julia_eval_thread_(kCommBuffCapacity),
     host_info_(kNumExecutors) { }
 
 Executor::~Executor() { }
@@ -363,9 +363,9 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           action_ = Action::kNone;
         }
         break;
-      case Action::kExecute:
+      case Action::kExecuteCode:
         {
-          Execute();
+          ExecuteCode();
           action_ = Action::kNone;
         }
         break;
@@ -460,17 +460,17 @@ Executor::HandleExecuteMsg() {
   auto msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
   int ret = EventHandler<PollConn>::kClearOneMsg;
   switch (msg_type) {
-    case message::ExecuteMsgType::kExecute:
+    case message::ExecuteMsgType::kExecuteCode:
       {
         auto* msg = message::ExecuteMsgHelper::get_msg<
-          message::ExecuteMsgExecute>(recv_buff);
+          message::ExecuteMsgExecuteCode>(recv_buff);
         size_t expected_size = msg->task_size;
         bool received_next_msg
             = ReceiveArbitraryBytes(master_.sock, &recv_buff, &byte_buff_,
                                     expected_size);
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kExecute;
+          action_ = Action::kExecuteCode;
         } else {
           ret = EventHandler<PollConn>::kNoAction;
           action_ = Action::kNone;
@@ -517,7 +517,7 @@ Executor::ConnectToPeers() {
 
 void
 Executor::SetUpThreadPool() {
-  auto read_pipe = julia_eval_ctx_.get_read_pipe();
+  auto read_pipe = julia_eval_thread_.get_read_pipe();
   julia_eval_ = std::make_unique<conn::PipeConn>(
       read_pipe, julia_eval_recv_mem_.data(),
       julia_eval_send_mem_.data(), kCommBuffCapacity);
@@ -525,7 +525,7 @@ Executor::SetUpThreadPool() {
   julia_eval_conn_.conn = julia_eval_.get();
   int ret = event_handler_.SetToReadOnly(&julia_eval_conn_);
   CHECK_EQ(ret, 0);
-  julia_eval_ctx_.Start();
+  julia_eval_thread_.Start();
   for (int i = 0; i < kThreadPoolSize; ++i) {
     auto read_pipe = thread_pool_.get_read_pipe(i);
     compute_[i] = std::make_unique<conn::PipeConn>(
@@ -542,7 +542,7 @@ Executor::SetUpThreadPool() {
 
 void
 Executor::ClearBeforeExit() {
-  julia_eval_ctx_.Stop();
+  julia_eval_thread_.Stop();
   thread_pool_.StopAll();
 }
 
@@ -585,17 +585,17 @@ Executor::Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn) {
 }
 
 void
-Executor::Execute() {
+Executor::ExecuteCode() {
   LOG(INFO) << __func__;
   std::string task_str(reinterpret_cast<const char*>(byte_buff_.GetBytes()),
                        byte_buff_.GetSize());
-  task::Execute execute;
+  task::ExecuteCode execute;
   execute.ParseFromString(task_str);
-  // TODO:
+  LOG(INFO) << execute.code();
 
-  Task julia_task;
-  julia_task.code = execute.code();
-  julia_eval_ctx_.SchedTask(julia_task);
+  //Task julia_task;
+  //julia_task.code = execute.code();
+  //julia_eval_thread_.SchedTask(julia_task);
 }
 
 }
