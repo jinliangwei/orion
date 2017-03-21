@@ -20,6 +20,7 @@
 #include <orion/bosen/byte_buffer.hpp>
 #include <orion/bosen/task.pb.h>
 #include <orion/bosen/recv_arbitrary_bytes.hpp>
+#include <orion/bosen/task_type.hpp>
 
 namespace orion {
 namespace bosen {
@@ -114,7 +115,8 @@ class Executor {
       kExit = 1,
       kConnectToPeers = 2,
       kAckConnectToPeers = 3,
-      kExecuteCode = 4
+      kExecuteCode = 4,
+      kExecutorAck = 5
   };
 
   static const int32_t kPortSpan = 100;
@@ -156,7 +158,12 @@ class Executor {
   PollConn julia_eval_conn_;
   JuliaEvalThread julia_eval_thread_;
 
+  JuliaCallFuncTask julia_call_func_task_;
+  JuliaExecuteCodeTask julia_execute_code_task_;
+
   ByteBuffer byte_buff_;
+
+  TaskType task_type_ {TaskType::kNone};
 
   size_t num_connected_peers_ {0};
   size_t num_identified_peers_ {0};
@@ -248,6 +255,7 @@ Executor::operator() () {
     message::Helper::CreateMsg<
       message::ExecutorIdentity>(&send_buff_, kId, host_info);
     Send(&master_poll_conn_, &master_);
+    send_buff_.clear_to_send();
   }
 
   event_handler_.SetConnectEventHandler(
@@ -360,12 +368,36 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         {
           message::Helper::CreateMsg<message::ExecutorConnectToPeersAck>(&send_buff_);
           Send(&master_poll_conn_, &master_);
+          send_buff_.clear_to_send();
           action_ = Action::kNone;
         }
         break;
       case Action::kExecuteCode:
         {
+          task_type_ = TaskType::kExecuteCode;
           ExecuteCode();
+          action_ = Action::kNone;
+        }
+        break;
+      case Action::kExecutorAck:
+        {
+          size_t result_size = 0;
+          const void *result_mem = nullptr;
+          if (task_type_ == TaskType::kExecuteCode) {
+            result_size = type::SizeOf(julia_execute_code_task_.result_type);
+            result_mem = julia_execute_code_task_.result_buff.data();
+          } else if (task_type_ == TaskType::kCallFunc) {
+            result_size = type::SizeOf(julia_call_func_task_.result_type);
+            result_mem = julia_call_func_task_.result_buff.data();
+          } else {
+            LOG(FATAL) << "error!";
+          }
+
+          message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgExecutorAck>(
+              &send_buff_, result_size);
+          send_buff_.set_next_to_send(result_mem, result_size);
+          Send(&master_poll_conn_, &master_);
+          send_buff_.clear_to_send();
           action_ = Action::kNone;
         }
         break;
@@ -451,7 +483,22 @@ Executor::HandlePeerMsg(PollConn* poll_conn_ptr) {
 
 int
 Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
-  return EventHandler<PollConn>::kClearOneMsg;
+  auto &recv_buff = poll_conn_ptr->get_recv_buff();
+  auto msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
+  int ret = EventHandler<PollConn>::kClearOneMsg;
+  switch (msg_type) {
+    case message::ExecuteMsgType::kJuliaEvalAck:
+      {
+        action_ = Action::kExecutorAck;
+      }
+      break;
+    default:
+      {
+        LOG(FATAL) << "unknown message type " << static_cast<int>(msg_type);
+      }
+      break;
+  }
+  return ret;
 }
 
 int
@@ -513,6 +560,7 @@ Executor::ConnectToPeers() {
     int ret = event_handler_.SetToReadOnly(&peer_conn_[i]);
     CHECK_EQ(ret, 0);
   }
+  send_buff_.clear_to_send();
 }
 
 void
@@ -592,6 +640,11 @@ Executor::ExecuteCode() {
   task::ExecuteCode execute;
   execute.ParseFromString(task_str);
   LOG(INFO) << execute.code();
+
+  julia_execute_code_task_.result_type = static_cast<type::PrimitiveType>(
+      execute.result_type());
+  julia_execute_code_task_.code = execute.code();
+  julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&julia_execute_code_task_));
 
   //Task julia_task;
   //julia_task.code = execute.code();

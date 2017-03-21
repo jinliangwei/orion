@@ -118,7 +118,9 @@ static_assert(std::is_pod<DriverMsg>::value,
               "DriverMsg must be POD!");
 
 enum class ExecuteMsgType {
-  kExecuteCode = 0
+  kExecuteCode = 0,
+    kJuliaEvalAck = 1,
+    kExecutorAck = 2
 };
 
 struct ExecuteMsg {

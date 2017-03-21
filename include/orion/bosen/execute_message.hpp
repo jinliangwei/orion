@@ -19,6 +19,29 @@ struct ExecuteMsgExecuteCode {
     return ExecuteMsgType::kExecuteCode; }
 };
 
+struct ExecuteMsgJuliaEvalAck {
+ private:
+  ExecuteMsgJuliaEvalAck() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init() { }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kJuliaEvalAck; }
+};
+
+struct ExecuteMsgExecutorAck {
+  size_t result_size;
+ private:
+  ExecuteMsgExecutorAck() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _result_size) {
+    result_size = _result_size;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kExecutorAck; }
+};
+
 class ExecuteMsgHelper {
  public:
   template<typename Msg,

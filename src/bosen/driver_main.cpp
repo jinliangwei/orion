@@ -28,8 +28,8 @@ main(int argc, char* argv[]) {
   driver.ConnectToMaster();
   orion::bosen::ByteBuffer result_buff;
 
-  auto result_type = orion::bosen::type::PrimitiveType::kInt32;
-  driver.ExecuteCodeOnOne(0, "function f()\n\tprintln(sqrt(2.0))\nend\nf()",
+  auto result_type = orion::bosen::type::PrimitiveType::kFloat64;
+  driver.ExecuteCodeOnOne(0, "sqrt(2.0)",
                           result_type, &result_buff);
 
   driver.Stop();

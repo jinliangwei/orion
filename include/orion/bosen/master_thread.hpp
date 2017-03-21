@@ -4,6 +4,7 @@
 #include <iostream>
 #include <vector>
 #include <functional>
+#include <map>
 
 #include <orion/bosen/config.hpp>
 #include <orion/noncopyable.hpp>
@@ -12,12 +13,12 @@
 #include <orion/bosen/util.hpp>
 #include <orion/bosen/event_handler.hpp>
 #include <orion/bosen/byte_buffer.hpp>
-
 #include <orion/bosen/message.hpp>
 #include <orion/bosen/driver_message.hpp>
 #include <orion/bosen/execute_message.hpp>
 #include <orion/bosen/blob.hpp>
 #include <orion/bosen/recv_arbitrary_bytes.hpp>
+#include <orion/bosen/task_type.hpp>
 
 namespace orion {
 namespace bosen {
@@ -92,11 +93,17 @@ class MasterThread {
   Blob executor_send_mem_;
   std::vector<std::unique_ptr<conn::SocketConn>> executors_;
   std::vector<PollConn> executor_poll_conn_;
+  std::map<conn::SocketConn*, int32_t> executor_sock_conn_to_id_;
+  std::map<int32_t, ByteBuffer> executor_byte_buff_;
+  TaskType task_type_ {TaskType::kNone};
+  size_t num_expected_executor_acks_ {0};
+  size_t num_recved_executor_acks_ {0};
 
   Blob send_mem_;
   conn::SendBuffer send_buff_;
   std::vector<HostInfo> host_info_;
-  ByteBuffer byte_buff_;
+  ByteBuffer driver_recv_byte_buff_;
+  ByteBuffer driver_send_byte_buff_;
   int32_t executor_to_work_ {0};
 
   size_t num_accepted_executors_ {0};
@@ -113,6 +120,7 @@ class MasterThread {
   ~MasterThread();
   DISALLOW_COPY(MasterThread);
   void operator() ();
+
  private:
   void InitListener();
   void HandleConnection(PollConn* poll_conn_ptr);
@@ -121,6 +129,8 @@ class MasterThread {
   int HandleMsg(PollConn *poll_conn_ptr);
   int HandleDriverMsg(PollConn *poll_conn_ptr);
   int HandleExecutorMsg(PollConn *poll_conn_ptr);
+  int HandleExecuteMsg(PollConn *poll_conn_ptr);
+  void ConstructDriverResponse(int32_t executor_id, size_t result_size);
   void BroadcastAllExecutors();
   void SendToExecutor(int executor_index);
 };
@@ -275,9 +285,9 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
         {
           message::ExecuteMsgHelper::CreateMsg<
             message::ExecuteMsgExecuteCode>(
-                &send_buff_, byte_buff_.GetSize());
-          send_buff_.set_next_to_send(byte_buff_.GetBytes(),
-                                      byte_buff_.GetSize());
+                &send_buff_, driver_recv_byte_buff_.GetSize());
+          send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
+                                      driver_recv_byte_buff_.GetSize());
           SendToExecutor(executor_to_work_);
           action_ = Action::kNone;
         }
@@ -314,11 +324,13 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         size_t expected_size = msg->task_size;
         executor_to_work_ = msg->executor_id;
         bool received_next_msg
-            = ReceiveArbitraryBytes(driver_.sock, &recv_buff, &byte_buff_,
+            = ReceiveArbitraryBytes(driver_.sock, &recv_buff, &driver_recv_byte_buff_,
                                     expected_size);
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kExecuteCodeOnOne;
+          num_expected_executor_acks_ = 1;
+          num_recved_executor_acks_ = 0;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -340,9 +352,12 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
     case message::Type::kExecutorIdentity:
       {
         auto *msg = message::Helper::get_msg<message::ExecutorIdentity>(recv_buff);
+        int32_t executor_id = msg->executor_id;
         host_info_[msg->executor_id] = msg->host_info;
         auto* sock_conn = poll_conn_ptr->conn;
-        executors_[msg->executor_id].reset(sock_conn);
+        executors_[executor_id].reset(sock_conn);
+        executor_sock_conn_to_id_[executors_[executor_id].get()] = executor_id;
+        executor_byte_buff_.emplace(std::make_pair(executor_id, ByteBuffer()));
         num_identified_executors_++;
         if (state_ == State::kInitialization
             && (num_identified_executors_ == kNumExecutors)) {
@@ -362,6 +377,11 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
         ret = EventHandler<PollConn>::kClearOneMsg;
       }
       break;
+    case message::Type::kExecuteMsg:
+      {
+        ret = HandleExecuteMsg(poll_conn_ptr);
+      }
+      break;
     default:
       {
         auto& sock = poll_conn_ptr->conn->sock;
@@ -370,6 +390,66 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
       }
   }
   return ret;
+}
+
+int
+MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
+  auto &recv_buff = poll_conn_ptr->get_recv_buff();
+  auto msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
+  int ret = EventHandler<PollConn>::kClearOneMsg;
+  switch (msg_type) {
+    case message::ExecuteMsgType::kExecutorAck:
+      {
+        auto *ack_msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgExecutorAck>(recv_buff);
+        size_t expected_size = ack_msg->result_size;
+        int32_t executor_id = executor_sock_conn_to_id_[poll_conn_ptr->conn];
+        bool received_next_msg =
+            ReceiveArbitraryBytes(poll_conn_ptr->conn->sock, &recv_buff,
+                                  &executor_byte_buff_[executor_id], expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          num_recved_executor_acks_++;
+        } else {
+          ret = EventHandler<PollConn>::kNoAction;
+        }
+
+        if (num_recved_executor_acks_ == num_expected_executor_acks_) {
+          if (num_expected_executor_acks_ == kNumExecutors) {
+            ConstructDriverResponse(-1, expected_size);
+          } else {
+            ConstructDriverResponse(executor_id, expected_size);
+          }
+        }
+      }
+      break;
+    default:
+      LOG(FATAL) << "unknown message type";
+  }
+  return ret;
+}
+
+void
+MasterThread::ConstructDriverResponse(int32_t executor_id,
+                                      size_t result_size) {
+  if (result_size == 0) return;
+  LOG(INFO) << __func__;
+  if (executor_id < 0) {
+    driver_send_byte_buff_.Reset(kNumExecutors*result_size);
+    for (auto &byte_buff_iter : executor_byte_buff_) {
+      memcpy(driver_send_byte_buff_.GetAvailMem(),
+             byte_buff_iter.second.GetBytes(),
+             byte_buff_iter.second.GetSize());
+      driver_send_byte_buff_.IncSize(byte_buff_iter.second.GetSize());
+    }
+  } else {
+    auto &byte_buff = executor_byte_buff_.at(executor_id);
+    driver_send_byte_buff_.Reset(result_size);
+    memcpy(driver_send_byte_buff_.GetAvailMem(),
+           byte_buff.GetBytes(),
+           byte_buff.GetSize());
+    driver_send_byte_buff_.IncSize(byte_buff.GetSize());
+  }
 }
 
 void
