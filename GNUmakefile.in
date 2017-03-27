@@ -37,9 +37,9 @@ LIBS = -lgtest \
 	-lnuma \
 	-lpthread \
 	-lm \
-	-ltcmalloc \
 	-lcblas \
-	-lprotobuf
+	-lprotobuf \
+	-ltcmalloc
 
 ifeq (@SANITIZER_ON@,address)
 SANITIZER_FLAGS = -fsanitize=address
@@ -68,7 +68,9 @@ orion_lib: $(ORION_LIB)
 include src/bosen/bosen.mk
 
 $(ORION_LIB): lib $(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ)
-	gcc -shared -Wl,-soname,liborion.so.0 -o liborion.so.0.0 $(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ)
+	gcc -shared -Wl,-soname,liborion.so.0 -o liborion.so.0.0 \
+		$(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ) \
+		$(LIBS) $(LDFLAGS)
 	mv liborion.so.0.0 lib/
 	ln -sf $(ORION_HOME)/lib/liborion.so.0.0 $(ORION_HOME)/lib/liborion.so.0
 	ln -sf $(ORION_HOME)/lib/liborion.so.0.0 $(ORION_HOME)/$@

@@ -26,11 +26,9 @@ main(int argc, char* argv[]) {
 
   orion::bosen::Driver driver(driver_config);
   driver.ConnectToMaster();
-  orion::bosen::ByteBuffer result_buff;
-
+  double ret;
   auto result_type = orion::bosen::type::PrimitiveType::kFloat64;
-  driver.ExecuteCodeOnOne(0, "sqrt(2.0)",
-                          result_type, &result_buff);
-
+  driver.ExecuteCodeOnOne(0, "sqrt(2.0)", result_type, &ret);
   driver.Stop();
+  //while(1);
 }

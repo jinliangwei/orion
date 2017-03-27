@@ -40,13 +40,13 @@ bosen_proto: $(BOSEN_PROTO_CPP)
 bin/bosen: bin
 	mkdir -p bin/bosen
 
-$(BOSEN_OBJ): %.o: %.cpp $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_INLCUDE_H)
+$(BOSEN_OBJ): %.o: %.cpp $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
 	$(CXX) -fPIC $(CFLAGS) $(SANITIZER_FLAGS) -c $< -o $@
 
-$(BOSEN_COBJ): %.o: %.c $(BOSEN_HPP) $(BOSEN_H)
-	$(CXX) -fPIC $(CFLAGS) -c $< -o $@
+$(BOSEN_COBJ): %.o: %.c $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
+	$(CXX) -fPIC $(CFLAGS) $(SANITIZER_FLAGS) -c $< -o $@
 
-$(BOSEN_PROTO_OBJ): src/bosen/protobuf/%.o: src/bosen/protobuf/%.cc include/orion/bosen/%.h
+$(BOSEN_PROTO_OBJ): src/bosen/protobuf/%.o: src/bosen/protobuf/%.cc src/bosen/protobuf/%.h
 	$(CXX) -fPIC $(CFLAGS) -I$(ORION_HOME)/include/orion/bosen $(SANITIZER_FLAGS) -c $< -o $@
 
 $(BOSEN_TEST_EXE): src/bosen/bosen_test_main.o orion_lib $(BOSEN_TEST_OBJ) bin/bosen
@@ -60,7 +60,7 @@ $(BOSEN_PROTO): protobuf/%: src/bosen/protobuf/%.proto
 
 $(BOSEN_PROTO_CPP): src/bosen/protobuf/%.pb.cc : protobuf/%
 $(BOSEN_PROTO_H): include/orion/bosen/%.pb.h : protobuf/%
-	mv src/bosen/protobuf/$*.pb.h $@
+	cp src/bosen/protobuf/$*.pb.h $@
 
 pb_test:
 	echo $(BOSEN_PROTO)

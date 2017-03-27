@@ -126,6 +126,7 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
         result_buff->reserve(type::SizeOf(result_type));
         CHECK(jl_is_float64(value));
         double ret = jl_unbox_float64(value);
+        LOG(INFO) << "unboxed float64 " << ret;
         memcpy(result_buff->data(), &ret, sizeof(ret));
       }
       break;

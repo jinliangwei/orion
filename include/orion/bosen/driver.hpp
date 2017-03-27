@@ -65,10 +65,10 @@ class Driver {
   Blob master_send_mem_;
   conn::SocketConn master_;
   std::string msg_buff_;
-  PollConn poll_conn_;
+  PollConn master_poll_conn_;
   EventHandler<PollConn> event_handler_;
   message::DriverMsgType expected_msg_type_;
-  ByteBuffer *result_buff_ { nullptr };
+  ByteBuffer result_buff_;
   bool received_from_master_ { false };
   bool sent_to_master_ { true };
 
@@ -106,7 +106,6 @@ class Driver {
               master_recv_mem_.data(),
               master_send_mem_.data(),
               kCommBuffCapacity) {
-    poll_conn_.conn = &master_;
     event_handler_.SetReadEventHandler(
       std::bind(&Driver::HandleMasterMsg, this,
                std::placeholders::_1));
@@ -127,12 +126,12 @@ class Driver {
       int32_t executor_id,
       const std::string &code,
       type::PrimitiveType result_type,
-      ByteBuffer *result_buff);
+      void *result_buff);
 
   void ExecuteCodeOnAll(
       const std::string &code,
       type::PrimitiveType result_type,
-      ByteBuffer *result_buff);
+      void *result_buff);
 
   void CallFuncOnOne(
       int32_t executor_id,
@@ -144,7 +143,7 @@ class Driver {
       task::Repetition repetition,
       int32_t num_iterations,
       type::PrimitiveType result_type,
-      ByteBuffer *result_buff);
+      void *result_buff);
 
   void CallFuncOnAll(
       const std::string &function_name,
@@ -155,7 +154,7 @@ class Driver {
       task::Repetition repetition,
       int32_t num_iterations,
       type::PrimitiveType result_type,
-      ByteBuffer *result_buff);
+      void *result_buff);
 
   void Stop();
 };
@@ -163,10 +162,12 @@ class Driver {
 void
 Driver::BlockSendToMaster() {
   bool sent = master_.sock.Send(&master_.send_buff);
+  if (sent) return;
+  event_handler_.SetToReadWrite(&master_poll_conn_);
+  sent_to_master_ = false;
   while (!sent && !sent_to_master_) {
     event_handler_.WaitAndHandleEvent();
   }
-  sent_to_master_ = false;
 }
 
 void
@@ -178,18 +179,21 @@ Driver::BlockRecvFromMaster() {
 
 int
 Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
+  LOG(INFO) << __func__;
   auto &recv_buff = master_.recv_buff;
   auto driver_msg_type = message::DriverMsgHelper::get_type(master_.recv_buff);
-  CHECK(driver_msg_type == expected_msg_type_);
+  CHECK(driver_msg_type == expected_msg_type_)
+      << "received message type = " << static_cast<int>(driver_msg_type);
   int ret = EventHandler<PollConn>::kNoAction;
   switch (driver_msg_type) {
-    case message::DriverMsgType::kExecuteCodeResponse:
+    case message::DriverMsgType::kMasterResponse:
       {
+        LOG(INFO) << "handle MasterResponse";
         auto *response_msg = message::DriverMsgHelper::get_msg<
-          message::DriverMsgExecuteCodeResponse>(recv_buff);
+          message::DriverMsgMasterResponse>(recv_buff);
         size_t expected_size = response_msg->result_bytes;
         bool received_next_msg =
-            ReceiveArbitraryBytes(master_.sock, &recv_buff, result_buff_,
+            ReceiveArbitraryBytes(master_.sock, &recv_buff, &result_buff_,
                                   expected_size);
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
@@ -252,6 +256,10 @@ Driver::ConnectToMaster() {
 
   ret = master_.sock.Connect(ip, kMasterPort);
   CHECK(ret == 0) << "executor failed connecting to master";
+
+  master_poll_conn_ = {&master_};
+  ret = event_handler_.SetToReadOnly(&master_poll_conn_);
+  CHECK_EQ(ret, 0);
 }
 
 void
@@ -259,7 +267,8 @@ Driver::ExecuteCodeOnOne(
     int32_t executor_id,
     const std::string &code,
     type::PrimitiveType result_type,
-    ByteBuffer *result_buff) {
+    void *result_buff) {
+  result_buff_.Reset(type::SizeOf(result_type));
   auto *execute_code_msg = message::DriverMsgHelper::CreateMsg<
     message::DriverMsgExecuteCodeOnOne>(
         &master_.send_buff, executor_id);
@@ -267,15 +276,21 @@ Driver::ExecuteCodeOnOne(
   execute_code_msg->task_size = msg_buff_.size();
   master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
   BlockSendToMaster();
-  expected_msg_type_ = message::DriverMsgType::kExecuteCodeResponse;
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
   BlockRecvFromMaster();
+  auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_.recv_buff);
+  LOG(INFO) << "received response, nbytes = " << msg->result_bytes;
+  memcpy(result_buff, result_buff_.GetBytes(), result_buff_.GetSize());
 }
 
 void
 Driver::ExecuteCodeOnAll(
     const std::string &code,
     type::PrimitiveType result_type,
-    ByteBuffer *result_buff) { }
+    void *result_buff) { }
 
 void
 Driver::CallFuncOnOne(
@@ -288,7 +303,7 @@ Driver::CallFuncOnOne(
     task::Repetition repetition,
     int32_t num_iterations,
     type::PrimitiveType result_type,
-    ByteBuffer *result_buff) { }
+    void *result_buff) { }
 
 void
 Driver::CallFuncOnAll(
@@ -300,13 +315,15 @@ Driver::CallFuncOnAll(
     task::Repetition repetition,
     int32_t num_iterations,
     type::PrimitiveType result_type,
-    ByteBuffer *result_buff) { }
+    void *result_buff) { }
 
 void
 Driver::Stop() {
   message::DriverMsgHelper::CreateMsg<message::DriverMsgStop>(
       &master_.send_buff);
   BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
   master_.sock.Close();
 }
 

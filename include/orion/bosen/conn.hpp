@@ -14,6 +14,10 @@ namespace orion {
 namespace bosen {
 namespace conn {
 
+// The conn implementation makes some effort to differentiate closed connection
+// from other errors, but this is not extensive.
+// Lost connections at arbitrary times may cause the program to crash.
+
 typedef size_t beacon_t;
 
 class SendBuffer;

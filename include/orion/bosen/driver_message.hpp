@@ -42,17 +42,17 @@ struct DriverMsgExecuteCodeOnAll {
     return DriverMsgType::kExecuteCodeOnAll; }
 };
 
-struct DriverMsgExecuteCodeResponse {
+struct DriverMsgMasterResponse {
   size_t result_bytes;
  private:
-  DriverMsgExecuteCodeResponse() = default;
+  DriverMsgMasterResponse() = default;
   friend class DefaultMsgCreator;
  public:
   void Init(size_t _result_bytes) {
     result_bytes = _result_bytes;
   }
   static constexpr DriverMsgType get_type() {
-    return DriverMsgType::kExecuteCodeResponse;
+    return DriverMsgType::kMasterResponse;
   }
 };
 

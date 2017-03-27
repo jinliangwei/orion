@@ -235,7 +235,10 @@ EventHandler<PollConn>::WaitAndHandleEvent() {
   CHECK(num_events > 0);
   for (int i = 0; i < num_events; ++i) {
     PollConn *poll_conn_ptr = conn::Poll::EventConn<PollConn>(es_, i);
-    if (es_[i].events & EPOLLIN) {
+    if (es_[i].events & EPOLLHUP) {
+      int clear_code = closed_connection_handler_(poll_conn_ptr);
+      if (clear_code & kExit) break;
+    } else if (es_[i].events & EPOLLIN) {
       if (poll_conn_ptr->is_connect_event()
           && connect_event_handler_ != nullptr) {
         connect_event_handler_(poll_conn_ptr);

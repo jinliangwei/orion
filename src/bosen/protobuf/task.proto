@@ -66,19 +66,19 @@ message CallFunc {
   required int32 result_type = 8;
 }
 
-message LoadFile {
-  required string file_path = 1;
-  required int32 table_id = 2;
-  required bytes code = 3;
-}
+//message LoadFile {
+//  required string file_path = 1;
+//  required int32 table_id = 2;
+//  required bytes code = 3;
+//}
 
-message Map {
-  required int32 src_table = 1;
-  required int32 dst_table = 2;
-  required bytes code = 3;
-}
+//message Map {
+//  required int32 src_table = 1;
+//  required int32 dst_table = 2;
+//  required bytes code = 3;
+//}
 
-message Shuffle {
-  required int32 src_table = 1;
-  required bytes code = 2;
-}
+//message Shuffle {
+//  required int32 src_table = 1;
+//  required bytes code = 2;
+//}

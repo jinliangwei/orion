@@ -101,7 +101,7 @@ enum class DriverMsgType {
     kLoadFile = 5,
     kMap = 6,
     kShuffle = 7,
-    kExecuteCodeResponse = 8
+    kMasterResponse = 8
 };
 
 struct DriverMsg {

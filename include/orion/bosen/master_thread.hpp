@@ -96,12 +96,21 @@ class MasterThread {
   std::map<conn::SocketConn*, int32_t> executor_sock_conn_to_id_;
   std::map<int32_t, ByteBuffer> executor_byte_buff_;
   TaskType task_type_ {TaskType::kNone};
+
   size_t num_expected_executor_acks_ {0};
   size_t num_recved_executor_acks_ {0};
 
   Blob send_mem_;
   conn::SendBuffer send_buff_;
   std::vector<HostInfo> host_info_;
+  // ByteBuffers are used to buffer arbitrary sized messages.
+  // When send gets blocked, the universal SendBuffer will be shallow copied to
+  // the connection's private SendBuffer. That means the ByteBuffers are NOT
+  // copied.
+  // To make that work, we require
+  // 1) each driver request causes exactly one response from the master
+  // 2) the master thread should not send requests/tasks to executors until the
+  // all relevant executors of the previous request/task have responded
   ByteBuffer driver_recv_byte_buff_;
   ByteBuffer driver_send_byte_buff_;
   int32_t executor_to_work_ {0};
@@ -133,6 +142,7 @@ class MasterThread {
   void ConstructDriverResponse(int32_t executor_id, size_t result_size);
   void BroadcastAllExecutors();
   void SendToExecutor(int executor_index);
+  void SendToDriver();
 };
 
 MasterThread::MasterThread(const Config &config):
@@ -290,6 +300,8 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
                                       driver_recv_byte_buff_.GetSize());
           SendToExecutor(executor_to_work_);
           action_ = Action::kNone;
+          send_buff_.reset_sent_sizes();
+          send_buff_.clear_to_send();
         }
         break;
       case Action::kExit:
@@ -421,6 +433,13 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
             ConstructDriverResponse(executor_id, expected_size);
           }
         }
+        message::DriverMsgHelper::CreateMsg<message::DriverMsgMasterResponse>(
+            &send_buff_, expected_size*num_recved_executor_acks_);
+        send_buff_.set_next_to_send(driver_send_byte_buff_.GetBytes(),
+                                    driver_send_byte_buff_.GetSize());
+        SendToDriver();
+        send_buff_.reset_sent_sizes();
+        send_buff_.clear_to_send();
       }
       break;
     default:
@@ -490,7 +509,25 @@ MasterThread::SendToExecutor(int executor_index) {
     send_buff.Copy(send_buff_);
     event_handler_.SetToReadWrite(&executor_poll_conn_[executor_index]);
   }
-  send_buff_.clear_to_send();
+}
+
+void
+MasterThread::SendToDriver() {
+  conn::SendBuffer& send_buff = driver_.send_buff;
+  if (send_buff.get_remaining_to_send_size() > 0
+      || send_buff.get_remaining_next_to_send_size() > 0) {
+    bool sent = driver_.sock.Send(&send_buff);
+    while (!sent) {
+      sent = driver_.sock.Send(&send_buff);
+    }
+    send_buff.clear_to_send();
+  }
+  bool sent = driver_.sock.Send(&send_buff_);
+  LOG(INFO) << __func__ << " sent = " << sent;
+  if (!sent) {
+    send_buff.Copy(send_buff_);
+    event_handler_.SetToReadWrite(&driver_poll_conn_);
+  }
 }
 
 } // end namespace bosen
