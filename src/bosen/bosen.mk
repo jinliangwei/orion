@@ -40,10 +40,10 @@ bosen_proto: $(BOSEN_PROTO_CPP)
 bin/bosen: bin
 	mkdir -p bin/bosen
 
-$(BOSEN_OBJ): %.o: %.cpp $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
+$(BOSEN_OBJ): %.o: %.cpp deps $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
 	$(CXX) -fPIC $(CFLAGS) $(SANITIZER_FLAGS) -c $< -o $@
 
-$(BOSEN_COBJ): %.o: %.c $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
+$(BOSEN_COBJ): %.o: %.c deps $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
 	$(CXX) -fPIC $(CFLAGS) $(SANITIZER_FLAGS) -c $< -o $@
 
 $(BOSEN_PROTO_OBJ): src/bosen/protobuf/%.o: src/bosen/protobuf/%.cc src/bosen/protobuf/%.h

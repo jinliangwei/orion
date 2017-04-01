@@ -98,7 +98,7 @@ enum class DriverMsgType {
     kExecuteCodeOnAll = 2,
     kCallFuncOnOne = 3,
     kCallFuncOnAll = 4,
-    kLoadFile = 5,
+    kCreateDistArray = 5,
     kMap = 6,
     kShuffle = 7,
     kMasterResponse = 8
@@ -120,7 +120,8 @@ static_assert(std::is_pod<DriverMsg>::value,
 enum class ExecuteMsgType {
   kExecuteCode = 0,
     kJuliaEvalAck = 1,
-    kExecutorAck = 2
+    kExecuteCreateDistArray = 2,
+    kExecutorAck = 3
 };
 
 struct ExecuteMsg {

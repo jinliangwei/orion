@@ -248,7 +248,6 @@ EventHandler<PollConn>::WaitAndHandleEvent() {
         auto& recv_buff = poll_conn_ptr->get_recv_buff();
         while (recv_buff.ReceivedFullMsg()
                && (!recv_buff.IsExepectingNextMsg())) {
-          LOG(INFO) << "run readeventhandler";
           exit = RunReadEventHandler(poll_conn_ptr);
           if (exit) break;
         }

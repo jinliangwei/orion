@@ -3,6 +3,7 @@
 #include <memory>
 #include <iostream>
 #include <vector>
+#include <unordered_map>
 
 #include <orion/bosen/config.hpp>
 #include <orion/noncopyable.hpp>
@@ -21,6 +22,7 @@
 #include <orion/bosen/task.pb.h>
 #include <orion/bosen/recv_arbitrary_bytes.hpp>
 #include <orion/bosen/task_type.hpp>
+#include <orion/bosen/dist_array.hpp>
 
 namespace orion {
 namespace bosen {
@@ -116,7 +118,8 @@ class Executor {
       kConnectToPeers = 2,
       kAckConnectToPeers = 3,
       kExecuteCode = 4,
-      kExecutorAck = 5
+      kCreateDistArray = 5,
+      kExecutorAck = 10
   };
 
   static const int32_t kPortSpan = 100;
@@ -129,6 +132,7 @@ class Executor {
   const uint16_t kListenPort;
   const size_t kThreadPoolSize;
   const int32_t kId;
+  const Config kConfig;
 
   EventHandler<PollConn> event_handler_;
   Blob master_send_mem_;
@@ -158,12 +162,14 @@ class Executor {
   PollConn julia_eval_conn_;
   JuliaEvalThread julia_eval_thread_;
 
-  JuliaCallFuncTask julia_call_func_task_;
-  JuliaExecuteCodeTask julia_execute_code_task_;
+  ExecJuliaFuncTask exec_julia_func_task_;
+  ExecJuliaCodeTask exec_julia_code_task_;
+  ExecCppFuncTask exec_cpp_func_task_;
 
-  ByteBuffer byte_buff_;
+  ByteBuffer master_recv_byte_buff_;
 
   TaskType task_type_ {TaskType::kNone};
+  std::unordered_map<int32_t, DistArray> dist_arrays_;
 
   size_t num_connected_peers_ {0};
   size_t num_identified_peers_ {0};
@@ -203,6 +209,7 @@ Executor::Executor(const Config& config, int32_t index):
     kListenPort(config.kWorkerPort + index * kPortSpan),
     kThreadPoolSize(config.kExecutorThreadPoolSize),
     kId(config.kWorkerId*config.kNumExecutorsPerWorker + index),
+    kConfig(config),
     master_send_mem_(kCommBuffCapacity),
     master_recv_mem_(kCommBuffCapacity),
     master_(conn::Socket(),
@@ -356,7 +363,7 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
 
   while (action_ != Action::kNone
          && action_ != Action::kExit) {
-    switch(action_) {
+    switch (action_) {
       case Action::kConnectToPeers:
         {
           ConnectToPeers();
@@ -379,16 +386,21 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           action_ = Action::kNone;
         }
         break;
+      case Action::kCreateDistArray:
+        {
+
+        }
+        break;
       case Action::kExecutorAck:
         {
           size_t result_size = 0;
           const void *result_mem = nullptr;
           if (task_type_ == TaskType::kExecuteCode) {
-            result_size = type::SizeOf(julia_execute_code_task_.result_type);
-            result_mem = julia_execute_code_task_.result_buff.data();
+            result_size = type::SizeOf(exec_julia_code_task_.result_type);
+            result_mem = exec_julia_code_task_.result_buff.data();
           } else if (task_type_ == TaskType::kCallFunc) {
-            result_size = type::SizeOf(julia_call_func_task_.result_type);
-            result_mem = julia_call_func_task_.result_buff.data();
+            result_size = type::SizeOf(exec_julia_func_task_.result_type);
+            result_mem = exec_julia_func_task_.result_buff.data();
           } else {
             LOG(FATAL) << "error!";
           }
@@ -425,8 +437,8 @@ Executor::HandleMasterMsg() {
         size_t expected_size = msg->num_executors*sizeof(HostInfo);
         bool received_next_msg =
             ReceiveArbitraryBytes(sock, &recv_buff,
-                                  reinterpret_cast<uint8_t*>(host_info_.data()), &host_info_recved_size_,
-                                  expected_size);
+                                  reinterpret_cast<uint8_t*>(host_info_.data()),
+                                  &host_info_recved_size_, expected_size);
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kConnectToPeers;
@@ -513,7 +525,7 @@ Executor::HandleExecuteMsg() {
           message::ExecuteMsgExecuteCode>(recv_buff);
         size_t expected_size = msg->task_size;
         bool received_next_msg
-            = ReceiveArbitraryBytes(master_.sock, &recv_buff, &byte_buff_,
+            = ReceiveArbitraryBytes(master_.sock, &recv_buff, &master_recv_byte_buff_,
                                     expected_size);
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
@@ -522,6 +534,21 @@ Executor::HandleExecuteMsg() {
           ret = EventHandler<PollConn>::kNoAction;
           action_ = Action::kNone;
         }
+      }
+      break;
+    case message::ExecuteMsgType::kCreateDistArray:
+      {
+        auto *msg = message::Helper::get_msg<message::ExecuteCreateDistArray>(
+              recv_buff);
+        size_t expected_size = msg->task_size;
+        bool received_next_msg =
+            ReceiveArbitraryBytes(sock, &recv_buff,
+                                  &master_recv_byte_buff_,
+                                  expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kCreateDistArray;
+        } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
     default:
@@ -635,20 +662,59 @@ Executor::Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn) {
 void
 Executor::ExecuteCode() {
   LOG(INFO) << __func__;
-  std::string task_str(reinterpret_cast<const char*>(byte_buff_.GetBytes()),
-                       byte_buff_.GetSize());
+  std::string task_str(
+      reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
+      master_recv_byte_buff_.GetSize());
   task::ExecuteCode execute;
   execute.ParseFromString(task_str);
   LOG(INFO) << execute.code();
 
-  julia_execute_code_task_.result_type = static_cast<type::PrimitiveType>(
+  exec_julia_code_task_.result_type = static_cast<type::PrimitiveType>(
       execute.result_type());
-  julia_execute_code_task_.code = execute.code();
-  julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&julia_execute_code_task_));
+  exec_julia_code_task_.code = execute.code();
+  julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_julia_code_task_));
 
   //Task julia_task;
   //julia_task.code = execute.code();
   //julia_eval_thread_.SchedTask(julia_task);
+}
+
+void
+Executor::CreateDistArray() {
+  std::string task_str(
+      reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
+      master_recv_byte_buff_.GetSize());
+  task::ExecuteCode create_dist_array;
+  create_dist_array.ParseFromString(task_str);
+  int32_t id = create_dist_array.id();
+  type::PrimitiveType value_type
+      = static_cast<type::PrimitiveType>(create_dist_array.value_type());
+  dist_arrays_.emplace(id,
+                       DistArray(&julia_eval_, kConfig,
+                                 value_type, kId));
+  bool fatten_results = create_dist_array.flatten_results();
+  bool value_only = create_dist_array.value_only();
+  bool parse = create_dist_array.value_only();
+  size_t num_dims = create_dist_array.num_dims();
+  auto parent_type = create_dist_array.parent_type();
+  switch (parent_type) {
+    case task::TEXT_FILE:
+      {
+
+      }
+      break;
+    case task::DIST_ARRAY:
+      {
+      }
+      break;
+    case task::INIT:
+      {
+      }
+      break;
+    default:
+      LOG(FATAL) << "unknown!" << static_cast<int>(parent_type);
+  }
+
 }
 
 }

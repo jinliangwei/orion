@@ -66,11 +66,31 @@ message CallFunc {
   required int32 result_type = 8;
 }
 
-//message LoadFile {
-//  required string file_path = 1;
-//  required int32 table_id = 2;
-//  required bytes code = 3;
-//}
+enum DistArrayParentType {
+  TEXT_FILE = 1;
+  DIST_ARRAY = 2;
+  INIT = 3;
+}
+
+enum DistArrayInitType {
+  EMPTY = 1;
+  UNIFORM_RANDOM = 2;
+}
+
+message CreateDistArray {
+  required int32 id = 1;
+  required DistArrayParentType parent_type = 2;
+  required bool flatten_results = 3;
+  required bool value_only = 4;
+  required bool parse = 5;
+  required uint64 num_dims = 6;
+  required int32 value_type = 7;
+  optional string file_path = 8;
+  optional int32 parent_id = 9;
+  optional DistArrayInitType init_type = 10;
+  optional string parser_func = 11;
+  optional string parser_func_name = 12;
+}
 
 //message Map {
 //  required int32 src_table = 1;

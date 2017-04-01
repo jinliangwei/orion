@@ -30,6 +30,11 @@ DEFINE_int32(local_executor_index, 0, "executor id");
 
 DEFINE_uint64(executor_thread_pool_size, 4, "thread pool size");
 
+DEFINE_uint64(min_partition_size_kb, 1024, "minimun file partition size");
+
+DEFINE_string(hdfs_name_node, "hdfs://localhost:9000",
+              "name node URL of HDFS");
+
 int main(int argc, char *argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
   google::InitGoogleLogging(argv[0]);
@@ -38,7 +43,9 @@ int main(int argc, char *argv[]) {
                               FLAGS_num_executors_per_worker, FLAGS_master_ip,
                               FLAGS_master_port, FLAGS_worker_ip, FLAGS_worker_port,
                               FLAGS_comm_buff_capacity, FLAGS_worker_id,
-                              FLAGS_executor_thread_pool_size);
+                              FLAGS_executor_thread_pool_size,
+                              FLAGS_min_partition_size_kb,
+                              FLAGS_hdfs_name_node);
   orion::bosen::Executor executor(config, FLAGS_local_executor_index);
   executor.operator()();
 

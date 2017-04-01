@@ -5,29 +5,10 @@
 
 #include <orion/bosen/type.hpp>
 #include <orion/bosen/blob.hpp>
+#include <orion/bosen/julia_task.hpp>
 
 namespace orion {
 namespace bosen {
-
-class JuliaTask {
- protected:
-  JuliaTask() { }
-  virtual ~JuliaTask() { }
-};
-
-class JuliaCallFuncTask : public JuliaTask {
- public:
-  std::string function_name;
-  type::PrimitiveType result_type;
-  Blob result_buff;
-};
-
-class JuliaExecuteCodeTask : public JuliaTask {
- public:
-  std::string code;
-  type::PrimitiveType result_type;
-  Blob result_buff;
-};
 
 class JuliaEvaluator {
  private:
@@ -145,7 +126,7 @@ JuliaEvaluator::ExecuteTask(JuliaTask* task) {
   jl_value_t* ret = nullptr;
   type::PrimitiveType result_type = type::PrimitiveType::kVoid;
   Blob *result_buff = nullptr;
-  if (auto execute_code_task = dynamic_cast<JuliaExecuteCodeTask*>(task)) {
+  if (auto execute_code_task = dynamic_cast<ExecJuliaCodeTask*>(task)) {
     ret = jl_eval_string(execute_code_task->code.c_str());
     result_type = execute_code_task->result_type;
     result_buff = &execute_code_task->result_buff;

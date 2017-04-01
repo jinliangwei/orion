@@ -45,7 +45,8 @@ def get_default_config():
         'port' : "11000",
         'num_executors_per_worker' : "1",
         'executor_thread_pool_size' : "4",
-        'julia_bin' : "/home/ubuntu/julia-0.5.1/usr/bin"
+        'julia_bin' : "/home/ubuntu/julia-0.5.1/usr/bin",
+        'min_partition_size_kb' : "1024"
     }
     config['log'] = {
         'log_dir' : "",
@@ -67,7 +68,9 @@ def get_default_config():
         'track-origins' : 'yes',
         'callgrind' : 'false'
     }
-    config['app'] = { }
+    config['hdfs'] = {
+        'name_node' : "hdfs://localhost:9000"
+    }
     return config
 
 def get_env_str(pargs):
@@ -107,7 +110,9 @@ def get_arg_strs(args, pargs):
         'num_executors_per_worker' : pargs['worker']['num_executors_per_worker'],
         'num_executors' : num_executors_total,
         'worker_port' : pargs['worker']['port'],
-        'executor_thread_pool_size' : pargs['worker']['executor_thread_pool_size']
+        'executor_thread_pool_size' : pargs['worker']['executor_thread_pool_size'],
+        'min_partition_size_kb' : pargs['worker']['min_partition_size_kb'],
+        'hdfs_name_node' : pargs['hdfs']['name_node']
     }
 
     master_arg_str = "".join([" --%s=%s" % (k, v) for (k, v) in master_args.items()])

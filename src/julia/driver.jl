@@ -76,6 +76,25 @@ function get_result_type_value(ResultType::DataType)::Int32
     return ret
 end
 
-macro func_def(func)
-    return func
+type DistArray{T} <: AbstractArray{T}
+end
+
+function text_file(file_path::AbstractString,
+                   mapper::Function)
+    return DistArray{Float64}()
+end
+
+function text_file(file_path::AbstractString)
+    return DistArray{String}()
+end
+
+function get_dimensions(array::DistArray)
+    return 1, 1
+end
+
+function rand(dims...)
+end
+
+macro iterative(loop)
+    return :(println("loop replaced"))
 end

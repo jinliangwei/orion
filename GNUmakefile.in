@@ -14,7 +14,7 @@ DFLAGS = -O3
 endif
 
 ifeq (@PERF_COUNT_ON@,true)
-PERF_COUNT_ON_FLAGS = -DSEDNA_PERF_COUNT
+PERF_COUNT_ON_FLAGS = -DORION_PERF_COUNT
 endif
 
 # use -Wno-deprecated-declarations to turn off warnings from boost w/ g++-5
@@ -30,6 +30,7 @@ CFLAGS = $(DFLAGS) $(PERF_COUNT_ON_FLAGS) \
 JULIA_HOME=@JULIA_HOME@
 
 CFLAGS += -I$(JULIA_HOME)/usr/include -I$(JULIA_HOME)/src -I$(JULIA_HOME)/src/support
+CFLAGS += -I$(ORION_HOME)/deps/include
 
 LIBS = -lgtest \
 	-lglog \
@@ -55,9 +56,10 @@ LDFLAGS += -Wl,-rpath,$(JULIA_HOME)/usr/lib -L$(JULIA_HOME)/usr/lib
 LIBS += -ljulia
 
 ifneq (@HADOOP_HOME@,)
+CFLAGS += -DORION_USE_HDFS
 CFLAGS += -I@HADOOP_HOME@/include
 LDFLAGS += -Wl,-rpath,@HADOOP_HOME@/lib/native -L@HADOOP_HOME@/lib/native \
--Wl,-rpath,@JAVA_LIB_HOME@ -L@JAVA_LIB_HOME@
+-Wl,-rpath,@JAVA_HOME@/jre/lib/amd64/server -L@JAVA_HOME@/jre/lib/amd64/server
 LIBS += -lhdfs -ljvm
 endif
 
@@ -65,6 +67,7 @@ ORION_LIB_NAME := orion
 ORION_LIB := lib/lib$(ORION_LIB_NAME).so
 orion_lib: $(ORION_LIB)
 
+include deps/deps.mk
 include src/bosen/bosen.mk
 
 $(ORION_LIB): lib $(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ)
@@ -86,5 +89,7 @@ orion_libs: bosen_lib
 
 clean: bosen_clean
 	rm -rf lib
+
+dist_clean: clean deps_clean
 
 .PHONY: bosen_exe orion_lib

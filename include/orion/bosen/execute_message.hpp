@@ -29,6 +29,20 @@ struct ExecuteMsgJuliaEvalAck {
     return ExecuteMsgType::kJuliaEvalAck; }
 };
 
+struct ExecuteMsgCreateDistArray {
+  size_t task_size;
+ private:
+  ExecuteMsgCreateDistArray() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _task_size) {
+    task_size = _task_size;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kCreateDistArray;
+  }
+};
+
 struct ExecuteMsgExecutorAck {
   size_t result_size;
  private:

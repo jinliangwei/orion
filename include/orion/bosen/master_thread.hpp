@@ -4,7 +4,7 @@
 #include <iostream>
 #include <vector>
 #include <functional>
-#include <map>
+#include <unordered_map>
 
 #include <orion/bosen/config.hpp>
 #include <orion/noncopyable.hpp>
@@ -19,6 +19,7 @@
 #include <orion/bosen/blob.hpp>
 #include <orion/bosen/recv_arbitrary_bytes.hpp>
 #include <orion/bosen/task_type.hpp>
+#include <orion/bosen/dist_array_meta.hpp>
 
 namespace orion {
 namespace bosen {
@@ -70,7 +71,9 @@ class MasterThread {
       kExit = 1,
       kExecutorConnectToPeers = 2,
       kExecuteCodeOnOne = 3,
-      kExecuteCodeOnAll = 4
+      kExecuteCodeOnAll = 4,
+      kCreateDistArray = 5,
+      kWaitingExecutorResponse = 10
   };
 
   const size_t kNumExecutors;
@@ -93,8 +96,8 @@ class MasterThread {
   Blob executor_send_mem_;
   std::vector<std::unique_ptr<conn::SocketConn>> executors_;
   std::vector<PollConn> executor_poll_conn_;
-  std::map<conn::SocketConn*, int32_t> executor_sock_conn_to_id_;
-  std::map<int32_t, ByteBuffer> executor_byte_buff_;
+  std::unordered_map<conn::SocketConn*, int32_t> executor_sock_conn_to_id_;
+  std::unordered_map<int32_t, ByteBuffer> executor_byte_buff_;
   TaskType task_type_ {TaskType::kNone};
 
   size_t num_expected_executor_acks_ {0};
@@ -123,6 +126,8 @@ class MasterThread {
 
   State state_ {State::kInitialization};
   Action action_ {Action::kNone};
+
+  std::unordered_map<int32_t, DistArrayMeta> dist_array_metas_;
 
  public:
   MasterThread(const Config &config);
@@ -279,6 +284,7 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
   }
 
   while (action_ != Action::kNone
+         && action_ != Action::kWaitingExecutorResponse
          && action_ != Action::kExit) {
     switch (action_) {
       case Action::kExecutorConnectToPeers:
@@ -288,7 +294,7 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           send_buff_.set_next_to_send(host_info_.data(),
                                       kNumExecutors*sizeof(HostInfo));
           BroadcastAllExecutors();
-          action_ = Action::kNone;
+          action_ = Action::kWaitingExecutorResponse;
         }
         break;
       case Action::kExecuteCodeOnOne:
@@ -299,9 +305,26 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
                                       driver_recv_byte_buff_.GetSize());
           SendToExecutor(executor_to_work_);
-          action_ = Action::kNone;
+          action_ = Action::kWaitingExecutorResponse;
           send_buff_.reset_sent_sizes();
           send_buff_.clear_to_send();
+        }
+        break;
+      case Action::kCreateDistArray:
+        {
+          message::ExecuteMsgHelper::CreateMsg<
+            message::ExecuteCreateDistArray>(
+                &send_buff_, driver_recv_byte_buff_.GetSize());
+          send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
+                                      driver_recv_byte_buff_.GetSize());
+          task::CreateDistArray create_dist_array;
+          std::string task_buff(
+              reinterpret_cast<const char*>(driver_recv_byte_buff_.GetBytes()),
+              driver_recv_byte_buff_.GetSize());
+          create_dist_array.ParseFromString(task_buff);
+          int32_t id = create_dist_array.id();
+          dist_array_metas_.emplace(id, DistArrayMeta());
+          action_ = Action::kWaitingExecutorResponse;
         }
         break;
       case Action::kExit:
@@ -315,6 +338,8 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
 
 int
 MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
+  CHECK(action_ != Action::kWaitingExecutorResponse)
+      << "currently have a task in hand and can't handle any driver message!";
   auto &recv_buff = poll_conn_ptr->get_recv_buff();
   auto msg_type = message::Helper::get_type(recv_buff);
   CHECK(msg_type == message::Type::kDriverMsg);
@@ -334,14 +359,31 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         auto *msg = message::DriverMsgHelper::get_msg<
             message::DriverMsgExecuteCodeOnOne>(recv_buff);
         size_t expected_size = msg->task_size;
-        executor_to_work_ = msg->executor_id;
         bool received_next_msg
             = ReceiveArbitraryBytes(driver_.sock, &recv_buff, &driver_recv_byte_buff_,
                                     expected_size);
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          executor_to_work_ = msg->executor_id;
           action_ = Action::kExecuteCodeOnOne;
           num_expected_executor_acks_ = 1;
+          num_recved_executor_acks_ = 0;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::DriverMsgType::kCreateDistArray:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgCreateDistArray>(recv_buff);
+        size_t expected_size = msg->task_size;
+        bool received_next_msg
+            = ReceiveArbitraryBytes(driver_.sock, &recv_buff, &driver_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          executor_to_work_ = -1;
+          action_ = Action::kCreateDistArray;
+          num_expected_executor_acks_ = kNumExecutors;
           num_recved_executor_acks_ = 0;
         } else ret = EventHandler<PollConn>::kNoAction;
       }

@@ -156,6 +156,19 @@ class Driver {
       type::PrimitiveType result_type,
       void *result_buff);
 
+  void CreateDistArray(
+      int32_t id,
+      task::DistArrayParentType parent_type,
+      bool faltten_results,
+      bool value_only,
+      size_t num_dims,
+      type::PrimitiveType value_type,
+      const std::string &file_path,
+      int32_t parent_id,
+      task::DistArrayInitType init_type,
+      const std::string &parser_func,
+      const std::string &parser_func_name);
+
   void Stop();
 };
 
@@ -192,14 +205,19 @@ Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
         auto *response_msg = message::DriverMsgHelper::get_msg<
           message::DriverMsgMasterResponse>(recv_buff);
         size_t expected_size = response_msg->result_bytes;
-        bool received_next_msg =
-            ReceiveArbitraryBytes(master_.sock, &recv_buff, &result_buff_,
-                                  expected_size);
-        if (received_next_msg) {
-          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          received_from_master_ = true;
+        if (expected_size == 0) {
+            ret = EventHandler<PollConn>::kClearOneMsg;
+            received_from_master_ = true;
         } else {
-          ret = EventHandler<PollConn>::kNoAction;
+          bool received_next_msg =
+              ReceiveArbitraryBytes(master_.sock, &recv_buff, &result_buff_,
+                                    expected_size);
+          if (received_next_msg) {
+            ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+            received_from_master_ = true;
+          } else {
+            ret = EventHandler<PollConn>::kNoAction;
+          }
         }
       }
       break;
@@ -316,6 +334,63 @@ Driver::CallFuncOnAll(
     int32_t num_iterations,
     type::PrimitiveType result_type,
     void *result_buff) { }
+
+void
+Driver::CreateDistArray(
+      int32_t id,
+      task::DistArrayParentType parent_type,
+      bool faltten_results,
+      bool value_only,
+      bool parse,
+      size_t num_dims,
+      type::PrimitiveType value_type,
+      const std::string &file_path,
+      int32_t parent_id,
+      task::DistArrayInitType init_type,
+      const std::string &parser_func,
+      const std::string &parser_func_name) {
+  task::CreateDistArray create_dist_array;
+  create_dist_array.set_id(id);
+  create_dist_array.set_parent_type(parent_type);
+  switch (parent_type) {
+    case task::TEXT_FILE:
+      {
+        create_dist_array.set_file_path(file_path);
+      }
+      break;
+    case task::DISK_ARRAY:
+      {
+        create_dist_array.set_parent_id(parent_id);
+      }
+      break;
+    case task::INIT:
+      {
+        create_dist_array.set_init_type(init_type);
+      }
+      break;
+    default:
+      LOG(INFO)< "unrecognized parent type = " << static_cast<int>(parent_type);
+  }
+  create_dist_array.set_flatten_results(flatten_results);
+  create_dist_array.set_value_only(value_only);
+  create_dist_array.set_parse(parse);
+  if (parse) {
+    create_dist_array.set_parser_func(parser_func);
+    create_disk_array.set_parser_func_name(parser_func_name);
+  }
+  create_dist_array.set_num_dims(num_dims);
+  create_dist_array.set_value_type(static_cast<int>(value_type));
+  create_dist_array.SerializeToString(&msg_buff_);
+
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgCreateDistArray>(
+      &master_.send_buff.msg_buff_.size());
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  BlockRecvFromMaster();
+}
 
 void
 Driver::Stop() {
