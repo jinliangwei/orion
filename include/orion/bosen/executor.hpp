@@ -197,6 +197,7 @@ class Executor {
   void Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn);
   void Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn);
   void ExecuteCode();
+  void CreateDistArray();
 };
 
 Executor::Executor(const Config& config, int32_t index):
@@ -538,11 +539,11 @@ Executor::HandleExecuteMsg() {
       break;
     case message::ExecuteMsgType::kCreateDistArray:
       {
-        auto *msg = message::Helper::get_msg<message::ExecuteCreateDistArray>(
+        auto *msg = message::Helper::get_msg<message::ExecuteMsgCreateDistArray>(
               recv_buff);
         size_t expected_size = msg->task_size;
         bool received_next_msg =
-            ReceiveArbitraryBytes(sock, &recv_buff,
+            ReceiveArbitraryBytes(master_.sock, &recv_buff,
                                   &master_recv_byte_buff_,
                                   expected_size);
         if (received_next_msg) {
@@ -684,15 +685,16 @@ Executor::CreateDistArray() {
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
       master_recv_byte_buff_.GetSize());
-  task::ExecuteCode create_dist_array;
+  task::CreateDistArray create_dist_array;
   create_dist_array.ParseFromString(task_str);
   int32_t id = create_dist_array.id();
   type::PrimitiveType value_type
       = static_cast<type::PrimitiveType>(create_dist_array.value_type());
   dist_arrays_.emplace(id,
-                       DistArray(&julia_eval_, kConfig,
+                       DistArray(kConfig,
                                  value_type, kId));
-  bool fatten_results = create_dist_array.flatten_results();
+  auto &dist_array = dist_arrays_.at(id);
+  bool flatten_results = create_dist_array.flatten_results();
   bool value_only = create_dist_array.value_only();
   bool parse = create_dist_array.value_only();
   size_t num_dims = create_dist_array.num_dims();
@@ -700,7 +702,20 @@ Executor::CreateDistArray() {
   switch (parent_type) {
     case task::TEXT_FILE:
       {
-
+        std::string file_path = create_dist_array.file_path();
+        std::string parser_func
+            = (parse && create_dist_array.has_parser_func())
+            ? create_dist_array.parser_func()
+            : std::string();
+        std::string parser_func_name
+            = parse ? create_dist_array.parser_func_name()
+            : std::string();
+        auto cpp_func = std::bind(&DistArray::LoadPartitionFromTextFile,
+                                  &dist_array, std::placeholders::_1,
+                                  file_path, flatten_results, value_only,
+                                  parse, num_dims, parser_func, parser_func_name);
+        exec_cpp_func_task_.func = cpp_func;
+        julia_eval_trhead_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_);
       }
       break;
     case task::DIST_ARRAY:

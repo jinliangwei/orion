@@ -20,6 +20,7 @@ class JuliaEvaluator {
   ~JuliaEvaluator() { }
   void Init() { jl_init(NULL); }
   void AtExitHook() { jl_atexit_hook(0); }
+  jl_value_t* EvalString(const std::string &code);
   void ExecuteTask(JuliaTask* task);
 };
 
@@ -121,15 +122,20 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
   }
 }
 
+jl_value_t*
+JuliaEvaluator::EvalString(const std::string &code) {
+  return jl_eval_string(code.c_str());
+}
+
 void
 JuliaEvaluator::ExecuteTask(JuliaTask* task) {
   jl_value_t* ret = nullptr;
   type::PrimitiveType result_type = type::PrimitiveType::kVoid;
   Blob *result_buff = nullptr;
-  if (auto execute_code_task = dynamic_cast<ExecJuliaCodeTask*>(task)) {
-    ret = jl_eval_string(execute_code_task->code.c_str());
-    result_type = execute_code_task->result_type;
-    result_buff = &execute_code_task->result_buff;
+  if (auto exec_code_task = dynamic_cast<ExecJuliaCodeTask*>(task)) {
+    ret = EvalString(exec_code_task->code);
+    result_type = exec_code_task->result_type;
+    result_buff = &exec_code_task->result_buff;
     //} else if (auto call_func_task = dynamic_cast<JuliaCallFuncTask*>(task)) {
 
   } else {

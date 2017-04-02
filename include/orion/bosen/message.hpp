@@ -120,7 +120,7 @@ static_assert(std::is_pod<DriverMsg>::value,
 enum class ExecuteMsgType {
   kExecuteCode = 0,
     kJuliaEvalAck = 1,
-    kExecuteCreateDistArray = 2,
+    kCreateDistArray = 2,
     kExecutorAck = 3
 };
 

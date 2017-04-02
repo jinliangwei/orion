@@ -65,7 +65,9 @@ struct DriverMsgCreateDistArray {
   void Init(size_t _task_size) {
     task_size = _task_size;
   }
-  static constexpr DriverMsgType get_type() { }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kCreateDistArray;
+  }
 };
 
 class DriverMsgHelper {

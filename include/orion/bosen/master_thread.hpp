@@ -5,7 +5,7 @@
 #include <vector>
 #include <functional>
 #include <unordered_map>
-
+#include <orion/bosen/task.pb.h>
 #include <orion/bosen/config.hpp>
 #include <orion/noncopyable.hpp>
 #include <orion/bosen/conn.hpp>
@@ -313,7 +313,7 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
       case Action::kCreateDistArray:
         {
           message::ExecuteMsgHelper::CreateMsg<
-            message::ExecuteCreateDistArray>(
+            message::ExecuteMsgCreateDistArray>(
                 &send_buff_, driver_recv_byte_buff_.GetSize());
           send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
                                       driver_recv_byte_buff_.GetSize());

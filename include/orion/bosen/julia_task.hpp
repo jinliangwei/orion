@@ -5,6 +5,8 @@
 namespace orion {
 namespace bosen {
 
+class JuliaEvaluator;
+
 class JuliaTask {
  protected:
   JuliaTask() { }
@@ -27,7 +29,7 @@ class ExecJuliaCodeTask : public JuliaTask {
 
 class ExecCppFuncTask : public JuliaTask {
  public:
-  std::function<void()> func;
+  std::function<void(JuliaEvaluator*)> func;
 };
 
 

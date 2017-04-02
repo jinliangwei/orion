@@ -159,8 +159,9 @@ class Driver {
   void CreateDistArray(
       int32_t id,
       task::DistArrayParentType parent_type,
-      bool faltten_results,
+      bool flatten_results,
       bool value_only,
+      bool parse,
       size_t num_dims,
       type::PrimitiveType value_type,
       const std::string &file_path,
@@ -339,7 +340,7 @@ void
 Driver::CreateDistArray(
       int32_t id,
       task::DistArrayParentType parent_type,
-      bool faltten_results,
+      bool flatten_results,
       bool value_only,
       bool parse,
       size_t num_dims,
@@ -358,7 +359,7 @@ Driver::CreateDistArray(
         create_dist_array.set_file_path(file_path);
       }
       break;
-    case task::DISK_ARRAY:
+    case task::DIST_ARRAY:
       {
         create_dist_array.set_parent_id(parent_id);
       }
@@ -369,21 +370,22 @@ Driver::CreateDistArray(
       }
       break;
     default:
-      LOG(INFO)< "unrecognized parent type = " << static_cast<int>(parent_type);
+      LOG(FATAL) << "unrecognized parent type = " << static_cast<int>(parent_type);
   }
   create_dist_array.set_flatten_results(flatten_results);
   create_dist_array.set_value_only(value_only);
   create_dist_array.set_parse(parse);
   if (parse) {
-    create_dist_array.set_parser_func(parser_func);
-    create_disk_array.set_parser_func_name(parser_func_name);
+    if (!parser_func.empty())
+      create_dist_array.set_parser_func(parser_func);
+    create_dist_array.set_parser_func_name(parser_func_name);
   }
   create_dist_array.set_num_dims(num_dims);
   create_dist_array.set_value_type(static_cast<int>(value_type));
   create_dist_array.SerializeToString(&msg_buff_);
 
   message::DriverMsgHelper::CreateMsg<message::DriverMsgCreateDistArray>(
-      &master_.send_buff.msg_buff_.size());
+      &master_.send_buff, msg_buff_.size());
   master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
   BlockSendToMaster();
   master_.send_buff.clear_to_send();
