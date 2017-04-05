@@ -2,7 +2,7 @@ push!(LOAD_PATH, "/home/ubuntu/orion/src/julia/")
 import orion
 import Orion
 
-const data_path = "/home/ubuntu/data/ml-1m/ratings.csv"
+const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
 const K = 100
 const num_iterations = 1
 const step_size = 0.001
@@ -14,9 +14,9 @@ const comm_buff_capacity = 1024
 function parse_line(line::AbstractString)
     tokens = split(line, ',')
     @assert length(tokens) == 3
-    key_array = [parse(Int64, AbstractString(tokens[1])),
-                 parse(Int64, AbstractString(tokens[2]))]
-    value = parse(Float64, AbstractString(tokens[3]))
+    key_tuple = (parse(Int64, String(tokens[1])),
+                 parse(Int64, String(tokens[2])))
+    value = parse(Float64, String(tokens[3]))
     return (key_array, value_tuple)
 end
 
@@ -26,7 +26,11 @@ Orion.set_lib_path("/home/ubuntu/orion/lib/liborion.so")
 Orion.glog_init(C_NULL)
 Orion.init(master_ip, master_port, comm_buff_capacity)
 
+#Orion.stop()
+#exit(0)
+
 ratings = Orion.text_file(data_path, parse_line)
+Orion.materialize(ratings)
 max_x, max_y = Orion.get_dimensions(ratings)
 
 W = Orion.rand(max_x + 1, K)

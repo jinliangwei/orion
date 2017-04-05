@@ -36,6 +36,13 @@ extern "C" {
    extern const int32_t ORION_TASK_BASETABLE_TYPE_VIRTUAL;
    extern const int32_t ORION_TASK_BASETABLE_TYPE_CONCRETE;
 
+  extern const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_TEXT_FILE;
+  extern const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_DIST_ARRAY;
+  extern const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_INIT;
+
+  extern const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_EMPTY;
+  extern const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM;
+
   typedef struct VirtualBaseTable {
     size_t size;
   } VirtualBaseTable;
@@ -75,6 +82,20 @@ extern "C" {
     size_t num_iterations,
     int result_type,
     void *result_buff);
+
+  void orion_create_dist_array(
+      int32_t id,
+      int32_t parent_type,
+      bool flatten_results,
+      bool value_only,
+      bool parse,
+      size_t num_dims,
+      int value_type,
+      const char* file_path,
+      int32_t parent_id,
+      int32_t init_type,
+      const char* parser_func,
+      const char* parser_func_name);
 
   void orion_stop();
 

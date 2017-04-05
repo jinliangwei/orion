@@ -5,8 +5,9 @@ namespace bosen {
 
 enum class TaskType {
   kNone = 0,
-  kExecuteCode = 1,
-  kCallFunc = 2
+  kExecJuliaCode = 1,
+    kExecJuliaFunc = 2,
+    kNoReturnValue = 3
 };
 
 }

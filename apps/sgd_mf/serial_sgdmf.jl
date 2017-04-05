@@ -6,9 +6,9 @@ const step_size = 0.001
 function parse_line(line::AbstractString)
     tokens = split(line, ',')
     @assert length(tokens) == 3
-    token_tuple = (parse(Int64, AbstractString(tokens[1])),
-                   parse(Int64, AbstractString(tokens[2])),
-                   parse(Float64, AbstractString(tokens[3])))
+    token_tuple = (parse(Int64, String(tokens[1])),
+                   parse(Int64, String(tokens[2])),
+                   parse(Float64, String(tokens[3])))
     return token_tuple
 end
 
@@ -16,7 +16,7 @@ function load_data(path::AbstractString)
     num_lines::Int64 = 0
     ratings = Array{Tuple{Integer, Integer, Real}}(0)
     open(path, "r") do dataf
-        for line::AbstractString in eachline(dataf)
+        for line::String in eachline(dataf)
             token_tuple = parse_line(line)
             push!(ratings, token_tuple)
         end

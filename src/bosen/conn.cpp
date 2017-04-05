@@ -262,7 +262,9 @@ bool Socket::Recv(RecvBuffer *buf) const {
   }
 
   if (buf->is_initialized())
-    CHECK(buf->get_capacity() >= buf->get_expected_size()) << "message is too large";
+    CHECK_GE(buf->get_capacity(), buf->get_expected_size())
+        << "message is too large, expected size = "
+        << buf->get_expected_size();
   if (buf->ReceivedFullMsg()) return true;
   return false;
 }

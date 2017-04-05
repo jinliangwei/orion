@@ -27,6 +27,7 @@ ReceiveArbitraryBytes(Conn &conn, conn::RecvBuffer* recv_buff,
              recv_buff->get_curr_msg_end_mem(),
              size_to_copy);
       byte_buff->IncSize(size_to_copy);
+      LOG(INFO) << "inc_next_recved_size by " << size_to_copy;
       recv_buff->inc_next_recved_size(size_to_copy);
     }
   }

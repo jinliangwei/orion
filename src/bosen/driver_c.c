@@ -37,6 +37,13 @@ extern "C" {
   const int32_t ORION_TASK_BASETABLE_TYPE_VIRTUAL = 1;
   const int32_t ORION_TASK_BASETABLE_TYPE_CONCRETE = 2;
 
+  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_TEXT_FILE = 1;
+  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_DIST_ARRAY = 2;
+  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_INIT = 3;
+
+  const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_EMPTY = 1;
+  const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM = 2;
+
   orion::bosen::Driver *driver = nullptr;
 
   void orion_helloworld() {
@@ -73,6 +80,35 @@ extern "C" {
       size_t num_iterations,
       int result_type,
       void *result_buff) { }
+
+  void orion_create_dist_array(
+      int32_t id,
+      int32_t parent_type,
+      bool flatten_results,
+      bool value_only,
+      bool parse,
+      size_t num_dims,
+      int value_type,
+      const char* file_path,
+      int32_t parent_id,
+      int32_t init_type,
+      const char* parser_func,
+      const char* parser_func_name) {
+    driver->CreateDistArray(
+        id,
+        static_cast<orion::bosen::task::DistArrayParentType>(parent_type),
+        flatten_results,
+        value_only,
+        parse,
+        num_dims,
+        static_cast<orion::bosen::type::PrimitiveType>(value_type),
+        (file_path != nullptr) ? std::string(file_path) : std::string(),
+        parent_id,
+        static_cast<orion::bosen::task::DistArrayInitType>(init_type),
+        (parser_func != nullptr) ? std::string(parser_func) : std::string(),
+        (parser_func_name != nullptr) ? std::string(parser_func_name) : std::string());
+  }
+
 
   void orion_stop() {
     driver->Stop();

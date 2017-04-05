@@ -79,77 +79,77 @@ DistArray::CreatePartition() {
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int8_t>(kConfig));
+                new DistArrayPartition<int8_t>(kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kUInt8:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<uint8_t>(kConfig));
+                new DistArrayPartition<uint8_t>(kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kInt16:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int16_t>(kConfig));
+                new DistArrayPartition<int16_t>(kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kUInt16:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<uint16_t>(kConfig));
+                new DistArrayPartition<uint16_t>(kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kInt32:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int32_t>(kConfig));
+                new DistArrayPartition<int32_t>(kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kUInt32:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<uint32_t>(kConfig));
+                new DistArrayPartition<uint32_t>(kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kInt64:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int64_t>(kConfig));
+                new DistArrayPartition<int64_t>(kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kUInt64:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int64_t>(kConfig));
+                new DistArrayPartition<int64_t>(kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kFloat32:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<float>(kConfig));
+                new DistArrayPartition<float>(kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kFloat64:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<double>(kConfig));
+                new DistArrayPartition<double>(kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kString:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<const char*>(kConfig));
+                new DistArrayPartition<const char*>(kConfig, kValueType));
         break;
       }
     default:

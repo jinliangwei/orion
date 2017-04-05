@@ -1,14 +1,20 @@
+push!(LOAD_PATH, "/home/ubuntu/orion/src/julia/")
+import orion
+import Orion
+
 function parse_line(line::AbstractString)
     tokens = split(line, ',')
     @assert length(tokens) == 3
-    key_array = [parse(Int64, AbstractString(tokens[1])),
-                 parse(Int64, AbstractString(tokens[2]))]
-    value = parse(Float64, AbstractString(tokens[3]))
-    return (key_array, value_tuple)
+    key_tuple = (parse(Int64, String(tokens[1])),
+                 parse(Int64, String(tokens[2])))
+    value = parse(Float64, String(tokens[3]))
+    return [(key_tuple, value)]
 end
 
-function my_map(f::Function)
-    println(code_typed(f),())
-end
+#Orion.set_lib_path("/home/ubuntu/orion/lib/liborion.so")
+# initialize logging of the runtime library
+#Orion.glog_init(C_NULL)
+#Orion.init(master_ip, master_port, comm_buff_capacity)
 
-my_map(parse_line)
+Orion.Ast.parse_map_function(parse_line, (AbstractString,), true)
+Orion.text_file("test", parse_line, (AbstractString,), true)

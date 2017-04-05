@@ -20,14 +20,14 @@ namespace bosen {
 template<typename ValueType>
 class DistArrayPartition : public AbstractDistArrayPartition {
  private:
-  std::vector<uint64_t> keys_;
+  std::vector<int64_t> keys_;
   std::vector<ValueType> values_;
-  stx::btree_map<uint64_t, ValueType> index_;
+  stx::btree_map<int64_t, ValueType> index_;
   bool index_exists_ {false};
   const Config& kConfig;
-
+  const type::PrimitiveType kValueType;
  public:
-  DistArrayPartition(const Config &config);
+  DistArrayPartition(const Config &config, type::PrimitiveType value_type);
   ~DistArrayPartition();
 
   bool LoadTextFile(JuliaEvaluator *julia_eval,
@@ -36,24 +36,24 @@ class DistArrayPartition : public AbstractDistArrayPartition {
                     size_t num_dims,
                     const std::string &parser_func_name);
 
-  void Insert(uint64_t key, const Blob &buff) { }
-  void Get(uint64_t key, Blob *buff) { }
-  void GetRange(uint64_t start, uint64_t end, Blob *buff) { }
+  void Insert(int64_t key, const Blob &buff) { }
+  void Get(int64_t key, Blob *buff) { }
+  void GetRange(int64_t start, int64_t end, Blob *buff) { }
 };
 
 /*----- Specialized for String (const char*) ------*/
 template<>
 class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
  private:
-  std::vector<uint64_t> keys_;
+  std::vector<int64_t> keys_;
   std::vector<char> values_;
   std::vector<size_t> str_offsets_;
-  stx::btree_map<uint64_t, const char*> index_;
+  stx::btree_map<int64_t, const char*> index_;
   bool index_exists_ {false};
   const Config& kConfig;
-
+  const type::PrimitiveType kValueType;
  public:
-  DistArrayPartition(const Config &config);
+  DistArrayPartition(const Config &config, type::PrimitiveType value_type);
   ~DistArrayPartition();
 
   bool LoadTextFile(JuliaEvaluator *julia_eval,
@@ -62,16 +62,18 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
                     size_t num_dims,
                     const std::string &parser_func_name);
 
-  void Insert(uint64_t key, const Blob &buff) { }
-  void Get(uint64_t key, Blob *buff) { }
-  void GetRange(uint64_t start, uint64_t end, Blob *buff) { }
+  void Insert(int64_t key, const Blob &buff) { }
+  void Get(int64_t key, Blob *buff) { }
+  void GetRange(int64_t start, int64_t end, Blob *buff) { }
 };
 
 /*---- template general implementation -----*/
 template<typename ValueType>
 DistArrayPartition<ValueType>::DistArrayPartition(
-    const Config &config):
-    kConfig(config) { }
+    const Config &config,
+    type::PrimitiveType value_type):
+    kConfig(config),
+    kValueType(value_type) { }
 
 template<typename ValueType>
 DistArrayPartition<ValueType>::~DistArrayPartition() { }
@@ -83,7 +85,7 @@ DistArrayPartition<ValueType>::LoadTextFile(
     const std::string &path, int32_t partition_id,
     bool flatten_results, bool value_only, bool parse,
     size_t num_dims,
-    const std::string &parser_func) {
+    const std::string &parser_func_name) {
   size_t offset = path.find_first_of(':');
   std::string prefix = path.substr(0, offset);
   std::string file_path = path.substr(offset + 3, path.length() - offset - 3);
@@ -101,13 +103,30 @@ DistArrayPartition<ValueType>::LoadTextFile(
   } else {
     LOG(FATAL) << "Cannot parse the path specification " << path;
   }
+
+  std::vector<int64_t> key(num_dims);
+  Blob value(SizeOf(kValueType));
+  auto* parser_func = julia_eval->GetFunction(parser_func_name);
+  char *line = strtok(char_buff.data() + begin, "\n");
+  int i = 0;
+  while (line != nullptr) {
+    julia_eval->ParseString(line, parser_func, kValueType,
+                            &key, &value);
+    if (i == 0)
+      LOG(INFO) << "key = " << key[0] << "," << key[1]
+                << " value = " << *((ValueType*) value.data());
+    i++;
+  }
+
   return read;
 }
 
 /*---- template const char* implementation -----*/
 DistArrayPartition<const char*>::DistArrayPartition(
-    const Config &config):
-    kConfig(config) { }
+    const Config &config,
+    type::PrimitiveType value_type):
+    kConfig(config),
+    kValueType(value_type) { }
 
 DistArrayPartition<const char*>::~DistArrayPartition() { }
 
@@ -117,7 +136,8 @@ DistArrayPartition<const char*>::LoadTextFile(
     const std::string &path, int32_t partition_id,
     bool flatten_results, bool value_only, bool parse,
     size_t num_dims,
-    const std::string &parser_func) {
+    const std::string &parser_func_name) {
+  LOG(INFO) << __func__;
   size_t offset = path.find_first_of(':');
   std::string prefix = path.substr(0, offset);
   std::string file_path = path.substr(offset + 3, path.length() - offset - 3);

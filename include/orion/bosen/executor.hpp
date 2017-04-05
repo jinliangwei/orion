@@ -382,35 +382,40 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         break;
       case Action::kExecuteCode:
         {
-          task_type_ = TaskType::kExecuteCode;
+          task_type_ = TaskType::kExecJuliaCode;
           ExecuteCode();
           action_ = Action::kNone;
         }
         break;
       case Action::kCreateDistArray:
         {
-
+          task_type_ = TaskType::kNoReturnValue;
+          CreateDistArray();
+          action_ = Action::kNone;
         }
         break;
       case Action::kExecutorAck:
         {
           size_t result_size = 0;
           const void *result_mem = nullptr;
-          if (task_type_ == TaskType::kExecuteCode) {
+          if (task_type_ == TaskType::kExecJuliaCode) {
             result_size = type::SizeOf(exec_julia_code_task_.result_type);
             result_mem = exec_julia_code_task_.result_buff.data();
-          } else if (task_type_ == TaskType::kCallFunc) {
+          } else if (task_type_ == TaskType::kExecJuliaFunc) {
             result_size = type::SizeOf(exec_julia_func_task_.result_type);
             result_mem = exec_julia_func_task_.result_buff.data();
+          } else if (task_type_ == TaskType::kNoReturnValue) {
           } else {
             LOG(FATAL) << "error!";
           }
 
           message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgExecutorAck>(
               &send_buff_, result_size);
-          send_buff_.set_next_to_send(result_mem, result_size);
+          if (result_size > 0)
+            send_buff_.set_next_to_send(result_mem, result_size);
           Send(&master_poll_conn_, &master_);
           send_buff_.clear_to_send();
+          send_buff_.reset_sent_sizes();
           action_ = Action::kNone;
         }
         break;
@@ -539,7 +544,8 @@ Executor::HandleExecuteMsg() {
       break;
     case message::ExecuteMsgType::kCreateDistArray:
       {
-        auto *msg = message::Helper::get_msg<message::ExecuteMsgCreateDistArray>(
+        LOG(INFO) << "Executor CreateDistArray";
+        auto *msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgCreateDistArray>(
               recv_buff);
         size_t expected_size = msg->task_size;
         bool received_next_msg =
@@ -682,11 +688,14 @@ Executor::ExecuteCode() {
 
 void
 Executor::CreateDistArray() {
+  LOG(INFO) << "Executor " << __func__;
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
       master_recv_byte_buff_.GetSize());
+
   task::CreateDistArray create_dist_array;
   create_dist_array.ParseFromString(task_str);
+
   int32_t id = create_dist_array.id();
   type::PrimitiveType value_type
       = static_cast<type::PrimitiveType>(create_dist_array.value_type());
@@ -696,7 +705,7 @@ Executor::CreateDistArray() {
   auto &dist_array = dist_arrays_.at(id);
   bool flatten_results = create_dist_array.flatten_results();
   bool value_only = create_dist_array.value_only();
-  bool parse = create_dist_array.value_only();
+  bool parse = create_dist_array.parse();
   size_t num_dims = create_dist_array.num_dims();
   auto parent_type = create_dist_array.parent_type();
   switch (parent_type) {
@@ -715,7 +724,8 @@ Executor::CreateDistArray() {
                                   file_path, flatten_results, value_only,
                                   parse, num_dims, parser_func, parser_func_name);
         exec_cpp_func_task_.func = cpp_func;
-        julia_eval_trhead_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_);
+        LOG(INFO) << "scheduling task CreateDistArray";
+        julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
       }
       break;
     case task::DIST_ARRAY:

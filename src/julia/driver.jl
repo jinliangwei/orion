@@ -1,5 +1,44 @@
 export helloworld
 
+using .Ast
+
+@enum DistArrayParentType DistArrayParentType_text_file =
+    1 DistArrayParentType_dist_array =
+    2 DistArrayParentType_init =
+    3
+
+function dist_array_parent_type_to_int32
+
+@enum DistArrayInitType DistArrayInitType_empty =
+    1 DistARrayInitType_uniform_random = 2
+
+type DistArray{T} <: AbstractArray{T}
+    id::Int32
+    parent_type::DistArrayParentType
+    flatten_results::Bool
+    value_only::Bool
+    parse::Bool
+    num_dims::UInt64
+    ValueType::DataType
+    file_path::String
+    parent_id::Int32
+    parser_func::String
+    parser_func_name::String
+    is_materialized::Bool
+    function DistArray(id::Integer,
+                       parent_type::DistArrayParentType,
+                       flatten_results::Bool,
+                       value_only::Bool,
+                       parse::Bool,
+                       num_dims::UInt64,
+                       value_type::DataType)
+        new(id, parent_type, flatten_results, value_only, parse,
+            num_dims, value_type, "", -1, "", "", false)
+    end
+end
+
+dist_arrays = Dict{Int32, DistArray}()
+
 function helloworld()
     ccall((:orion_helloworld, lib_path), Void, ())
 end
@@ -24,7 +63,7 @@ function execute_code(
     result_buff = Array{ResultType}(1)
     ccall((:orion_execute_code_on_one, lib_path),
           Void, (Int32, Cstring, Int32, Ptr{Void}),
-          executor_id, code, get_result_type_value(ResultType),
+          executor_id, code, result_type_to_int32(ResultType),
           result_buff);
     return result_buff[1]
 end
@@ -33,7 +72,7 @@ function stop()
     ccall((:orion_stop, lib_path), Void, ())
 end
 
-function get_result_type_value(ResultType::DataType)::Int32
+function result_type_to_int32(ResultType::DataType)::Int32
     if ResultType == Void
         ptr_val = cglobal((:ORION_TYPE_VOID, lib_path), Int32)
         ret = unsafe_load(ptr_val)
@@ -76,12 +115,26 @@ function get_result_type_value(ResultType::DataType)::Int32
     return ret
 end
 
-type DistArray{T} <: AbstractArray{T}
-end
+function text_file(
+    file_path::AbstractString,
+    mapper::Function,
+    arg_types::Tuple=(AbstractString,),
+    flatten_results::Bool=false)
 
-function text_file(file_path::AbstractString,
-                   mapper::Function)
-    return DistArray{Float64}()
+    id = length(dist_arrays)
+    parent_type = DistArrayParentType_text_file
+    ValueType, num_dims =
+        Ast.parse_map_function(mapper, arg_types, flatten_results)
+
+    dist_array = DistArray{ValueType}(
+        id,
+        parent_type,
+        flatten_results,
+        false,
+        true,
+        num_dims,
+        ValueType)
+    dist_array.file_path = file_path
 end
 
 function text_file(file_path::AbstractString)
@@ -93,6 +146,13 @@ function get_dimensions(array::DistArray)
 end
 
 function rand(dims...)
+end
+
+function materialize(dist_array::DistArray)
+    if (dist_array.parent_type == DistArrayParentType_text_file)
+    else if (dist_array.parent_type == DistArrayParentType_dist_array)
+    else if (dist_array.parent_type == DistArrayParentType_init)
+    end
 end
 
 macro iterative(loop)

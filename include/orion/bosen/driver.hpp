@@ -87,7 +87,6 @@ class Driver {
       const std::string &code,
       type::PrimitiveType result_type);
 
-
   int HandleMasterMsg(PollConn *poll_conn_ptr);
   void HandleWriteEvent(PollConn *poll_conn_ptr);
   int HandleClosedConnection(PollConn *poll_conn_ptr);
@@ -223,7 +222,7 @@ Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
       }
       break;
     default:
-      LOG(FATAL) << "";
+      LOG(FATAL) << "Unknown message type " << static_cast<int>(driver_msg_type);
   }
   return ret;
 }
@@ -370,7 +369,8 @@ Driver::CreateDistArray(
       }
       break;
     default:
-      LOG(FATAL) << "unrecognized parent type = " << static_cast<int>(parent_type);
+      LOG(FATAL) << "unrecognized parent type = "
+                 << static_cast<int>(parent_type);
   }
   create_dist_array.set_flatten_results(flatten_results);
   create_dist_array.set_value_only(value_only);
@@ -383,6 +383,7 @@ Driver::CreateDistArray(
   create_dist_array.set_num_dims(num_dims);
   create_dist_array.set_value_type(static_cast<int>(value_type));
   create_dist_array.SerializeToString(&msg_buff_);
+  LOG(INFO) << "task size = " << msg_buff_.size();
 
   message::DriverMsgHelper::CreateMsg<message::DriverMsgCreateDistArray>(
       &master_.send_buff, msg_buff_.size());
@@ -391,6 +392,7 @@ Driver::CreateDistArray(
   master_.send_buff.clear_to_send();
   master_.send_buff.reset_sent_sizes();
   expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  received_from_master_ = false;
   BlockRecvFromMaster();
 }
 
