@@ -4,47 +4,54 @@
 #include <orion/bosen/driver.h>
 #include <orion/bosen/driver.hpp>
 #include <orion/glog_config.hpp>
+#include <orion/bosen/task.pb.h>
 
 extern "C" {
-  const int32_t ORION_TYPE_VOID = 0;
-  const int32_t ORION_TYPE_INT8 = 1;
-  const int32_t ORION_TYPE_UINT8 = 2;
-  const int32_t ORION_TYPE_INT16 = 3;
-  const int32_t ORION_TYPE_UINT16 = 4;
-  const int32_t ORION_TYPE_INT32 = 5;
-  const int32_t ORION_TYPE_UINT32 = 6;
-  const int32_t ORION_TYPE_INT64 = 7;
-  const int32_t ORION_TYPE_UINT64 = 8;
-  const int32_t ORION_TYPE_FLOAT32 = 9;
-  const int32_t ORION_TYPE_FLOAT64 = 10;
-  const int32_t ORION_TYPE_STRING = 11;
+  const int32_t ORION_TYPE_VOID = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kVoid);
+  const int32_t ORION_TYPE_INT8 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kInt8);
+  const int32_t ORION_TYPE_UINT8 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kUInt8);
+  const int32_t ORION_TYPE_INT16 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kInt16);
+  const int32_t ORION_TYPE_UINT16 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kUInt16);
+  const int32_t ORION_TYPE_INT32 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kInt32);
+  const int32_t ORION_TYPE_UINT32 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kUInt32);
+  const int32_t ORION_TYPE_INT64 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kInt64);
+  const int32_t ORION_TYPE_UINT64 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kUInt64);
+  const int32_t ORION_TYPE_FLOAT32 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kFloat32);
+  const int32_t ORION_TYPE_FLOAT64 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kFloat64);
+  const int32_t ORION_TYPE_STRING = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kString);
 
-  const int32_t ORION_TASK_TABLE_DEP_TYPE_PIPELINED = 1;
-  const int32_t ORION_TASK_TABLE_DEP_TYPE_RANDOM_ACCESS = 2;
+  const int32_t ORION_TASK_TABLE_DEP_TYPE_PIPELINED = static_cast<int32_t>(orion::bosen::task::PIPELINED);
+  const int32_t ORION_TASK_TABLE_DEP_TYPE_RANDOM_ACCESS = static_cast<int32_t>(orion::bosen::task::RANDOM_ACCESS);
 
-  const int32_t ORION_TASK_READWRITE_READ_ONLY = 1;
-  const int32_t ORION_TASK_READWRITE_WRITE_ONLY = 2;
-  const int32_t ORION_TASK_READWRITE_READ_WRITE = 3;
+  const int32_t ORION_TASK_READWRITE_READ_ONLY = static_cast<int32_t>(orion::bosen::task::READ_ONLY);
+  const int32_t ORION_TASK_READWRITE_WRITE_ONLY = static_cast<int32_t>(orion::bosen::task::WRITE_ONLY);
+  const int32_t ORION_TASK_READWRITE_READ_WRITE = static_cast<int32_t>(orion::bosen::task::READ_WRITE);
 
-  const int32_t ORION_TASK_REPETITION_ONE_PARTITION = 1;
-  const int32_t ORION_TASK_REPETITION_ALL_LOCAL_PARTITIONS = 2;
-  const int32_t ORION_TASK_REPETITION_ALL_PARTITIONS = 3;
+  const int32_t ORION_TASK_REPETITION_ONE_PARTITION = static_cast<int32_t>(orion::bosen::task::ONE_PARTITION);
+  const int32_t ORION_TASK_REPETITION_ALL_LOCAL_PARTITIONS = static_cast<int32_t>(orion::bosen::task::ALL_LOCAL_PARTITIONS);
+  const int32_t ORION_TASK_REPETITION_ALL_PARTITIONS = static_cast<int32_t>(orion::bosen::task::ALL_PARTITIONS);
 
-  const int32_t ORION_TASK_PARTITION_SCHEME_ = 1;
-  const int32_t ORION_TASK_PARTITION_SCHEME_DYNAMIC = 2;
-  const int32_t ORION_TASK_PARTITION_SCHEME_RANDOM = 3;
+  const int32_t ORION_TASK_PARTITION_SCHEME_STATIC = static_cast<int32_t>(orion::bosen::task::STATIC);
+  const int32_t ORION_TASK_PARTITION_SCHEME_DYNAMIC = static_cast<int32_t>(orion::bosen::task::DYNAMIC);
+  const int32_t ORION_TASK_PARTITION_SCHEME_RANDOM = static_cast<int32_t>(orion::bosen::task::RANDOM);
 
-  const int32_t ORION_TASK_BASETABLE_TYPE_VIRTUAL = 1;
-  const int32_t ORION_TASK_BASETABLE_TYPE_CONCRETE = 2;
+  const int32_t ORION_TASK_BASETABLE_TYPE_VIRTUAL = static_cast<int32_t>(orion::bosen::task::VIRTUAL);
+  const int32_t ORION_TASK_BASETABLE_TYPE_CONCRETE = static_cast<int32_t>(orion::bosen::task::CONCRETE);
 
-  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_TEXT_FILE = 1;
-  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_DIST_ARRAY = 2;
-  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_INIT = 3;
+  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_TEXT_FILE = static_cast<int32_t>(orion::bosen::task::TEXT_FILE);
+  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_DIST_ARRAY = static_cast<int32_t>(orion::bosen::task::DIST_ARRAY);
+  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_INIT = static_cast<int32_t>(orion::bosen::task::INIT);
 
-  const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_EMPTY = 1;
-  const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM = 2;
+  const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_EMPTY = static_cast<int32_t>(orion::bosen::task::EMPTY);
+  const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM = static_cast<int32_t>(orion::bosen::task::UNIFORM_RANDOM);
+
+  const int32_t ORION_JULIA_MODULE_CORE = static_cast<int32_t>(orion::bosen::JuliaModule::kCore);
+  const int32_t ORION_JULIA_MODULE_BASE = static_cast<int32_t>(orion::bosen::JuliaModule::kBase);
+  const int32_t ORION_JULIA_MODULE_MAIN = static_cast<int32_t>(orion::bosen::JuliaModule::kMain);
+  const int32_t ORION_JULIA_MODULE_TOP = static_cast<int32_t>(orion::bosen::JuliaModule::kTop);
 
   orion::bosen::Driver *driver = nullptr;
+  orion::GLogConfig glog_config("julia_driver");
 
   void orion_helloworld() {
     std::cout << "helloworld" << std::endl;
@@ -92,7 +99,7 @@ extern "C" {
       const char* file_path,
       int32_t parent_id,
       int32_t init_type,
-      const char* parser_func,
+      int32_t parser_func_module,
       const char* parser_func_name) {
     driver->CreateDistArray(
         id,
@@ -102,13 +109,24 @@ extern "C" {
         parse,
         num_dims,
         static_cast<orion::bosen::type::PrimitiveType>(value_type),
-        (file_path != nullptr) ? std::string(file_path) : std::string(),
+        file_path,
         parent_id,
         static_cast<orion::bosen::task::DistArrayInitType>(init_type),
-        (parser_func != nullptr) ? std::string(parser_func) : std::string(),
-        (parser_func_name != nullptr) ? std::string(parser_func_name) : std::string());
+        static_cast<orion::bosen::JuliaModule>(parser_func_module),
+        parser_func_name);
   }
 
+  void orion_eval_expr_on_all(
+      const uint8_t* expr,
+      size_t expr_size,
+      int32_t result_type,
+      void *result_buff) {
+    driver->EvalExprOnAll(
+        expr,
+        expr_size,
+        static_cast<orion::bosen::type::PrimitiveType>(result_type),
+        result_buff);
+  }
 
   void orion_stop() {
     driver->Stop();
@@ -135,18 +153,21 @@ extern "C" {
 
   void
   orion_glog_init(OrionGLogConfig* glogconfig) {
-    int argc = 0;
-    char **argv = nullptr;
     if (glogconfig == NULL) {
-      orion::GLogConfig config = orion::GLogConfig("julia_driver");
-      argc = config.get_argc();
-      argv = config.get_argv();
+      int argc = glog_config.get_argc();
+      char** argv = glog_config.get_argv();
+      std::cout << "before argc = " << argc << std::endl;
+      google::ParseCommandLineFlags(&argc, &argv, false);
+      std::cout << "after argc = " << argc << std::endl;
+      std::cout << argv[0] << std::endl;
+      //google::InitGoogleLogging("julia_driver");
+      google::InitGoogleLogging(argv[0]);
     } else {
       auto *cast_glogconfig = reinterpret_cast<orion::GLogConfig*>(glogconfig);
-      argc = cast_glogconfig->get_argc();
-      argv = cast_glogconfig->get_argv();
+      int argc = cast_glogconfig->get_argc();
+      char** argv = cast_glogconfig->get_argv();
+      google::ParseCommandLineFlags(&argc, &argv, true);
+      google::InitGoogleLogging(argv[0]);
     }
-    google::ParseCommandLineFlags(&argc, &argv, true);
-    google::InitGoogleLogging(argv[0]);
   }
 }

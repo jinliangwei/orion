@@ -118,7 +118,8 @@ class Executor {
       kConnectToPeers = 2,
       kAckConnectToPeers = 3,
       kExecuteCode = 4,
-      kCreateDistArray = 5,
+      kEvalExpr = 5,
+      kCreateDistArray = 6,
       kExecutorAck = 10
   };
 
@@ -165,6 +166,7 @@ class Executor {
   ExecJuliaFuncTask exec_julia_func_task_;
   ExecJuliaCodeTask exec_julia_code_task_;
   ExecCppFuncTask exec_cpp_func_task_;
+  EvalJuliaExprTask eval_julia_expr_task_;
 
   ByteBuffer master_recv_byte_buff_;
 
@@ -197,6 +199,7 @@ class Executor {
   void Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn);
   void Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn);
   void ExecuteCode();
+  void EvalExpr();
   void CreateDistArray();
 };
 
@@ -387,9 +390,16 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           action_ = Action::kNone;
         }
         break;
+      case Action::kEvalExpr:
+        {
+          task_type_ = TaskType::kEvalJuliaAst;
+          EvalExpr();
+          action_ = Action::kNone;
+        }
+        break;
       case Action::kCreateDistArray:
         {
-          task_type_ = TaskType::kNoReturnValue;
+          task_type_ = TaskType::kExecCppFunc;
           CreateDistArray();
           action_ = Action::kNone;
         }
@@ -404,7 +414,10 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           } else if (task_type_ == TaskType::kExecJuliaFunc) {
             result_size = type::SizeOf(exec_julia_func_task_.result_type);
             result_mem = exec_julia_func_task_.result_buff.data();
-          } else if (task_type_ == TaskType::kNoReturnValue) {
+          } else if (task_type_ == TaskType::kEvalJuliaAst) {
+            result_size = type::SizeOf(eval_julia_expr_task_.result_type);
+            result_mem = eval_julia_expr_task_.result_buff.data();
+          } else if (task_type_ == TaskType::kExecCppFunc) {
           } else {
             LOG(FATAL) << "error!";
           }
@@ -536,6 +549,24 @@ Executor::HandleExecuteMsg() {
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kExecuteCode;
+        } else {
+          ret = EventHandler<PollConn>::kNoAction;
+          action_ = Action::kNone;
+        }
+      }
+      break;
+    case message::ExecuteMsgType::kEvalExpr:
+      {
+        auto* msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgEvalExpr>(recv_buff);
+        size_t expected_size = msg->ast_size;
+        bool received_next_msg
+            = ReceiveArbitraryBytes(master_.sock, &recv_buff,
+                                    &master_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kEvalExpr;
         } else {
           ret = EventHandler<PollConn>::kNoAction;
           action_ = Action::kNone;
@@ -680,10 +711,19 @@ Executor::ExecuteCode() {
       execute.result_type());
   exec_julia_code_task_.code = execute.code();
   julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_julia_code_task_));
+}
 
-  //Task julia_task;
-  //julia_task.code = execute.code();
-  //julia_eval_thread_.SchedTask(julia_task);
+void
+Executor::EvalExpr() {
+  std::string task_str(
+      reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
+      master_recv_byte_buff_.GetSize());
+  task::EvalExpr eval_expr_task;
+  eval_expr_task.ParseFromString(task_str);
+  eval_julia_expr_task_.serialized_expr = eval_expr_task.serialized_expr();
+  eval_julia_expr_task_.result_type = static_cast<type::PrimitiveType>(
+      eval_expr_task.result_type());
+  julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&eval_julia_expr_task_));
 }
 
 void
@@ -712,17 +752,16 @@ Executor::CreateDistArray() {
     case task::TEXT_FILE:
       {
         std::string file_path = create_dist_array.file_path();
-        std::string parser_func
-            = (parse && create_dist_array.has_parser_func())
-            ? create_dist_array.parser_func()
-            : std::string();
+        JuliaModule parser_func_module
+            = parse ? static_cast<JuliaModule>(create_dist_array.parser_func_module())
+            : JuliaModule::kNone;
         std::string parser_func_name
             = parse ? create_dist_array.parser_func_name()
             : std::string();
         auto cpp_func = std::bind(&DistArray::LoadPartitionFromTextFile,
                                   &dist_array, std::placeholders::_1,
                                   file_path, flatten_results, value_only,
-                                  parse, num_dims, parser_func, parser_func_name);
+                                  parse, num_dims, parser_func_module, parser_func_name);
         exec_cpp_func_task_.func = cpp_func;
         LOG(INFO) << "scheduling task CreateDistArray";
         julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));

@@ -69,7 +69,8 @@ def get_default_config():
         'callgrind' : 'false'
     }
     config['hdfs'] = {
-        'name_node' : "hdfs://localhost:9000"
+        'name_node' : "hdfs://localhost:9000",
+        'hadoop_classpath_file' : None
     }
     return config
 
@@ -84,6 +85,10 @@ def get_env_str(pargs):
         'GLOG_logbuflevel': pargs['log']['logbuflevel'],
         'JULIA_HOME' : pargs['worker']['julia_bin']
     }
+
+    if pargs['hdfs']['hadoop_classpath_file'] is not None:
+        with open(pargs['hdfs']['hadoop_classpath_file'], 'r') as fobj:
+            env_vars['CLASSPATH'] = fobj.read().strip()
 
     return "".join([" %s=%s" % (k, v) for (k, v) in env_vars.items()])
 

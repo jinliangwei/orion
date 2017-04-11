@@ -15,6 +15,8 @@ class JuliaEvaluator {
   void UnboxResult(jl_value_t* value,
                    type::PrimitiveType result_type,
                    Blob *result_buff);
+
+  jl_value_t* EvalExpr(const std::string &serialized_expr);
  public:
   JuliaEvaluator() { }
   ~JuliaEvaluator() { }
@@ -22,7 +24,8 @@ class JuliaEvaluator {
   void AtExitHook() { jl_atexit_hook(0); }
   jl_value_t* EvalString(const std::string &code);
   void ExecuteTask(JuliaTask* task);
-  inline jl_function_t* GetFunction(const std::string &func_name);
+  inline jl_function_t* GetFunction(jl_module_t* module,
+                                    const char* func_name);
   void ParseString(
       const char* str,
       jl_function_t *parser_func,
@@ -43,7 +46,7 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
         result_buff->reserve(type::SizeOf(result_type));
         CHECK(jl_is_int8(value));
         int8_t ret = jl_unbox_int8(value);
-        memcpy(result_buff->data(), &ret, sizeof(ret));
+        *reinterpret_cast<int8_t*>(result_buff->data()) = ret;
       }
       break;
     case type::PrimitiveType::kUInt8:
@@ -51,7 +54,7 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
         result_buff->reserve(type::SizeOf(result_type));
         CHECK(jl_is_uint8(value));
         uint8_t ret = jl_unbox_uint8(value);
-        memcpy(result_buff->data(), &ret, sizeof(ret));
+        *reinterpret_cast<uint8_t*>(result_buff->data()) = ret;
       }
       break;
     case type::PrimitiveType::kInt16:
@@ -59,7 +62,7 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
         result_buff->reserve(type::SizeOf(result_type));
         CHECK(jl_is_int16(value));
         int16_t ret = jl_unbox_int16(value);
-        memcpy(result_buff->data(), &ret, sizeof(ret));
+        *reinterpret_cast<int16_t*>(result_buff->data()) = ret;
       }
       break;
     case type::PrimitiveType::kUInt16:
@@ -67,7 +70,7 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
         result_buff->reserve(type::SizeOf(result_type));
         CHECK(jl_is_uint16(value));
         uint16_t ret = jl_unbox_uint16(value);
-        memcpy(result_buff->data(), &ret, sizeof(ret));
+        *reinterpret_cast<uint16_t*>(result_buff->data()) = ret;
       }
       break;
     case type::PrimitiveType::kInt32:
@@ -75,7 +78,7 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
         result_buff->reserve(type::SizeOf(result_type));
         CHECK(jl_is_int32(value));
         int32_t ret = jl_unbox_int32(value);
-        memcpy(result_buff->data(), &ret, sizeof(ret));
+        *reinterpret_cast<int32_t*>(result_buff->data()) = ret;
       }
       break;
     case type::PrimitiveType::kUInt32:
@@ -83,7 +86,7 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
         result_buff->reserve(type::SizeOf(result_type));
         CHECK(jl_is_uint32(value));
         uint32_t ret = jl_unbox_uint32(value);
-        memcpy(result_buff->data(), &ret, sizeof(ret));
+        *reinterpret_cast<uint32_t*>(result_buff->data()) = ret;
       }
       break;
     case type::PrimitiveType::kInt64:
@@ -91,7 +94,7 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
         result_buff->reserve(type::SizeOf(result_type));
         CHECK(jl_is_int64(value));
         int64_t ret = jl_unbox_int64(value);
-        memcpy(result_buff->data(), &ret, sizeof(ret));
+        *reinterpret_cast<int64_t*>(result_buff->data()) = ret;
       }
       break;
     case type::PrimitiveType::kUInt64:
@@ -99,7 +102,7 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
         result_buff->reserve(type::SizeOf(result_type));
         CHECK(jl_is_uint64(value));
         uint64_t ret = jl_unbox_uint64(value);
-        memcpy(result_buff->data(), &ret, sizeof(ret));
+        *reinterpret_cast<uint64_t*>(result_buff->data()) = ret;
       }
       break;
     case type::PrimitiveType::kFloat32:
@@ -107,7 +110,7 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
         result_buff->reserve(type::SizeOf(result_type));
         CHECK(jl_is_float32(value));
         float ret = jl_unbox_float32(value);
-        memcpy(result_buff->data(), &ret, sizeof(ret));
+        *reinterpret_cast<float*>(result_buff->data()) = ret;
       }
       break;
     case type::PrimitiveType::kFloat64:
@@ -115,8 +118,7 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
         result_buff->reserve(type::SizeOf(result_type));
         CHECK(jl_is_float64(value));
         double ret = jl_unbox_float64(value);
-        LOG(INFO) << "unboxed float64 " << ret;
-        memcpy(result_buff->data(), &ret, sizeof(ret));
+        *reinterpret_cast<double*>(result_buff->data()) = ret;
       }
       break;
     case type::PrimitiveType::kString:
@@ -129,9 +131,45 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
   }
 }
 
+jl_value_t*
+JuliaEvaluator::EvalExpr(const std::string &serialized_expr) {
+  LOG(INFO) << __func__;
+  jl_value_t *array_type, *serialized_expr_buff, *expr, *ret;
+  jl_array_t *serialized_expr_array;
+  JL_GC_PUSH5(&array_type, &serialized_expr_array, &serialized_expr_buff, &expr,
+              &ret);
+
+  array_type = jl_apply_array_type(jl_uint8_type, 1);
+  std::vector<uint8_t> temp_serialized_expr(serialized_expr.size());
+  memcpy(temp_serialized_expr.data(), serialized_expr.data(),
+         serialized_expr.size());
+  LOG(INFO) << "copied " << serialized_expr.size() << " bytes";
+  serialized_expr_array = jl_ptr_to_array_1d(array_type,
+                                             temp_serialized_expr.data(),
+                                             serialized_expr.size(), 0);
+  LOG(INFO) << "got serialized_expr_array = " << (void*) serialized_expr_array;
+  jl_function_t *io_buffer_func
+      = GetFunction(jl_base_module, "IOBuffer");
+  serialized_expr_buff = jl_call1(io_buffer_func,
+                                 reinterpret_cast<jl_value_t*>(serialized_expr_array));
+  LOG(INFO) << "serialized expr buff = " << (void*) serialized_expr_buff;
+
+  jl_function_t *deserialize_func
+      = GetFunction(jl_base_module, "deserialize");
+  expr = jl_call1(deserialize_func, serialized_expr_buff);
+  LOG(INFO) << "deserialized expr = " << (void*) expr;
+
+  jl_function_t *eval_func
+      = GetFunction(jl_core_module, "eval");
+  ret = jl_call1(eval_func, expr);
+  JL_GC_POP();
+  return ret;
+}
+
 jl_function_t*
-JuliaEvaluator::GetFunction(const std::string &func_name) {
-  auto* func = jl_get_function(jl_main_module, func_name.c_str());
+JuliaEvaluator::GetFunction(jl_module_t* module,
+                            const char* func_name) {
+  auto* func = jl_get_function(module, func_name);
   CHECK(func != nullptr) << "func_name = " << func_name;
   return func;
 }
@@ -153,6 +191,10 @@ JuliaEvaluator::ExecuteTask(JuliaTask* task) {
     //} else if (auto call_func_task = dynamic_cast<JuliaCallFuncTask*>(task)) {
   } else if (auto exec_cpp_func_task = dynamic_cast<ExecCppFuncTask*>(task)) {
     exec_cpp_func_task->func(this);
+  } else if (auto eval_expr_task = dynamic_cast<EvalJuliaExprTask*>(task)) {
+    EvalExpr(eval_expr_task->serialized_expr);
+    result_type = eval_expr_task->result_type,
+    result_buff = &eval_expr_task->result_buff;
   } else {
     LOG(FATAL) << "Unknown task type!";
   }
@@ -173,28 +215,24 @@ JuliaEvaluator::ParseString(
   jl_value_t *key_tuple = nullptr;
   jl_value_t *key_ith = nullptr;
   jl_value_t *value = nullptr;
-  //JL_GC_PUSH5(&str_jl, &ret_tuple, &key_tuple,
-  //            &key_ith, &value);
-
+  JL_GC_PUSH5(&str_jl, &ret_tuple, &key_tuple,
+              &key_ith, &value);
 
   str_jl = jl_cstr_to_string(str);
   CHECK(jl_is_string(str_jl));
   ret_tuple = jl_call1(parser_func, str_jl);
   CHECK(jl_is_tuple(ret_tuple));
-  key_tuple = jl_get_nth_field(ret_tuple, 1);
-  CHECK(jl_is_tuple(key_tuple));
+  key_tuple = jl_get_nth_field(ret_tuple, 0);
+  CHECK(jl_is_tuple(key_tuple)) << "key tuple is " << (void*) key_tuple;
   size_t num_dims = key->size();
   for (size_t i = 0; i < num_dims; i++) {
-    key_ith = jl_get_nth_field(key_tuple, i + 1);
+    key_ith = jl_get_nth_field(key_tuple, i);
     (*key)[i] = jl_unbox_int64(key_ith);
   }
-  value = jl_get_nth_field(ret_tuple, 2);
+  value = jl_get_nth_field(ret_tuple, 1);
+  CHECK(jl_is_float64(value)) << "value ptr is " << (void*) value;
   UnboxResult(value, result_type, value_buff);
-  //JL_GC_POP();
-  //JL_GC_POP();
-  //JL_GC_POP();
-  //JL_GC_POP();
-  //JL_GC_POP();
+  JL_GC_POP();
 }
 
 }

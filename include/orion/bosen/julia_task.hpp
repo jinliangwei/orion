@@ -32,6 +32,13 @@ class ExecCppFuncTask : public JuliaTask {
   std::function<void(JuliaEvaluator*)> func;
 };
 
+class EvalJuliaExprTask : public JuliaTask {
+ public:
+  std::string serialized_expr;
+  type::PrimitiveType result_type;
+  Blob result_buff;
+};
+
 
 }
 }

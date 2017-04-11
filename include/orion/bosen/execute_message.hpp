@@ -56,6 +56,20 @@ struct ExecuteMsgExecutorAck {
     return ExecuteMsgType::kExecutorAck; }
 };
 
+struct ExecuteMsgEvalExpr {
+  size_t ast_size;
+ private:
+  ExecuteMsgEvalExpr() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _ast_size) {
+    ast_size = _ast_size;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kEvalExpr;
+  }
+};
+
 class ExecuteMsgHelper {
  public:
   template<typename Msg,

@@ -37,17 +37,11 @@ main(int argc, char* argv[]) {
       true,
       2,
       orion::bosen::type::PrimitiveType::kFloat64,
-      "file:///home/ubuntu/data/ml-1m/ratings.csv",
+      //      "file:///home/ubuntu/data/ml-1m/ratings.csv",
+      "hdfs:///data/ml-1m/ratings.csv",
       -1,
       orion::bosen::task::EMPTY,
-      "function parse_line(line::AbstractString)\n"
-      "  tokens = split(line, \',\')\n"
-      "  @assert length(tokens) == 3\n"
-      "  key_tuple = (parse(Int64, String(tokens[1])),"
-      "parse(Int64, String(tokens[2])))\n"
-      "  value = parse(Float64, String(tokens[3]))\n"
-      "  return (key_tuple, value)\n"
-      "end",
+      orion::bosen::JuliaModule::kMain,
       "parse_line");
 
   driver.Stop();

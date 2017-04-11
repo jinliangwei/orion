@@ -88,8 +88,13 @@ message CreateDistArray {
   optional string file_path = 8;
   optional int32 parent_id = 9;
   optional DistArrayInitType init_type = 10;
-  optional string parser_func = 11;
+  optional int32 parser_func_module = 11;
   optional string parser_func_name = 12;
+}
+
+message EvalExpr {
+  required bytes serialized_expr = 1;
+  required int32 result_type = 2;
 }
 
 //message Map {

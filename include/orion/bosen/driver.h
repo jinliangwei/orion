@@ -43,6 +43,11 @@ extern "C" {
   extern const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_EMPTY;
   extern const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM;
 
+  extern const int32_t ORION_JULIA_MODULE_CORE;
+  extern const int32_t ORION_JULIA_MODULE_BASE;
+  extern const int32_t ORION_JULIA_MODULE_MAIN;
+  extern const int32_t ORION_JULIA_MODULE_TOP;
+
   typedef struct VirtualBaseTable {
     size_t size;
   } VirtualBaseTable;
@@ -83,6 +88,12 @@ extern "C" {
     int result_type,
     void *result_buff);
 
+  void orion_eval_expr_on_all(
+      const uint8_t* expr,
+      size_t expr_size,
+      int32_t result_type,
+      void *result_buff);
+
   void orion_create_dist_array(
       int32_t id,
       int32_t parent_type,
@@ -94,7 +105,7 @@ extern "C" {
       const char* file_path,
       int32_t parent_id,
       int32_t init_type,
-      const char* parser_func,
+      int32_t parser_func_module,
       const char* parser_func_name);
 
   void orion_stop();

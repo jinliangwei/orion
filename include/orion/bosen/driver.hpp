@@ -10,6 +10,7 @@
 #include <orion/bosen/byte_buffer.hpp>
 #include <orion/bosen/event_handler.hpp>
 #include <orion/bosen/recv_arbitrary_bytes.hpp>
+#include <orion/bosen/julia_module.hpp>
 
 namespace orion {
 namespace bosen {
@@ -74,7 +75,7 @@ class Driver {
 
  private:
   void CreateCallFuncTask(
-      const std::string &function_name,
+      const char* function_name,
       task::BaseTableType base_table_type,
       const task::VirtualBaseTable &virtual_base_table,
       const task::ConcreteBaseTable &concrete_base_table,
@@ -84,7 +85,7 @@ class Driver {
       type::PrimitiveType result_type);
 
   void CreateExecuteCodeTask(
-      const std::string &code,
+      const char *code,
       type::PrimitiveType result_type);
 
   int HandleMasterMsg(PollConn *poll_conn_ptr);
@@ -123,18 +124,24 @@ class Driver {
 
   void ExecuteCodeOnOne(
       int32_t executor_id,
-      const std::string &code,
+      const char* code,
       type::PrimitiveType result_type,
       void *result_buff);
 
   void ExecuteCodeOnAll(
-      const std::string &code,
+      const char* code,
+      type::PrimitiveType result_type,
+      void *result_buff);
+
+  void EvalExprOnAll(
+      const uint8_t* expr,
+      size_t expr_size,
       type::PrimitiveType result_type,
       void *result_buff);
 
   void CallFuncOnOne(
       int32_t executor_id,
-      const std::string &function_name,
+      const char* function_name,
       task::BaseTableType base_table_type,
       const task::VirtualBaseTable &virtual_base_table,
       const task::ConcreteBaseTable &concrete_base_table,
@@ -145,7 +152,7 @@ class Driver {
       void *result_buff);
 
   void CallFuncOnAll(
-      const std::string &function_name,
+      const char* function_name,
       task::BaseTableType base_table_type,
       const task::VirtualBaseTable &virtual_base_table,
       const task::ConcreteBaseTable &concrete_base_table,
@@ -163,11 +170,11 @@ class Driver {
       bool parse,
       size_t num_dims,
       type::PrimitiveType value_type,
-      const std::string &file_path,
+      const char* file_path,
       int32_t parent_id,
       task::DistArrayInitType init_type,
-      const std::string &parser_func,
-      const std::string &parser_func_name);
+      JuliaModule parser_func_module,
+      const char* parser_func_name);
 
   void Stop();
 };
@@ -247,18 +254,18 @@ Driver::HandleClosedConnection(PollConn *poll_conn_ptr) {
 
 void
 Driver::CreateCallFuncTask(
-      const std::string &function_name,
-      task::BaseTableType base_table_type,
-      const task::VirtualBaseTable &virtual_base_table,
-      const task::ConcreteBaseTable &concrete_base_table,
-      const std::vector<task::TableDep> &deps,
-      task::Repetition repetition,
-      int32_t num_iterations,
-      type::PrimitiveType result_type) { }
+    const char* func_name,
+    task::BaseTableType base_table_type,
+    const task::VirtualBaseTable &virtual_base_table,
+    const task::ConcreteBaseTable &concrete_base_table,
+    const std::vector<task::TableDep> &deps,
+    task::Repetition repetition,
+    int32_t num_iterations,
+    type::PrimitiveType result_type) { }
 
 void
 Driver::CreateExecuteCodeTask(
-    const std::string &code,
+    const char* code,
     type::PrimitiveType result_type) {
   task::ExecuteCode execute_code_task;
   execute_code_task.set_code(code);
@@ -283,7 +290,7 @@ Driver::ConnectToMaster() {
 void
 Driver::ExecuteCodeOnOne(
     int32_t executor_id,
-    const std::string &code,
+    const char* code,
     type::PrimitiveType result_type,
     void *result_buff) {
   result_buff_.Reset(type::SizeOf(result_type));
@@ -298,22 +305,57 @@ Driver::ExecuteCodeOnOne(
   master_.send_buff.reset_sent_sizes();
   expected_msg_type_ = message::DriverMsgType::kMasterResponse;
   BlockRecvFromMaster();
-  auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
-      master_.recv_buff);
-  LOG(INFO) << "received response, nbytes = " << msg->result_bytes;
-  memcpy(result_buff, result_buff_.GetBytes(), result_buff_.GetSize());
+
+  if (type::SizeOf(result_type) != 0 && result_buff != nullptr) {
+    auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+        master_.recv_buff);
+    LOG(INFO) << "received response, nbytes = " << msg->result_bytes;
+    memcpy(result_buff, result_buff_.GetBytes(), result_buff_.GetSize());
+  }
 }
 
 void
 Driver::ExecuteCodeOnAll(
-    const std::string &code,
+    const char* code,
     type::PrimitiveType result_type,
     void *result_buff) { }
+
+
+void
+Driver::EvalExprOnAll(
+    const uint8_t* expr,
+    size_t expr_size,
+    type::PrimitiveType result_type,
+    void *result_buff) {
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgEvalExpr>(
+      &master_.send_buff, expr_size);
+  task::EvalExpr eval_expr_task;
+  eval_expr_task.set_serialized_expr(
+      std::string(reinterpret_cast<const char*>(expr), expr_size));
+  eval_expr_task.set_result_type(
+      static_cast<int32_t>(result_type));
+  eval_expr_task.SerializeToString(&msg_buff_);
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  LOG(INFO) << "next_to_send size = " << msg_buff_.size();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  LOG(INFO) << "waiting from master";
+  BlockRecvFromMaster();
+  LOG(INFO) << "waiting done";
+  if (type::SizeOf(result_type) != 0 && result_buff != nullptr) {
+    auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+        master_.recv_buff);
+    LOG(INFO) << "received response, nbytes = " << msg->result_bytes;
+    memcpy(result_buff, result_buff_.GetBytes(), result_buff_.GetSize());
+  }
+}
 
 void
 Driver::CallFuncOnOne(
     int32_t executor_id,
-    const std::string &function_name,
+    const char* function_name,
     task::BaseTableType base_table_type,
     const task::VirtualBaseTable &virtual_base_table,
     const task::ConcreteBaseTable &concrete_base_table,
@@ -325,7 +367,7 @@ Driver::CallFuncOnOne(
 
 void
 Driver::CallFuncOnAll(
-    const std::string &function_name,
+    const char* function_name,
     task::BaseTableType base_table_type,
     const task::VirtualBaseTable &virtual_base_table,
     const task::ConcreteBaseTable &concrete_base_table,
@@ -344,11 +386,11 @@ Driver::CreateDistArray(
       bool parse,
       size_t num_dims,
       type::PrimitiveType value_type,
-      const std::string &file_path,
+      const char* file_path,
       int32_t parent_id,
       task::DistArrayInitType init_type,
-      const std::string &parser_func,
-      const std::string &parser_func_name) {
+      JuliaModule parser_func_module,
+      const char* parser_func_name) {
   task::CreateDistArray create_dist_array;
   create_dist_array.set_id(id);
   create_dist_array.set_parent_type(parent_type);
@@ -376,8 +418,8 @@ Driver::CreateDistArray(
   create_dist_array.set_value_only(value_only);
   create_dist_array.set_parse(parse);
   if (parse) {
-    if (!parser_func.empty())
-      create_dist_array.set_parser_func(parser_func);
+    create_dist_array.set_parser_func_module(
+        static_cast<int>(parser_func_module));
     create_dist_array.set_parser_func_name(parser_func_name);
   }
   create_dist_array.set_num_dims(num_dims);

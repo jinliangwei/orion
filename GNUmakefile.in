@@ -51,6 +51,7 @@ ifeq (@SANITIZER_ON@,thread)
 SANITIZER_FLAGS = -fsanitize=thread
 endif
 
+CFLAGS += -DJULIA_ENABLE_THREADING=1 -DJULIA_INIT_DIR=\"$(JULIA_HOME)/usr/lib\"
 LDFLAGS = -Wl,-rpath,$(ORION_HOME)/lib/ -L$(ORION_HOME)/lib
 LDFLAGS += -Wl,-rpath,$(JULIA_HOME)/usr/lib -L$(JULIA_HOME)/usr/lib
 LIBS += -ljulia

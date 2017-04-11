@@ -70,6 +70,20 @@ struct DriverMsgCreateDistArray {
   }
 };
 
+struct DriverMsgEvalExpr {
+  size_t ast_size;
+ private:
+  DriverMsgEvalExpr() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _ast_size) {
+    ast_size = _ast_size;
+  }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kEvalExpr;
+  }
+};
+
 class DriverMsgHelper {
  public:
   template<typename Msg,

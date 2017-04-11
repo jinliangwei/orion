@@ -2,7 +2,9 @@
 
 #include <stdint.h>
 #include <string>
+#include <hdfs.h>
 #include <orion/bosen/blob.hpp>
+#include <orion/bosen/julia_module.hpp>
 
 namespace orion {
 namespace bosen {
@@ -17,6 +19,7 @@ class AbstractDistArrayPartition {
       const std::string &file_path, int32_t partition_id,
       bool flatten_results, bool value_only, bool parse,
       size_t num_dims,
+      JuliaModule parser_func_module,
       const std::string &parser_func) = 0;
 
   virtual void Insert(int64_t key, const Blob &buff) = 0;
@@ -145,13 +148,19 @@ AbstractDistArrayPartition::GetBufferBeginAndEnd(
   size_t i = 0;
   if (partition_id != 0) {
     for (i = 0; i < curr_partition_size; i++) {
-      if ((*char_buff)[i] == '\n') *begin = i + 1;
+      if ((*char_buff)[i] == '\n') {
+        *begin = i + 1;
+        break;
+      }
     }
     CHECK_LE(i, curr_partition_size);
   }
   if (partition_id != num_partitions - 1) {
     for (i = curr_partition_size; i < curr_partition_size + next_partition_size; i++) {
-      if ((*char_buff)[i] == '\n') *end = i + 1;
+      if ((*char_buff)[i] == '\n') {
+        *end = i;
+        break;
+      }
     }
     CHECK_LE(i, curr_partition_size + next_partition_size);
   }
@@ -236,7 +245,7 @@ AbstractDistArrayPartition::LoadFromPosixFS(
 
   if (curr_partition_size == 0) return false;
   fseek(data_file, read_offset, SEEK_SET);
-  char_buff->reserve(curr_partition_size + next_partition_size);
+  char_buff->reserve(curr_partition_size + next_partition_size + 1);
   size_t read_count = fread(char_buff->data(),
                             curr_partition_size + next_partition_size, 1,
                             data_file);

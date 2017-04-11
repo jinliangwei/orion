@@ -30,7 +30,7 @@ class DistArray {
       bool value_only,
       bool parse,
       size_t num_dims,
-      const std::string &parser_func,
+      JuliaModule parser_func_module,
       const std::string &parser_func_name);
   void CreatePartitionFromParent();
   void CreatePartitoin();
@@ -166,19 +166,16 @@ DistArray::LoadPartitionFromTextFile(
     bool value_only,
     bool parse,
     size_t num_dims,
-    const std::string &parser_func,
+    JuliaModule parser_func_module,
     const std::string &parser_func_name) {
   CHECK(partitions_.empty());
   auto *dist_array_partition = CreatePartition();
-  if (parse && !parser_func.empty()) {
-    julia_eval->EvalString(parser_func);
-  }
   dist_array_partition->LoadTextFile(
       julia_eval,
       file_path, kExecutorId,
       flatten_results, value_only, parse,
-      num_dims, parser_func_name);
-  //partitions_.emplace(0, dist_array_partition);
+      num_dims, parser_func_module, parser_func_name);
+  partitions_.emplace(0, dist_array_partition);
 }
 
 }
