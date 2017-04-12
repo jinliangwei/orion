@@ -34,10 +34,11 @@ class DistArrayPartition : public AbstractDistArrayPartition {
 
   bool LoadTextFile(JuliaEvaluator *julia_eval,
                     const std::string &file_path, int32_t partition_id,
-                    bool flatten_results, bool value_only, bool parse,
+                    bool map,
+                    bool flatten_results,
                     size_t num_dims,
-                    JuliaModule parser_func_module,
-                    const std::string &parser_func_name);
+                    JuliaModule mapper_func_module,
+                    const std::string &mapper_func_name);
 
   void Insert(int64_t key, const Blob &buff) { }
   void Get(int64_t key, Blob *buff) { }
@@ -61,10 +62,11 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
 
   bool LoadTextFile(JuliaEvaluator *julia_eval,
                     const std::string &file_path, int32_t partition_id,
-                    bool flatten_results, bool value_only, bool parse,
+                    bool map,
+                    bool flatten_results,
                     size_t num_dims,
-                    JuliaModule parser_func_module,
-                    const std::string &parser_func_name);
+                    JuliaModule mapper_func_module,
+                    const std::string &mapper_func_name);
 
   void Insert(int64_t key, const Blob &buff) { }
   void Get(int64_t key, Blob *buff) { }
@@ -87,10 +89,11 @@ bool
 DistArrayPartition<ValueType>::LoadTextFile(
     JuliaEvaluator *julia_eval,
     const std::string &path, int32_t partition_id,
-    bool flatten_results, bool value_only, bool parse,
+    bool map,
+    bool flatten_results,
     size_t num_dims,
-    JuliaModule parser_func_module,
-    const std::string &parser_func_name) {
+    JuliaModule mapper_func_module,
+    const std::string &mapper_func_name) {
   size_t offset = path.find_first_of(':');
   std::string prefix = path.substr(0, offset);
   std::string file_path = path.substr(offset + 3, path.length() - offset - 3);
@@ -109,20 +112,35 @@ DistArrayPartition<ValueType>::LoadTextFile(
     LOG(FATAL) << "Cannot parse the path specification " << path;
   }
 
-  key_buff_.clear();
-  std::vector<int64_t> key(num_dims);
-  Blob value(type::SizeOf(kValueType));
-  auto* parser_func = julia_eval->GetFunction(GetJlModule(parser_func_module),
-                                              parser_func_name.c_str());
-  char *line = strtok(char_buff.data() + begin, "\n");
-  while (line != nullptr) {
-    julia_eval->ParseString(line, parser_func, kValueType,
-                            &key, &value);
-    line = strtok(nullptr, "\n");
-    for (auto key_ith : key) {
-      key_buff_.push_back(key_ith);
+  if (map) {
+    Blob value(type::SizeOf(kValueType));
+    auto* parser_func = julia_eval->GetFunction(GetJlModule(mapper_func_module),
+                                                mapper_func_name.c_str());
+    if (num_dims > 0) {
+      key_buff_.clear();
+      std::vector<int64_t> key(num_dims);
+      char *line = strtok(char_buff.data() + begin, "\n");
+      while (line != nullptr) {
+        julia_eval->ParseString(line, parser_func, kValueType,
+                                &key, &value);
+        line = strtok(nullptr, "\n");
+        for (auto key_ith : key) {
+          key_buff_.push_back(key_ith);
+        }
+        values_.push_back(*((ValueType*) value.data()));
+      }
+      LOG(INFO) << "data loading and parsing done!";
+    } else {
+      char *line = strtok(char_buff.data() + begin, "\n");
+      while (line != nullptr) {
+        julia_eval->ParseStringValueOnly(line, parser_func, kValueType,
+                                         &value);
+        line = strtok(nullptr, "\n");
+        values_.push_back(*((ValueType*) value.data()));
+      }
     }
-    values_.push_back(*((ValueType*) value.data()));
+  } else {
+    LOG(FATAL) << "This is not the correct data type";
   }
 
   return read;
@@ -141,10 +159,11 @@ bool
 DistArrayPartition<const char*>::LoadTextFile(
     JuliaEvaluator *julia_eval,
     const std::string &path, int32_t partition_id,
-    bool flatten_results, bool value_only, bool parse,
+        bool map,
+    bool flatten_results,
     size_t num_dims,
-    JuliaModule parser_func_module,
-    const std::string &parser_func_name) {
+    JuliaModule mapper_func_module,
+    const std::string &mapper_func_name) {
   LOG(INFO) << __func__;
   size_t offset = path.find_first_of(':');
   std::string prefix = path.substr(0, offset);

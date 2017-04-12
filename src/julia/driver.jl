@@ -1,44 +1,24 @@
-export helloworld
+export helloworld, local_helloworld, glog_init
 
 using .Ast
+using Sugar
 
-@enum DistArrayParentType DistArrayParentType_text_file =
-    1 DistArrayParentType_dist_array =
-    2 DistArrayParentType_init =
-    3
-
-function dist_array_parent_type_to_int32
-end
-
-@enum DistArrayInitType DistArrayInitType_empty =
-    1 DistARrayInitType_uniform_random = 2
-
-type DistArray{T} <: AbstractArray{T}
-    id::Int32
-    parent_type::DistArrayParentType
-    flatten_results::Bool
-    value_only::Bool
-    parse::Bool
-    num_dims::UInt64
-    ValueType::DataType
-    file_path::String
-    parent_id::Int32
-    parser_func::String
-    parser_func_name::String
-    is_materialized::Bool
-    function DistArray(id::Integer,
-                       parent_type::DistArrayParentType,
-                       flatten_results::Bool,
-                       value_only::Bool,
-                       parse::Bool,
-                       num_dims::UInt64,
-                       value_type::DataType)
-        new(id, parent_type, flatten_results, value_only, parse,
-            num_dims, value_type, "", -1, "", "", false)
+function module_to_int32(m::Module)::Int32
+    local ret = -1
+    if m == Core
+        ptr_val = cglobal((:ORION_JULIA_MODULE_CORE, lib_path), Int32)
+        ret = unsafe_load(ptr_val)
+    elseif m == Base
+        ptr_val = cglobal((:ORION_JULIA_MODULE_BASE, lib_path), Int32)
+        ret = unsafe_load(ptr_val)
+    elseif m == Main
+        ptr_val = cglobal((:ORION_JULIA_MODULE_MAIN, lib_path), Int32)
+        ret = unsafe_load(ptr_val)
+    else
+        error("Unknown module", m)
     end
+    return ret
 end
-
-dist_arrays = Dict{Int32, DistArray}()
 
 function helloworld()
     ccall((:orion_helloworld, lib_path), Void, ())
@@ -48,8 +28,8 @@ function local_helloworld()
     println("hello world!")
 end
 
-function glog_init(glogconfig::Ptr{Void})
-    ccall((:orion_glog_init, lib_path), Void, (Ptr{Void},), glogconfig)
+function glog_init()
+    ccall((:orion_glog_init, lib_path), Void, ())
 end
 
 function init(
@@ -78,6 +58,7 @@ function stop()
 end
 
 function data_type_to_int32(ResultType::DataType)::Int32
+    local ret
     if ResultType == Void
         ptr_val = cglobal((:ORION_TYPE_VOID, lib_path), Int32)
         ret = unsafe_load(ptr_val)
@@ -130,46 +111,6 @@ function eval_expr_on_all(ex::Expr, ResultType::DataType)
           buff_array, length(buff_array),
           data_type_to_int32(ResultType),
           result_buff);
-end
-
-function text_file(
-    file_path::AbstractString,
-    mapper::Function,
-    arg_types::Tuple=(AbstractString,),
-    flatten_results::Bool=false)
-
-    id = length(dist_arrays)
-    parent_type = DistArrayParentType_text_file
-    ValueType, num_dims =
-        Ast.parse_map_function(mapper, arg_types, flatten_results)
-
-    dist_array = DistArray{ValueType}(
-        id,
-        parent_type,
-        flatten_results,
-        false,
-        true,
-        num_dims,
-        ValueType)
-    dist_array.file_path = file_path
-end
-
-function text_file(file_path::AbstractString)
-    return DistArray{String}()
-end
-
-function get_dimensions(array::DistArray)
-    return 1, 1
-end
-
-function rand(dims...)
-end
-
-function materialize(dist_array::DistArray)
-    if (dist_array.parent_type == DistArrayParentType_text_file)
-    elseif (dist_array.parent_type == DistArrayParentType_dist_array)
-    elseif (dist_array.parent_type == DistArrayParentType_init)
-    end
 end
 
 macro iterative(loop)

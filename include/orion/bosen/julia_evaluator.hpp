@@ -32,6 +32,13 @@ class JuliaEvaluator {
       type::PrimitiveType result_type,
       std::vector<int64_t> *key,
       Blob *value);
+
+  void ParseStringValueOnly(
+      const char* str,
+      jl_function_t *parser_func,
+      type::PrimitiveType result_type,
+      Blob *value);
+
 };
 
 void
@@ -133,7 +140,6 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
 
 jl_value_t*
 JuliaEvaluator::EvalExpr(const std::string &serialized_expr) {
-  LOG(INFO) << __func__;
   jl_value_t *array_type, *serialized_expr_buff, *expr, *ret;
   jl_array_t *serialized_expr_array;
   JL_GC_PUSH5(&array_type, &serialized_expr_array, &serialized_expr_buff, &expr,
@@ -143,21 +149,17 @@ JuliaEvaluator::EvalExpr(const std::string &serialized_expr) {
   std::vector<uint8_t> temp_serialized_expr(serialized_expr.size());
   memcpy(temp_serialized_expr.data(), serialized_expr.data(),
          serialized_expr.size());
-  LOG(INFO) << "copied " << serialized_expr.size() << " bytes";
   serialized_expr_array = jl_ptr_to_array_1d(array_type,
                                              temp_serialized_expr.data(),
                                              serialized_expr.size(), 0);
-  LOG(INFO) << "got serialized_expr_array = " << (void*) serialized_expr_array;
   jl_function_t *io_buffer_func
       = GetFunction(jl_base_module, "IOBuffer");
   serialized_expr_buff = jl_call1(io_buffer_func,
                                  reinterpret_cast<jl_value_t*>(serialized_expr_array));
-  LOG(INFO) << "serialized expr buff = " << (void*) serialized_expr_buff;
 
   jl_function_t *deserialize_func
       = GetFunction(jl_base_module, "deserialize");
   expr = jl_call1(deserialize_func, serialized_expr_buff);
-  LOG(INFO) << "deserialized expr = " << (void*) expr;
 
   jl_function_t *eval_func
       = GetFunction(jl_core_module, "eval");
@@ -188,7 +190,6 @@ JuliaEvaluator::ExecuteTask(JuliaTask* task) {
     ret = EvalString(exec_code_task->code);
     result_type = exec_code_task->result_type;
     result_buff = &exec_code_task->result_buff;
-    //} else if (auto call_func_task = dynamic_cast<JuliaCallFuncTask*>(task)) {
   } else if (auto exec_cpp_func_task = dynamic_cast<ExecCppFuncTask*>(task)) {
     exec_cpp_func_task->func(this);
   } else if (auto eval_expr_task = dynamic_cast<EvalJuliaExprTask*>(task)) {
@@ -230,6 +231,27 @@ JuliaEvaluator::ParseString(
     (*key)[i] = jl_unbox_int64(key_ith);
   }
   value = jl_get_nth_field(ret_tuple, 1);
+  CHECK(jl_is_float64(value)) << "value ptr is " << (void*) value;
+  UnboxResult(value, result_type, value_buff);
+  JL_GC_POP();
+}
+
+void
+JuliaEvaluator::ParseStringValueOnly(
+    const char *str,
+    jl_function_t *parser_func,
+    type::PrimitiveType result_type,
+    Blob *value_buff) {
+  jl_value_t *str_jl = nullptr;
+  jl_value_t *ret_tuple = nullptr;
+  jl_value_t *value = nullptr;
+  JL_GC_PUSH3(&str_jl, &ret_tuple, &value);
+
+  str_jl = jl_cstr_to_string(str);
+  CHECK(jl_is_string(str_jl));
+  ret_tuple = jl_call1(parser_func, str_jl);
+  CHECK(jl_is_tuple(ret_tuple));
+  value = jl_get_nth_field(ret_tuple, 0);
   CHECK(jl_is_float64(value)) << "value ptr is " << (void*) value;
   UnboxResult(value, result_type, value_buff);
   JL_GC_POP();

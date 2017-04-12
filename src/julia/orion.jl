@@ -7,5 +7,6 @@ function set_lib_path(path::AbstractString)
 end
 include("share.jl")
 include("function_parser.jl")
+include("dist_array.jl")
 include("driver.jl")
 end

@@ -80,16 +80,15 @@ enum DistArrayInitType {
 message CreateDistArray {
   required int32 id = 1;
   required DistArrayParentType parent_type = 2;
-  required bool flatten_results = 3;
-  required bool value_only = 4;
-  required bool parse = 5;
-  required uint64 num_dims = 6;
-  required int32 value_type = 7;
-  optional string file_path = 8;
-  optional int32 parent_id = 9;
-  optional DistArrayInitType init_type = 10;
-  optional int32 parser_func_module = 11;
-  optional string parser_func_name = 12;
+  required bool map = 3;
+  required bool flatten_results = 4;
+  required uint64 num_dims = 5;
+  required int32 value_type = 6;
+  optional string file_path = 7;
+  optional int32 parent_id = 8;
+  optional DistArrayInitType init_type = 9;
+  optional int32 mapper_func_module = 10;
+  optional string mapper_func_name = 11;
 }
 
 message EvalExpr {

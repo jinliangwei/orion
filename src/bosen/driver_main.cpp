@@ -32,9 +32,8 @@ main(int argc, char* argv[]) {
   driver.CreateDistArray(
       0,
       orion::bosen::task::TEXT_FILE,
-      false,
-      false,
       true,
+      false,
       2,
       orion::bosen::type::PrimitiveType::kFloat64,
       //      "file:///home/ubuntu/data/ml-1m/ratings.csv",

@@ -22,7 +22,7 @@ jl_module_t* GetJlModule(JuliaModule module) {
     case JuliaModule::kBase:
       return jl_base_module;
     case JuliaModule::kMain:
-      return jl_base_module;
+      return jl_main_module;
     case JuliaModule::kTop:
       return jl_top_module;
     default:

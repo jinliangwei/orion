@@ -65,6 +65,8 @@ class Driver {
   Blob master_recv_mem_;
   Blob master_send_mem_;
   conn::SocketConn master_;
+  Blob master_recv_temp_mem_;
+  conn::RecvBuffer master_recv_temp_buff_;
   std::string msg_buff_;
   PollConn master_poll_conn_;
   EventHandler<PollConn> event_handler_;
@@ -105,7 +107,10 @@ class Driver {
       master_(conn::Socket(),
               master_recv_mem_.data(),
               master_send_mem_.data(),
-              kCommBuffCapacity) {
+              kCommBuffCapacity),
+      master_recv_temp_mem_(kCommBuffCapacity),
+      master_recv_temp_buff_(master_recv_temp_mem_.data(),
+                             kCommBuffCapacity) {
     event_handler_.SetReadEventHandler(
       std::bind(&Driver::HandleMasterMsg, this,
                std::placeholders::_1));
@@ -165,9 +170,8 @@ class Driver {
   void CreateDistArray(
       int32_t id,
       task::DistArrayParentType parent_type,
+      bool map,
       bool flatten_results,
-      bool value_only,
-      bool parse,
       size_t num_dims,
       type::PrimitiveType value_type,
       const char* file_path,
@@ -212,16 +216,19 @@ Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
         auto *response_msg = message::DriverMsgHelper::get_msg<
           message::DriverMsgMasterResponse>(recv_buff);
         size_t expected_size = response_msg->result_bytes;
+        LOG(INFO) << "expected size = " << expected_size;
         if (expected_size == 0) {
-            ret = EventHandler<PollConn>::kClearOneMsg;
             received_from_master_ = true;
+            ret = EventHandler<PollConn>::kClearOneMsg;
+            master_recv_temp_buff_.CopyOneMsg(recv_buff);
         } else {
           bool received_next_msg =
               ReceiveArbitraryBytes(master_.sock, &recv_buff, &result_buff_,
                                     expected_size);
           if (received_next_msg) {
-            ret = EventHandler<PollConn>::kClearOneAndNextMsg;
             received_from_master_ = true;
+            ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+            master_recv_temp_buff_.CopyOneMsg(recv_buff);
           } else {
             ret = EventHandler<PollConn>::kNoAction;
           }
@@ -304,13 +311,21 @@ Driver::ExecuteCodeOnOne(
   master_.send_buff.clear_to_send();
   master_.send_buff.reset_sent_sizes();
   expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  received_from_master_ = false;
   BlockRecvFromMaster();
+  LOG(INFO) << "received from master!";
+  auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  LOG(INFO) << "msg result bytes = " << msg->result_bytes;
 
-  if (type::SizeOf(result_type) != 0 && result_buff != nullptr) {
-    auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
-        master_.recv_buff);
-    LOG(INFO) << "received response, nbytes = " << msg->result_bytes;
-    memcpy(result_buff, result_buff_.GetBytes(), result_buff_.GetSize());
+  if (msg->result_bytes > 0) {
+    LOG(INFO) << "result = " << *((double*) result_buff_.GetBytes());
+    if (result_buff != nullptr) {
+      memcpy(result_buff, result_buff_.GetBytes(), result_buff_.GetSize());
+    }
+    master_recv_temp_buff_.ClearOneAndNextMsg();
+  } else {
+    master_recv_temp_buff_.ClearOneMsg();
   }
 }
 
@@ -327,14 +342,14 @@ Driver::EvalExprOnAll(
     size_t expr_size,
     type::PrimitiveType result_type,
     void *result_buff) {
-  message::DriverMsgHelper::CreateMsg<message::DriverMsgEvalExpr>(
-      &master_.send_buff, expr_size);
   task::EvalExpr eval_expr_task;
   eval_expr_task.set_serialized_expr(
       std::string(reinterpret_cast<const char*>(expr), expr_size));
   eval_expr_task.set_result_type(
       static_cast<int32_t>(result_type));
   eval_expr_task.SerializeToString(&msg_buff_);
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgEvalExpr>(
+      &master_.send_buff, msg_buff_.size());
   master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
   BlockSendToMaster();
   LOG(INFO) << "next_to_send size = " << msg_buff_.size();
@@ -342,13 +357,20 @@ Driver::EvalExprOnAll(
   master_.send_buff.reset_sent_sizes();
   expected_msg_type_ = message::DriverMsgType::kMasterResponse;
   LOG(INFO) << "waiting from master";
+  received_from_master_ = false;
   BlockRecvFromMaster();
   LOG(INFO) << "waiting done";
-  if (type::SizeOf(result_type) != 0 && result_buff != nullptr) {
-    auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
-        master_.recv_buff);
-    LOG(INFO) << "received response, nbytes = " << msg->result_bytes;
-    memcpy(result_buff, result_buff_.GetBytes(), result_buff_.GetSize());
+  LOG(INFO) << "result size = " << type::SizeOf(result_type);
+  auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+
+  if (msg->result_bytes > 0) {
+    if (result_buff != nullptr) {
+      memcpy(result_buff, result_buff_.GetBytes(), result_buff_.GetSize());
+    }
+    master_recv_temp_buff_.ClearOneAndNextMsg();
+  } else {
+    master_recv_temp_buff_.ClearOneMsg();
   }
 }
 
@@ -381,16 +403,15 @@ void
 Driver::CreateDistArray(
       int32_t id,
       task::DistArrayParentType parent_type,
+      bool map,
       bool flatten_results,
-      bool value_only,
-      bool parse,
       size_t num_dims,
       type::PrimitiveType value_type,
       const char* file_path,
       int32_t parent_id,
       task::DistArrayInitType init_type,
-      JuliaModule parser_func_module,
-      const char* parser_func_name) {
+      JuliaModule mapper_func_module,
+      const char* mapper_func_name) {
   task::CreateDistArray create_dist_array;
   create_dist_array.set_id(id);
   create_dist_array.set_parent_type(parent_type);
@@ -414,13 +435,12 @@ Driver::CreateDistArray(
       LOG(FATAL) << "unrecognized parent type = "
                  << static_cast<int>(parent_type);
   }
+  create_dist_array.set_map(map);
   create_dist_array.set_flatten_results(flatten_results);
-  create_dist_array.set_value_only(value_only);
-  create_dist_array.set_parse(parse);
-  if (parse) {
-    create_dist_array.set_parser_func_module(
-        static_cast<int>(parser_func_module));
-    create_dist_array.set_parser_func_name(parser_func_name);
+  if (map) {
+   create_dist_array.set_mapper_func_module(
+        static_cast<int>(mapper_func_module));
+    create_dist_array.set_mapper_func_name(mapper_func_name);
   }
   create_dist_array.set_num_dims(num_dims);
   create_dist_array.set_value_type(static_cast<int>(value_type));

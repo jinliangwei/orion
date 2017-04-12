@@ -91,29 +91,27 @@ extern "C" {
   void orion_create_dist_array(
       int32_t id,
       int32_t parent_type,
+      bool map,
       bool flatten_results,
-      bool value_only,
-      bool parse,
       size_t num_dims,
-      int value_type,
+      int32_t value_type,
       const char* file_path,
       int32_t parent_id,
       int32_t init_type,
-      int32_t parser_func_module,
-      const char* parser_func_name) {
+      int32_t mapper_func_module,
+      const char* mapper_func_name) {
     driver->CreateDistArray(
         id,
         static_cast<orion::bosen::task::DistArrayParentType>(parent_type),
+        map,
         flatten_results,
-        value_only,
-        parse,
         num_dims,
         static_cast<orion::bosen::type::PrimitiveType>(value_type),
         file_path,
         parent_id,
         static_cast<orion::bosen::task::DistArrayInitType>(init_type),
-        static_cast<orion::bosen::JuliaModule>(parser_func_module),
-        parser_func_name);
+        static_cast<orion::bosen::JuliaModule>(mapper_func_module),
+        mapper_func_name);
   }
 
   void orion_eval_expr_on_all(
@@ -133,41 +131,22 @@ extern "C" {
     delete driver;
   }
 
-  OrionGLogConfig*
-  orion_glogconfig_create(const char* progname) {
-    auto glogconfig = new orion::GLogConfig(progname);
-    return reinterpret_cast<GLogConfig*>(glogconfig);
-  }
-
   bool
-  orion_glogconfig_set(
-      OrionGLogConfig* glogconfig, const char* key,
-      const char* value) {
-    return reinterpret_cast<orion::GLogConfig*>(glogconfig)->set(key, value);
+  orion_glogconfig_set(const char* key, const char* value) {
+    return glog_config.set(key, value);
   }
 
   void
-  orion_glogconfig_free(OrionGLogConfig* glogconfig) {
-    delete reinterpret_cast<orion::GLogConfig*>(glogconfig);
+  orion_glogconfig_set_progname(const char* progname) {
+    glog_config.set_progname(progname);
   }
 
   void
-  orion_glog_init(OrionGLogConfig* glogconfig) {
-    if (glogconfig == NULL) {
-      int argc = glog_config.get_argc();
-      char** argv = glog_config.get_argv();
-      std::cout << "before argc = " << argc << std::endl;
-      google::ParseCommandLineFlags(&argc, &argv, false);
-      std::cout << "after argc = " << argc << std::endl;
-      std::cout << argv[0] << std::endl;
-      //google::InitGoogleLogging("julia_driver");
-      google::InitGoogleLogging(argv[0]);
-    } else {
-      auto *cast_glogconfig = reinterpret_cast<orion::GLogConfig*>(glogconfig);
-      int argc = cast_glogconfig->get_argc();
-      char** argv = cast_glogconfig->get_argv();
-      google::ParseCommandLineFlags(&argc, &argv, true);
-      google::InitGoogleLogging(argv[0]);
-    }
+  orion_glog_init() {
+    int argc = glog_config.get_argc();
+    char** argv = glog_config.get_argv();
+    google::ParseCommandLineFlags(&argc, &argv, false);
+    std::cout << argv[0] << std::endl;
+    google::InitGoogleLogging(argv[0]);
   }
 }

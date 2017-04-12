@@ -35,7 +35,11 @@ class JuliaEvalThread {
     message::ExecuteMsgHelper::CreateMsg<
       message::ExecuteMsgJuliaEvalAck>(&send_buff_);
     bool sent = write_pipe_.Send(&send_buff_);
-    if (sent) return;
+    if (sent) {
+      send_buff_.reset_sent_sizes();
+      send_buff_.clear_to_send();
+      return;
+    }
     int ret = poll_.Add(write_pipe_.get_write_fd(), &write_pipe_, EPOLLOUT);
     CHECK_EQ(ret, 0);
     while (!sent) {

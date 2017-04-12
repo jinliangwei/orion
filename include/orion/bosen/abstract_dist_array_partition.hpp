@@ -17,10 +17,11 @@ class AbstractDistArrayPartition {
   virtual bool LoadTextFile(
       JuliaEvaluator *julia_eval,
       const std::string &file_path, int32_t partition_id,
-      bool flatten_results, bool value_only, bool parse,
+      bool map,
+      bool flatten_results,
       size_t num_dims,
-      JuliaModule parser_func_module,
-      const std::string &parser_func) = 0;
+      JuliaModule mapper_func_module,
+      const std::string &mapper_func) = 0;
 
   virtual void Insert(int64_t key, const Blob &buff) = 0;
   virtual void Get(int64_t key, Blob *buff) = 0;

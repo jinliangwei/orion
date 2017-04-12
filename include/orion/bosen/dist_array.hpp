@@ -26,12 +26,11 @@ class DistArray {
   void LoadPartitionFromTextFile(
       JuliaEvaluator *julia_eval,
       const std::string &file_path,
+      bool map,
       bool flatten_results,
-      bool value_only,
-      bool parse,
       size_t num_dims,
-      JuliaModule parser_func_module,
-      const std::string &parser_func_name);
+      JuliaModule mapper_func_module,
+      const std::string &mapper_func_name);
   void CreatePartitionFromParent();
   void CreatePartitoin();
   bool is_locked() const { return is_locked_; }
@@ -162,19 +161,20 @@ void
 DistArray::LoadPartitionFromTextFile(
     JuliaEvaluator *julia_eval,
     const std::string &file_path,
+    bool map,
     bool flatten_results,
-    bool value_only,
-    bool parse,
     size_t num_dims,
-    JuliaModule parser_func_module,
-    const std::string &parser_func_name) {
+    JuliaModule mapper_func_module,
+    const std::string &mapper_func_name) {
   CHECK(partitions_.empty());
   auto *dist_array_partition = CreatePartition();
   dist_array_partition->LoadTextFile(
       julia_eval,
-      file_path, kExecutorId,
-      flatten_results, value_only, parse,
-      num_dims, parser_func_module, parser_func_name);
+      file_path,
+      kExecutorId,
+      map,
+      flatten_results,
+      num_dims, mapper_func_module, mapper_func_name);
   partitions_.emplace(0, dist_array_partition);
 }
 

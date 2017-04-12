@@ -25,8 +25,8 @@ end
 #Orion.glog_init(C_NULL)
 #Orion.init(master_ip, master_port, comm_buff_capacity)
 
-#Orion.Ast.parse_map_function(parse_line, (AbstractString,), true)
+Orion.Ast.parse_map_function(parse_line, (String,))
 #Orion.text_file("test", parse_line, (AbstractString,), true)
 #Orion.Ast.test_sugar(parse_line, (AbstractString,) )
 
-Orion.test()
+#Orion.test()

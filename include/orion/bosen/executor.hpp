@@ -411,6 +411,7 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           if (task_type_ == TaskType::kExecJuliaCode) {
             result_size = type::SizeOf(exec_julia_code_task_.result_type);
             result_mem = exec_julia_code_task_.result_buff.data();
+            LOG(INFO) << "result = " << *((const double*) result_mem);
           } else if (task_type_ == TaskType::kExecJuliaFunc) {
             result_size = type::SizeOf(exec_julia_func_task_.result_type);
             result_mem = exec_julia_func_task_.result_buff.data();
@@ -743,25 +744,24 @@ Executor::CreateDistArray() {
                        DistArray(kConfig,
                                  value_type, kId));
   auto &dist_array = dist_arrays_.at(id);
+  bool map = create_dist_array.map();
   bool flatten_results = create_dist_array.flatten_results();
-  bool value_only = create_dist_array.value_only();
-  bool parse = create_dist_array.parse();
   size_t num_dims = create_dist_array.num_dims();
   auto parent_type = create_dist_array.parent_type();
   switch (parent_type) {
     case task::TEXT_FILE:
       {
         std::string file_path = create_dist_array.file_path();
-        JuliaModule parser_func_module
-            = parse ? static_cast<JuliaModule>(create_dist_array.parser_func_module())
+        JuliaModule mapper_func_module
+            = map ? static_cast<JuliaModule>(create_dist_array.mapper_func_module())
             : JuliaModule::kNone;
-        std::string parser_func_name
-            = parse ? create_dist_array.parser_func_name()
+        std::string mapper_func_name
+            = map ? create_dist_array.mapper_func_name()
             : std::string();
         auto cpp_func = std::bind(&DistArray::LoadPartitionFromTextFile,
                                   &dist_array, std::placeholders::_1,
-                                  file_path, flatten_results, value_only,
-                                  parse, num_dims, parser_func_module, parser_func_name);
+                                  file_path, map, flatten_results,
+                                  num_dims, mapper_func_module, mapper_func_name);
         exec_cpp_func_task_.func = cpp_func;
         LOG(INFO) << "scheduling task CreateDistArray";
         julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));

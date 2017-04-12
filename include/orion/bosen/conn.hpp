@@ -69,6 +69,14 @@ class RecvBuffer {
     recv_buff.size_ = 0;
   }
 
+  void CopyOneMsg(const RecvBuffer &other) {
+    memcpy(mem_, other.mem_, other.expected_size_);
+    size_ = other.size_;
+    status_ = other.status_;
+    next_expected_size_ = other.next_expected_size_;
+    next_recved_size_ = other.next_recved_size_;
+  }
+
   uint8_t *get_recv_mem() {
     return mem_ + size_;
   }

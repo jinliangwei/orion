@@ -97,25 +97,21 @@ extern "C" {
   void orion_create_dist_array(
       int32_t id,
       int32_t parent_type,
+      bool map,
       bool flatten_results,
-      bool value_only,
-      bool parse,
       size_t num_dims,
-      int value_type,
+      int32_t value_type,
       const char* file_path,
       int32_t parent_id,
       int32_t init_type,
-      int32_t parser_func_module,
-      const char* parser_func_name);
+      int32_t mapper_func_module,
+      const char* mapper_func_name);
 
   void orion_stop();
 
-  typedef struct GLogConfig OrionGLogConfig;
-  GLogConfig *orion_glogconfig_create(const char* progname);
-  bool orion_glogconfig_set(GLogConfig* glogconfig, const char* key,
-                            const char* value);
-  void orion_glogconfig_free(GLogConfig* glogconfig);
-  void orion_glog_init(GLogConfig* glogconfig);
+  bool orion_glogconfig_set(const char* key, const char* value);
+  void orion_glogconfig_set_progname(const char* progname);
+  void orion_glog_init();
 }
 
 #endif

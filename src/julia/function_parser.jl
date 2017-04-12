@@ -3,21 +3,32 @@ using Sugar
 
 function parse_map_function(
     func::Function,
-    arg_types::Tuple, # may have multiple methods for this function
-    flatten::Bool = false
-)::Tuple{DataType, UInt64}
-    lambda_info = code_typed(func, arg_types)
-    @assert length(methods(func)) == 1
-    rettype = lambda_info[1].rettype
-    if flatten
-        rettype = rettype.parameters[1]
+    arg_types::Tuple # may have multiple methods for this function
+)::Tuple{DataType, UInt64, Bool}
+    if !all(isleaftype, arg_types)
+        error("Not all types are concrete: $arg_types")
     end
-    @assert length(rettype.parameters) == 2
-    key_type = fieldtype(rettype, 1)
+    rettype_array = Base.return_types(func, arg_types)
+    @assert length(rettype_array) == 1
+    rettype = first(rettype_array)
+    local flatten_results = false
+    if issubtype(rettype, Array)
+        rettype = rettype.parameters[1]
+        flatten_results = true
+    end
+    @assert issubtype(rettype, Tuple)
+    local num_dims
+    if length(rettype.parameters) == 1
+        num_dims = 0
+    else
+        @assert length(rettype.parameters) == 2
+        key_type = fieldtype(rettype, 1)
+        @assert issubtype(key_type, Tuple)
+        num_dims = length(key_type.parameters)
+    end
     value_type = fieldtype(rettype, 2)
-    num_dims = length(key_type.parameters)
-    dump(value_type)
-    return (value_type, num_dims)
+
+    return (value_type, num_dims, flatten_results)
 end
 
 function test_sugar(func::Function, arg_types::Tuple)
