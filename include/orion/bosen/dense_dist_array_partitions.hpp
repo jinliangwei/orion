@@ -20,20 +20,15 @@ namespace orion {
 namespace bosen {
 
 template<typename ValueType>
-class DistArrayPartition : public AbstractDistArrayPartition {
+class DenseDistArrayPartition : public AbstractDistArrayPartition {
  private:
-  std::vector<int64_t> keys_;
   std::vector<ValueType> values_;
-  stx::btree_map<int64_t, ValueType> index_;
-  bool index_exists_ {false};
   const Config& kConfig;
   const type::PrimitiveType kValueType;
 
-  // temporary to facilitate LoadTextFile
-  std::vector<int64_t> key_buff_;
  public:
-  DistArrayPartition(const Config &config, type::PrimitiveType value_type);
-  ~DistArrayPartition();
+  DenseDistArrayPartition(const Config &config, type::PrimitiveType value_type);
+  ~DenseDistArrayPartition();
 
   bool LoadTextFile(JuliaEvaluator *julia_eval,
                     const std::string &file_path, int32_t partition_id,
@@ -52,7 +47,7 @@ class DistArrayPartition : public AbstractDistArrayPartition {
 
 /*----- Specialized for String (const char*) ------*/
 template<>
-class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
+class DenseDistArrayPartition<const char*> : public AbstractDistArrayPartition {
  private:
   std::vector<int64_t> keys_;
   std::vector<char> values_;
@@ -82,18 +77,18 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
 
 /*---- template general implementation -----*/
 template<typename ValueType>
-DistArrayPartition<ValueType>::DistArrayPartition(
+DenseDistArrayPartition<ValueType>::DistArrayPartition(
     const Config &config,
     type::PrimitiveType value_type):
     kConfig(config),
     kValueType(value_type) { }
 
 template<typename ValueType>
-DistArrayPartition<ValueType>::~DistArrayPartition() { }
+DenseDistArrayPartition<ValueType>::~DistArrayPartition() { }
 
 template<typename ValueType>
 bool
-DistArrayPartition<ValueType>::LoadTextFile(
+DenseDistArrayPartition<ValueType>::LoadTextFile(
     JuliaEvaluator *julia_eval,
     const std::string &path, int32_t partition_id,
     bool map,
@@ -167,7 +162,7 @@ DistArrayPartition<ValueType>::LoadTextFile(
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::SetDims(const std::vector<int64_t> &dims) {
+DenseDistArrayPartition<ValueType>::SetDims(const std::vector<int64_t> &dims) {
   size_t num_dims = dims.size();
   CHECK_EQ(key_buff_.size() / num_dims, values_.size());
   keys_.clear();
@@ -179,16 +174,16 @@ DistArrayPartition<ValueType>::SetDims(const std::vector<int64_t> &dims) {
 }
 
 /*---- template const char* implementation -----*/
-DistArrayPartition<const char*>::DistArrayPartition(
+DenseDistArrayPartition<const char*>::DistArrayPartition(
     const Config &config,
     type::PrimitiveType value_type):
     kConfig(config),
     kValueType(value_type) { }
 
-DistArrayPartition<const char*>::~DistArrayPartition() { }
+DenseDistArrayPartition<const char*>::~DistArrayPartition() { }
 
 bool
-DistArrayPartition<const char*>::LoadTextFile(
+DenseDistArrayPartition<const char*>::LoadTextFile(
     JuliaEvaluator *julia_eval,
     const std::string &path, int32_t partition_id,
     bool map,
@@ -219,7 +214,7 @@ DistArrayPartition<const char*>::LoadTextFile(
 }
 
 void
-DistArrayPartition<const char*>::SetDims(const std::vector<int64_t> &dims) {
+DenseDistArrayPartition<const char*>::SetDims(const std::vector<int64_t> &dims) {
 }
 
 }

@@ -49,6 +49,7 @@ extern "C" {
   const int32_t ORION_JULIA_MODULE_BASE = static_cast<int32_t>(orion::bosen::JuliaModule::kBase);
   const int32_t ORION_JULIA_MODULE_MAIN = static_cast<int32_t>(orion::bosen::JuliaModule::kMain);
   const int32_t ORION_JULIA_MODULE_TOP = static_cast<int32_t>(orion::bosen::JuliaModule::kTop);
+  const int32_t ORION_JULIA_MODULE_ORION_GENERATED = static_cast<int32_t>(orion::bosen::JuliaModule::kOrionGenerated);
 
   orion::bosen::Driver *driver = nullptr;
   orion::GLogConfig glog_config("julia_driver");
@@ -99,7 +100,8 @@ extern "C" {
       int32_t parent_id,
       int32_t init_type,
       int32_t mapper_func_module,
-      const char* mapper_func_name) {
+      const char* mapper_func_name,
+      int64_t* dims) {
     driver->CreateDistArray(
         id,
         static_cast<orion::bosen::task::DistArrayParentType>(parent_type),
@@ -111,18 +113,21 @@ extern "C" {
         parent_id,
         static_cast<orion::bosen::task::DistArrayInitType>(init_type),
         static_cast<orion::bosen::JuliaModule>(mapper_func_module),
-        mapper_func_name);
+        mapper_func_name,
+        dims);
   }
 
   void orion_eval_expr_on_all(
       const uint8_t* expr,
       size_t expr_size,
       int32_t result_type,
+      int32_t module,
       void *result_buff) {
     driver->EvalExprOnAll(
         expr,
         expr_size,
         static_cast<orion::bosen::type::PrimitiveType>(result_type),
+        static_cast<orion::bosen::JuliaModule>(module),
         result_buff);
   }
 

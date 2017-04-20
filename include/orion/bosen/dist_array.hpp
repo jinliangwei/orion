@@ -16,8 +16,7 @@ class DistArray {
   const type::PrimitiveType kValueType;
   const int32_t kExecutorId;
   std::unordered_map<int32_t, AbstractDistArrayPartition*> partitions_;
-  // currently we are not using locks, leaved as place holder
-  bool is_locked_ {false};
+  std::vector<int64_t> dims_;
  public:
   DistArray(const Config& config,
             type::PrimitiveType value_type, int32_t executor_id);
@@ -30,12 +29,11 @@ class DistArray {
       bool flatten_results,
       size_t num_dims,
       JuliaModule mapper_func_module,
-      const std::string &mapper_func_name);
+      const std::string &mapper_func_name,
+      Blob *result_buff);
   void CreatePartitionFromParent();
   void CreatePartitoin();
-  bool is_locked() const { return is_locked_; }
-  void lock() { is_locked_ = true; }
-  void unlock() { is_locked_ = false; }
+  void SetDims(const std::vector<int64_t> &dims);
 
  private:
   DISALLOW_COPY(DistArray);
@@ -60,8 +58,7 @@ DistArray::DistArray(DistArray &&other):
     kConfig(other.kConfig),
     kValueType(other.kValueType),
     kExecutorId(other.kExecutorId),
-    partitions_(other.partitions_),
-    is_locked_(other.is_locked_) {
+    partitions_(other.partitions_) {
   other.partitions_.clear();
 }
 
@@ -165,7 +162,8 @@ DistArray::LoadPartitionFromTextFile(
     bool flatten_results,
     size_t num_dims,
     JuliaModule mapper_func_module,
-    const std::string &mapper_func_name) {
+    const std::string &mapper_func_name,
+    Blob *result_buff) {
   CHECK(partitions_.empty());
   auto *dist_array_partition = CreatePartition();
   dist_array_partition->LoadTextFile(
@@ -174,8 +172,17 @@ DistArray::LoadPartitionFromTextFile(
       kExecutorId,
       map,
       flatten_results,
-      num_dims, mapper_func_module, mapper_func_name);
+      num_dims, mapper_func_module, mapper_func_name,
+      result_buff);
   partitions_.emplace(0, dist_array_partition);
+}
+
+void
+DistArray::SetDims(const std::vector<int64_t> &dims) {
+  dims_ = dims;
+  for (auto partition : partitions_) {
+    partition.second->SetDims(dims_);
+  }
 }
 
 }

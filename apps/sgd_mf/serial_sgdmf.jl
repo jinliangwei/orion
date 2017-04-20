@@ -57,7 +57,7 @@ for i = 1:num_iterations
 
         W_row = W[x_idx, :]
 	H_row = H[y_idx, :]
-	pred = dot(vec(W_row), vec(H_row))
+	pred = dot(W_row, H_row)
 	diff = rv - pred
 	W_grad = -2 * diff .* H_row
 	H_grad = -2 * diff .* W_row
@@ -71,7 +71,7 @@ for i = 1:num_iterations
 
         W_row = W[x_idx, :]
 	H_row = H[y_idx, :]
-	pred = dot(vec(W_row), vec(H_row))
+	pred = dot(W_row, H_row)
 	error += (pred - rv) ^ 2
     end
     @printf "iteration = %d, error = %f\n" i sqrt((error / length(ratings)))

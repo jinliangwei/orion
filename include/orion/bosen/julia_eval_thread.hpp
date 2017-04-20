@@ -8,6 +8,7 @@
 #include <glog/logging.h>
 #include <orion/bosen/conn.hpp>
 #include <orion/bosen/julia_evaluator.hpp>
+#include <orion/bosen/julia_task.hpp>
 
 namespace orion {
 namespace bosen {
@@ -31,9 +32,9 @@ class JuliaEvalThread {
   epoll_event es_[kNumEvents];
 
  private:
-  void BlockNotifyExecutor() {
+  void BlockNotifyExecutor(JuliaTask *task) {
     message::ExecuteMsgHelper::CreateMsg<
-      message::ExecuteMsgJuliaEvalAck>(&send_buff_);
+      message::ExecuteMsgJuliaEvalAck>(&send_buff_, task);
     bool sent = write_pipe_.Send(&send_buff_);
     if (sent) {
       send_buff_.reset_sent_sizes();
@@ -102,7 +103,7 @@ class JuliaEvalThread {
       task_queue_.pop();
       lock.unlock();
       julia_eval_.ExecuteTask(task);
-      BlockNotifyExecutor();
+      BlockNotifyExecutor(task);
     }
     julia_eval_.AtExitHook();
   }

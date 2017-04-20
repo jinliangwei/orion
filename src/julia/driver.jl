@@ -14,6 +14,9 @@ function module_to_int32(m::Module)::Int32
     elseif m == Main
         ptr_val = cglobal((:ORION_JULIA_MODULE_MAIN, lib_path), Int32)
         ret = unsafe_load(ptr_val)
+    elseif m == OrionGenerated
+        ptr_val = cglobal((:ORION_JULIA_MODULE_ORION_GENERATED, lib_path), Int32)
+        ret = unsafe_load(ptr_val)
     else
         error("Unknown module", m)
     end
@@ -101,18 +104,19 @@ function data_type_to_int32(ResultType::DataType)::Int32
     return ret
 end
 
-function eval_expr_on_all(ex::Expr, ResultType::DataType)
+function eval_expr_on_all(ex::Expr, ResultType::DataType, eval_module::Module)
     buff = IOBuffer()
     serialize(buff, ex)
     buff_array = takebuf_array(buff)
     result_buff = Array{ResultType}(1)
     ccall((:orion_eval_expr_on_all, lib_path),
-          Void, (Ptr{UInt8}, UInt64, Int32, Ptr{Void}),
+          Void, (Ptr{UInt8}, UInt64, Int32, Int32, Ptr{Void}),
           buff_array, length(buff_array),
           data_type_to_int32(ResultType),
+          module_to_int32(eval_module),
           result_buff);
 end
 
-macro iterative(loop)
-    return :(println("loop replaced"))
+function create_accumulator(sym::Symbol, init_value)
+    println("created accumulator variable ", string(sym))
 end

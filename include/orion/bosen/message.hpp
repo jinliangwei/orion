@@ -123,7 +123,10 @@ enum class ExecuteMsgType {
     kJuliaEvalAck = 2,
     kEvalExpr = 3,
     kCreateDistArray = 4,
-    kExecutorAck = 5
+    kTextFileLoadAck = 5,
+    kDistArrayDims = 6,
+    kCreateDistArrayAck = 7,
+    kExecutorAck = 10
 };
 
 struct ExecuteMsg {

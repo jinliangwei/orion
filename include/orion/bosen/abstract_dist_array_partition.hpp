@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string>
 #include <hdfs.h>
+#include <vector>
 #include <orion/bosen/blob.hpp>
 #include <orion/bosen/julia_module.hpp>
 
@@ -21,7 +22,9 @@ class AbstractDistArrayPartition {
       bool flatten_results,
       size_t num_dims,
       JuliaModule mapper_func_module,
-      const std::string &mapper_func) = 0;
+      const std::string &mapper_func,
+      Blob *result_buff) = 0;
+  virtual void SetDims(const std::vector<int64_t> &dims) = 0;
 
   virtual void Insert(int64_t key, const Blob &buff) = 0;
   virtual void Get(int64_t key, Blob *buff) = 0;

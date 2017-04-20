@@ -120,6 +120,8 @@ class Executor {
       kExecuteCode = 4,
       kEvalExpr = 5,
       kCreateDistArray = 6,
+      kTextFileLoadAck = 7,
+      kCreateDistArrayAck = 8,
       kExecutorAck = 10
   };
 
@@ -172,6 +174,8 @@ class Executor {
 
   TaskType task_type_ {TaskType::kNone};
   std::unordered_map<int32_t, DistArray> dist_arrays_;
+
+  int32_t dist_array_under_operation_ {0};
 
   size_t num_connected_peers_ {0};
   size_t num_identified_peers_ {0};
@@ -433,6 +437,28 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           action_ = Action::kNone;
         }
         break;
+      case Action::kTextFileLoadAck:
+        {
+          message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgTextFileLoadAck>(
+              &send_buff_, exec_cpp_func_task_.result_buff.size() / sizeof(int64_t),
+              dist_array_under_operation_);
+          if (exec_cpp_func_task_.result_buff.size() > 0)
+            send_buff_.set_next_to_send(exec_cpp_func_task_.result_buff.data(),
+                                        exec_cpp_func_task_.result_buff.size());
+          Send(&master_poll_conn_, &master_);
+          send_buff_.clear_to_send();
+          send_buff_.reset_sent_sizes();
+          action_ = Action::kNone;
+        }
+        break;
+      case Action::kCreateDistArrayAck:
+        {
+          Send(&master_poll_conn_, &master_);
+          send_buff_.clear_to_send();
+          send_buff_.reset_sent_sizes();
+          action_ = Action::kNone;
+        }
+        break;
       case Action::kExit:
         break;
       default:
@@ -521,7 +547,26 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
   switch (msg_type) {
     case message::ExecuteMsgType::kJuliaEvalAck:
       {
-        action_ = Action::kExecutorAck;
+        auto *msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgJuliaEvalAck>(
+            recv_buff);
+        if (auto *task = dynamic_cast<ExecCppFuncTask*>(msg->task)) {
+          switch (task->label) {
+            case TaskLabel::kNone:
+              {
+                action_ = Action::kExecutorAck;
+              }
+              break;
+            case TaskLabel::kLoadDistArrayFromTextFile:
+              {
+                action_ = Action::kTextFileLoadAck;
+              }
+              break;
+            default:
+              LOG(FATAL) << "unknown task label";
+          }
+        } else {
+          action_ = Action::kExecutorAck;
+        }
       }
       break;
     default:
@@ -587,6 +632,30 @@ Executor::HandleExecuteMsg() {
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kCreateDistArray;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::ExecuteMsgType::kDistArrayDims:
+      {
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgDistArrayDims>(recv_buff);
+        size_t expected_size = msg->num_dims*sizeof(int64_t);
+        bool received_next_msg =
+            ReceiveArbitraryBytes(master_.sock, &recv_buff,
+                                  &master_recv_byte_buff_,
+                                  expected_size);
+        if (received_next_msg) {
+          std::vector<int64_t> dims(msg->num_dims, 0);
+          memcpy(dims.data(), master_recv_byte_buff_.GetBytes(),
+                 msg->num_dims*sizeof(int64_t));
+          int32_t dist_array_id = msg->dist_array_id;
+          auto &dist_array = dist_arrays_.at(dist_array_id);
+          dist_array.SetDims(dims);
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kCreateDistArrayAck;
+          message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgCreateDistArrayAck>(
+              &send_buff_, dist_array_id);
+
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -724,6 +793,8 @@ Executor::EvalExpr() {
   eval_julia_expr_task_.serialized_expr = eval_expr_task.serialized_expr();
   eval_julia_expr_task_.result_type = static_cast<type::PrimitiveType>(
       eval_expr_task.result_type());
+  eval_julia_expr_task_.module = static_cast<JuliaModule>(
+      eval_expr_task.module());
   julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&eval_julia_expr_task_));
 }
 
@@ -738,11 +809,14 @@ Executor::CreateDistArray() {
   create_dist_array.ParseFromString(task_str);
 
   int32_t id = create_dist_array.id();
+  dist_array_under_operation_ = id;
   type::PrimitiveType value_type
       = static_cast<type::PrimitiveType>(create_dist_array.value_type());
-  dist_arrays_.emplace(id,
-                       DistArray(kConfig,
-                                 value_type, kId));
+  dist_arrays_.emplace(
+      std::piecewise_construct,
+      std::forward_as_tuple(id),
+      std::forward_as_tuple(kConfig, value_type, kId));
+
   auto &dist_array = dist_arrays_.at(id);
   bool map = create_dist_array.map();
   bool flatten_results = create_dist_array.flatten_results();
@@ -761,9 +835,11 @@ Executor::CreateDistArray() {
         auto cpp_func = std::bind(&DistArray::LoadPartitionFromTextFile,
                                   &dist_array, std::placeholders::_1,
                                   file_path, map, flatten_results,
-                                  num_dims, mapper_func_module, mapper_func_name);
+                                  num_dims, mapper_func_module, mapper_func_name,
+                                  &exec_cpp_func_task_.result_buff);
         exec_cpp_func_task_.func = cpp_func;
         LOG(INFO) << "scheduling task CreateDistArray";
+        exec_cpp_func_task_.label = TaskLabel::kLoadDistArrayFromTextFile;
         julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
       }
       break;

@@ -142,6 +142,7 @@ class Driver {
       const uint8_t* expr,
       size_t expr_size,
       type::PrimitiveType result_type,
+      JuliaModule module,
       void *result_buff);
 
   void CallFuncOnOne(
@@ -178,7 +179,8 @@ class Driver {
       int32_t parent_id,
       task::DistArrayInitType init_type,
       JuliaModule parser_func_module,
-      const char* parser_func_name);
+      const char* parser_func_name,
+      int64_t *dims);
 
   void Stop();
 };
@@ -341,12 +343,14 @@ Driver::EvalExprOnAll(
     const uint8_t* expr,
     size_t expr_size,
     type::PrimitiveType result_type,
+    JuliaModule module,
     void *result_buff) {
   task::EvalExpr eval_expr_task;
   eval_expr_task.set_serialized_expr(
       std::string(reinterpret_cast<const char*>(expr), expr_size));
   eval_expr_task.set_result_type(
       static_cast<int32_t>(result_type));
+  eval_expr_task.set_module(static_cast<int32_t>(module));
   eval_expr_task.SerializeToString(&msg_buff_);
   message::DriverMsgHelper::CreateMsg<message::DriverMsgEvalExpr>(
       &master_.send_buff, msg_buff_.size());
@@ -411,7 +415,8 @@ Driver::CreateDistArray(
       int32_t parent_id,
       task::DistArrayInitType init_type,
       JuliaModule mapper_func_module,
-      const char* mapper_func_name) {
+      const char* mapper_func_name,
+      int64_t *dims) {
   task::CreateDistArray create_dist_array;
   create_dist_array.set_id(id);
   create_dist_array.set_parent_type(parent_type);
@@ -456,6 +461,16 @@ Driver::CreateDistArray(
   expected_msg_type_ = message::DriverMsgType::kMasterResponse;
   received_from_master_ = false;
   BlockRecvFromMaster();
+
+  auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  CHECK_EQ(msg->result_bytes/sizeof(int64_t), num_dims);
+  if (msg->result_bytes > 0) {
+    memcpy(dims, result_buff_.GetBytes(), result_buff_.GetSize());
+    master_recv_temp_buff_.ClearOneAndNextMsg();
+  } else {
+    master_recv_temp_buff_.ClearOneMsg();
+  }
 }
 
 void

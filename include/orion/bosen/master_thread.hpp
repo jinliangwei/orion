@@ -74,6 +74,7 @@ class MasterThread {
       kExecuteCodeOnAll = 4,
       kEvalExpr = 5,
       kCreateDistArray = 6,
+      kRespondToDriver = 7,
       kWaitingExecutorResponse = 10
   };
 
@@ -103,6 +104,7 @@ class MasterThread {
 
   size_t num_expected_executor_acks_ {0};
   size_t num_recved_executor_acks_ {0};
+  size_t expected_response_size_per_executor_ {0};
 
   Blob send_mem_;
   conn::SendBuffer send_buff_;
@@ -117,7 +119,7 @@ class MasterThread {
   // all relevant executors of the previous request/task have responded
   ByteBuffer driver_recv_byte_buff_;
   ByteBuffer driver_send_byte_buff_;
-  int32_t executor_to_work_ {0};
+  int32_t executor_in_action_ {0};
 
   size_t num_accepted_executors_ {0};
   size_t num_identified_executors_ {0};
@@ -306,7 +308,7 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
                 &send_buff_, driver_recv_byte_buff_.GetSize());
           send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
                                       driver_recv_byte_buff_.GetSize());
-          SendToExecutor(executor_to_work_);
+          SendToExecutor(executor_in_action_);
           send_buff_.reset_sent_sizes();
           send_buff_.clear_to_send();
 
@@ -351,9 +353,35 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
                     << driver_recv_byte_buff_.GetSize();
           create_dist_array.ParseFromString(task_buff);
           int32_t id = create_dist_array.id();
-          dist_array_metas_.emplace(id, DistArrayMeta());
+          size_t num_dims = create_dist_array.num_dims();
+          dist_array_metas_.emplace(
+              std::piecewise_construct,
+              std::forward_as_tuple(id),
+              std::forward_as_tuple(num_dims));
 
           action_ = Action::kWaitingExecutorResponse;
+        }
+        break;
+      case Action::kRespondToDriver:
+        {
+          message::DriverMsgHelper::CreateMsg<message::DriverMsgMasterResponse>(
+              &send_buff_,
+              expected_response_size_per_executor_*num_recved_executor_acks_);
+
+          if (expected_response_size_per_executor_ > 0) {
+            if (num_expected_executor_acks_ == kNumExecutors) {
+              ConstructDriverResponse(-1, expected_response_size_per_executor_);
+            } else {
+              ConstructDriverResponse(executor_in_action_, expected_response_size_per_executor_);
+            }
+            send_buff_.set_next_to_send(driver_send_byte_buff_.GetBytes(),
+                                        driver_send_byte_buff_.GetSize());
+          }
+
+          SendToDriver();
+          send_buff_.reset_sent_sizes();
+          send_buff_.clear_to_send();
+          action_ = Action::kNone;
         }
         break;
       case Action::kExit:
@@ -392,7 +420,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
             = ReceiveArbitraryBytes(driver_.sock, &recv_buff, &driver_recv_byte_buff_,
                                     expected_size);
         if (received_next_msg) {
-          executor_to_work_ = msg->executor_id;
+          executor_in_action_ = msg->executor_id;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kExecuteCodeOnOne;
         } else ret = EventHandler<PollConn>::kNoAction;
@@ -407,7 +435,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
             = ReceiveArbitraryBytes(driver_.sock, &recv_buff, &driver_recv_byte_buff_,
                                     expected_size);
         if (received_next_msg) {
-          executor_to_work_ = -1;
+          executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kEvalExpr;
         } else ret = EventHandler<PollConn>::kNoAction;
@@ -424,7 +452,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
             = ReceiveArbitraryBytes(driver_.sock, &recv_buff, &driver_recv_byte_buff_,
                                     expected_size);
         if (received_next_msg) {
-          executor_to_work_ = -1;
+          executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kCreateDistArray;
         } else ret = EventHandler<PollConn>::kNoAction;
@@ -502,6 +530,7 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
           message::ExecuteMsgExecutorAck>(recv_buff);
         size_t expected_size = ack_msg->result_size;
         int32_t executor_id = executor_sock_conn_to_id_[poll_conn_ptr->conn];
+        executor_in_action_ = executor_id;
 
         if (expected_size > 0) {
           bool received_next_msg =
@@ -517,26 +546,79 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         }
 
         if (num_recved_executor_acks_ == num_expected_executor_acks_) {
-          LOG(INFO) << "expected size = " << expected_size;
-          LOG(INFO) << "num recved executor acks = " << num_recved_executor_acks_;
-          message::DriverMsgHelper::CreateMsg<message::DriverMsgMasterResponse>(
-              &send_buff_, expected_size*num_recved_executor_acks_);
-
-          if (expected_size > 0) {
-            if (num_expected_executor_acks_ == kNumExecutors) {
-              ConstructDriverResponse(-1, expected_size);
-            } else {
-              ConstructDriverResponse(executor_id, expected_size);
-            }
-            send_buff_.set_next_to_send(driver_send_byte_buff_.GetBytes(),
-                                        driver_send_byte_buff_.GetSize());
+          expected_response_size_per_executor_ = expected_size;
+          action_ = Action::kRespondToDriver;
+        }
+      }
+      break;
+    case message::ExecuteMsgType::kTextFileLoadAck:
+      {
+        auto *ack_msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgTextFileLoadAck>(recv_buff);
+        size_t expected_size = ack_msg->num_dims*sizeof(int64_t);
+        int32_t executor_id = executor_sock_conn_to_id_[poll_conn_ptr->conn];
+        int32_t dist_array_id = ack_msg->dist_array_id;
+        auto &dist_array_meta = dist_array_metas_.at(dist_array_id);
+        if (expected_size > 0) {
+          bool received_next_msg =
+              ReceiveArbitraryBytes(poll_conn_ptr->conn->sock, &recv_buff,
+                                    &executor_byte_buff_[executor_id], expected_size);
+          if (received_next_msg) {
+            ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+            num_recved_executor_acks_++;
+            std::vector<int64_t> max_keys(ack_msg->num_dims);
+            memcpy(max_keys.data(), executor_byte_buff_[executor_id].GetBytes(),
+                   ack_msg->num_dims*sizeof(int64_t));
+            dist_array_meta.UpdateDimsMax(max_keys);
           }
+        } else {
+          num_recved_executor_acks_++;
+          ret = EventHandler<PollConn>::kClearOneMsg;
+        }
 
+        if (num_recved_executor_acks_ == num_expected_executor_acks_) {
+          if (expected_size > 0) {
+            const auto &dims = dist_array_meta.GetDims();
+            message::ExecuteMsgHelper::CreateMsg<
+              message::ExecuteMsgDistArrayDims>(&send_buff_, ack_msg->num_dims,
+                                                dist_array_id);
+            send_buff_.set_next_to_send(dims.data(), dims.size()*sizeof(int64_t));
+            num_recved_executor_acks_ = 0;
+            num_expected_executor_acks_ = kNumExecutors;
+            BroadcastAllExecutors();
+            send_buff_.reset_sent_sizes();
+            send_buff_.clear_to_send();
+            action_ = Action::kNone;
+          } else {
+            expected_response_size_per_executor_ = 0;
+            action_ = Action::kRespondToDriver;
+          }
+        }
+      }
+      break;
+    case message::ExecuteMsgType::kCreateDistArrayAck:
+      {
+        auto *ack_msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgCreateDistArrayAck>(recv_buff);
+        num_recved_executor_acks_++;
+        if (num_recved_executor_acks_ == num_expected_executor_acks_) {
+          int32_t dist_array_id = ack_msg->dist_array_id;
+          const auto &dist_array_meta = dist_array_metas_.at(dist_array_id);
+          message::DriverMsgHelper::CreateMsg<message::DriverMsgMasterResponse>(
+              &send_buff_,
+              dist_array_meta.GetDims().size()*sizeof(int64_t));
+          LOG(INFO) << "CreateDistArrayAck send to driver "
+                    << dist_array_meta.GetDims().size()*sizeof(int64_t);
+          send_buff_.set_next_to_send(dist_array_meta.GetDims().data(),
+                                      dist_array_meta.GetDims().size()*sizeof(int64_t));
           SendToDriver();
           send_buff_.reset_sent_sizes();
           send_buff_.clear_to_send();
-          action_ = Action::kNone;
+          num_recved_executor_acks_ = 0;
+          num_expected_executor_acks_ = 0;
         }
+        ret = EventHandler<PollConn>::kClearOneMsg;
+        action_ = Action::kNone;
       }
       break;
     default:

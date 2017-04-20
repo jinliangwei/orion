@@ -41,7 +41,8 @@ main(int argc, char* argv[]) {
       -1,
       orion::bosen::task::EMPTY,
       orion::bosen::JuliaModule::kMain,
-      "parse_line");
+      "parse_line",
+      nullptr);
 
   driver.Stop();
   //while(1);

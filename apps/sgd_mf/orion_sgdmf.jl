@@ -51,16 +51,7 @@ Orion.@iterative for i = 1:num_iterations
 	H_grad = -2 * diff .* W_row
 	W[x_idx, :] = W_row - step_size .* W_grad
 	H[y_idx, :] = H_row - step_size .*H_grad
-    end
-    for rating in ratings
-	x_idx = rating[1] + 1
-	y_idx = rating[2] + 1
-	rv = rating[3]
-
-        W_row = W[x_idx, :]
-	H_row = H[y_idx, :]
-	pred = dot(vec(W_row), vec(H_row))
-	error += (pred - rv) ^ 2
+        error += (pred - rv) ^ 2
     end
     @printf "iteration = %d, error = %f\n" i sqrt((error / length(ratings)))
 end

@@ -94,6 +94,8 @@ message CreateDistArray {
 message EvalExpr {
   required bytes serialized_expr = 1;
   required int32 result_type = 2;
+  required int32 module = 3;
+
 }
 
 //message Map {

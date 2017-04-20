@@ -47,6 +47,7 @@ extern "C" {
   extern const int32_t ORION_JULIA_MODULE_BASE;
   extern const int32_t ORION_JULIA_MODULE_MAIN;
   extern const int32_t ORION_JULIA_MODULE_TOP;
+  extern const int32_t ORION_JULIA_MODULE_ORION_GENERATED;
 
   typedef struct VirtualBaseTable {
     size_t size;
@@ -92,6 +93,7 @@ extern "C" {
       const uint8_t* expr,
       size_t expr_size,
       int32_t result_type,
+      int32_t module,
       void *result_buff);
 
   void orion_create_dist_array(
@@ -105,7 +107,8 @@ extern "C" {
       int32_t parent_id,
       int32_t init_type,
       int32_t mapper_func_module,
-      const char* mapper_func_name);
+      const char* mapper_func_name,
+      int64_t* dims);
 
   void orion_stop();
 

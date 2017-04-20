@@ -1,6 +1,7 @@
 #pragma once
 
 #include <orion/bosen/message.hpp>
+#include <orion/bosen/julia_task.hpp>
 
 namespace orion {
 namespace bosen {
@@ -20,11 +21,14 @@ struct ExecuteMsgExecuteCode {
 };
 
 struct ExecuteMsgJuliaEvalAck {
+  JuliaTask *task;
  private:
   ExecuteMsgJuliaEvalAck() = default;
   friend class DefaultMsgCreator;
  public:
-  void Init() { }
+  void Init(JuliaTask *_task) {
+    task = _task;
+  }
   static constexpr ExecuteMsgType get_type() {
     return ExecuteMsgType::kJuliaEvalAck; }
 };
@@ -67,6 +71,54 @@ struct ExecuteMsgEvalExpr {
   }
   static constexpr ExecuteMsgType get_type() {
     return ExecuteMsgType::kEvalExpr;
+  }
+};
+
+struct ExecuteMsgTextFileLoadAck {
+  size_t num_dims;
+  int32_t dist_array_id;
+ private:
+  ExecuteMsgTextFileLoadAck() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _num_dims,
+            int32_t _dist_array_id) {
+    num_dims = _num_dims;
+    dist_array_id = _dist_array_id;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kTextFileLoadAck;
+  }
+};
+
+struct ExecuteMsgDistArrayDims {
+  size_t num_dims;
+  int32_t dist_array_id;
+ private:
+  ExecuteMsgDistArrayDims() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _num_dims,
+            int32_t _dist_array_id) {
+    num_dims = _num_dims;
+    dist_array_id = _dist_array_id;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kDistArrayDims;
+  }
+};
+
+struct ExecuteMsgCreateDistArrayAck {
+  int32_t dist_array_id;
+ private:
+  ExecuteMsgCreateDistArrayAck() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(int32_t _dist_array_id) {
+    dist_array_id = _dist_array_id;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kCreateDistArrayAck;
   }
 };
 

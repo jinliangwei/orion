@@ -6,6 +6,7 @@
 #include <orion/bosen/type.hpp>
 #include <orion/bosen/blob.hpp>
 #include <orion/bosen/julia_task.hpp>
+#include <orion/bosen/julia_module.hpp>
 
 namespace orion {
 namespace bosen {
@@ -16,11 +17,12 @@ class JuliaEvaluator {
                    type::PrimitiveType result_type,
                    Blob *result_buff);
 
-  jl_value_t* EvalExpr(const std::string &serialized_expr);
+  jl_value_t* EvalExpr(const std::string &serialized_expr,
+                       JuliaModule module);
  public:
   JuliaEvaluator() { }
   ~JuliaEvaluator() { }
-  void Init() { jl_init(NULL); }
+  void Init();
   void AtExitHook() { jl_atexit_hook(0); }
   jl_value_t* EvalString(const std::string &code);
   void ExecuteTask(JuliaTask* task);
@@ -40,6 +42,16 @@ class JuliaEvaluator {
       Blob *value);
 
 };
+
+void
+JuliaEvaluator::Init() {
+  jl_init(NULL);
+  jl_sym_t* module_sym = jl_symbol("OrionGenerated");
+  CHECK(module_sym != nullptr);
+  jl_module_t* module = jl_new_module(module_sym);
+  CHECK(module != nullptr);
+  SetOrionGeneratedModule(module);
+}
 
 void
 JuliaEvaluator::UnboxResult(jl_value_t* value,
@@ -139,7 +151,8 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
 }
 
 jl_value_t*
-JuliaEvaluator::EvalExpr(const std::string &serialized_expr) {
+JuliaEvaluator::EvalExpr(const std::string &serialized_expr,
+                         JuliaModule module) {
   jl_value_t *array_type, *serialized_expr_buff, *expr, *ret;
   jl_array_t *serialized_expr_array;
   JL_GC_PUSH5(&array_type, &serialized_expr_array, &serialized_expr_buff, &expr,
@@ -163,7 +176,8 @@ JuliaEvaluator::EvalExpr(const std::string &serialized_expr) {
 
   jl_function_t *eval_func
       = GetFunction(jl_core_module, "eval");
-  ret = jl_call1(eval_func, expr);
+  jl_module_t *jl_module = GetJlModule(module);
+  ret = jl_call2(eval_func, reinterpret_cast<jl_value_t*>(jl_module), expr);
   JL_GC_POP();
   return ret;
 }
@@ -193,7 +207,8 @@ JuliaEvaluator::ExecuteTask(JuliaTask* task) {
   } else if (auto exec_cpp_func_task = dynamic_cast<ExecCppFuncTask*>(task)) {
     exec_cpp_func_task->func(this);
   } else if (auto eval_expr_task = dynamic_cast<EvalJuliaExprTask*>(task)) {
-    EvalExpr(eval_expr_task->serialized_expr);
+    EvalExpr(eval_expr_task->serialized_expr,
+             eval_expr_task->module);
     result_type = eval_expr_task->result_type,
     result_buff = &eval_expr_task->result_buff;
   } else {

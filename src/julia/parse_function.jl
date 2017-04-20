@@ -1,5 +1,4 @@
 module Ast
-using Sugar
 
 function parse_map_function(
     func::Function,
