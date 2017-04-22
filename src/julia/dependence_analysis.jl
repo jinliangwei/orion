@@ -57,6 +57,28 @@ type ScopeContext
                          Array{ParForContext, 1}())
 end
 
+function pretty_print(scope_context::ScopeContext, indent = 0)
+    indent_str = " " ^ indent
+    println(indent_str + "inherited:")
+    in_indent_str = " " ^ (indent + 1)
+    for (var, info) in scope_context.inherited_var
+        print(in_indent_str, var, " ", info)
+    end
+    println(indent_str + "local:")
+    for (var, info) in scope_context.local_var
+        print(in_indent_str, var, " ", info)
+    end
+    println(indent_str + "child scope:")
+    for scope in scope_context.child_scope
+        pretty_print(scope, indent + 2)
+    end
+
+    println(indent_str + "par_for scope:")
+    for scope in scope_context.par_for_scope
+        pretty_print(scope, indent + 2)
+    end
+end
+
 function add_inherited_var!(scope_context::ScopeContext,
                             var::Symbol,
                             info::VarInfo)
@@ -159,7 +181,7 @@ function transform_loop(expr::Expr, context::ScopeContext)
 #            push!(iterative_body.args, translated)
 #        end
     end
-    println(scope_context)
+    pretty_print(scope_context)
     println(ret)
 
     push!(ret.args,
