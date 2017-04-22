@@ -47,16 +47,18 @@ Orion.set_lib_path("/home/ubuntu/orion/lib/liborion.so")
 const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
 const K = 100
 const num_iterations = 10
-rating = Orion.text_file(data_path, parse_line)
+ratings = Orion.text_file(data_path, parse_line)
 
-rating.dims = [100, 100]
-x_dim, y_dim = size(rating)
+ratings.dims = [100, 100]
+x_dim, y_dim = size(ratings)
 println((x_dim, y_dim))
 
 W = rand(x_dim, K)
 H = rand(y_dim, K)
 
-Orion.@iterative for i = 1:num_iterations
+println(isa(ratings, Orion.DistArray))
+
+Orion.@transform for i = 1:num_iterations
     Orion.@accumulator error = 0.0
     Orion.@parallel_for for rating in ratings
 	x_idx = rating[1] + 1
