@@ -59,21 +59,21 @@ end
 
 function pretty_print(scope_context::ScopeContext, indent = 0)
     indent_str = " " ^ indent
-    println(indent_str + "inherited:")
+    println(indent_str * "inherited:")
     in_indent_str = " " ^ (indent + 1)
     for (var, info) in scope_context.inherited_var
-        print(in_indent_str, var, " ", info)
+        println(in_indent_str, var, " ", info)
     end
-    println(indent_str + "local:")
+    println(indent_str * "local:")
     for (var, info) in scope_context.local_var
-        print(in_indent_str, var, " ", info)
+        println(in_indent_str, var, " ", info)
     end
-    println(indent_str + "child scope:")
+    println(indent_str * "child scope:")
     for scope in scope_context.child_scope
         pretty_print(scope, indent + 2)
     end
 
-    println(indent_str + "par_for scope:")
+    println(indent_str * "par_for scope:")
     for scope in scope_context.par_for_scope
         pretty_print(scope, indent + 2)
     end
