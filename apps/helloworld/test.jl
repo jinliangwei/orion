@@ -47,6 +47,7 @@ Orion.set_lib_path("/home/ubuntu/orion/lib/liborion.so")
 const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
 const K = 100
 const num_iterations = 10
+const step_size = 0.0001
 ratings = Orion.text_file(data_path, parse_line)
 
 ratings.dims = [100, 100]

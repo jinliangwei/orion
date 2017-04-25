@@ -1,3 +1,4 @@
+import Base.print, Base.string
 symbol_counter = 0
 function generate_symbol()::String
     symbol_counter += 1
@@ -9,28 +10,31 @@ function share_generated(ex::Expr)
     eval_expr_on_all(ex, Void, OrionGenerated)
 end
 
+# describe the information of a variable for code within a scope
+# the only exception is is_accumulator, which is defined by the code
+# within the code and the code in its ancestors' scope before it
 type VarInfo
-    ValueType::DataType
-    value::Any
-    assigned_to::Bool
-    modified::Bool
+    is_assigned_to::Bool
+    is_modified::Bool
     is_accumulator::Bool
-    marked_local::Bool
+    is_marked_local::Bool
+    is_marked_global::Bool
 
-    VarInfo(ValueType::DataType,
-            value) = new(ValueType,
-                         value,
-                         false,
-                         false,
-                         false,
-                         false)
-
-    VarInfo() = new(Any,
-                    nothing,
+    VarInfo() = new(false,
                     false,
                     false,
                     false,
                     false)
+end
+
+function string(info::VarInfo)
+    str = "VarInfo{"
+    str *= "[is_assigned_to=" * string(info.is_assigned_to) * "], "
+    str *= "[is_modified=" * string(info.is_modified) * "], "
+    str *= "[is_accumulator=" * string(info.is_accumulator) * "],"
+    str *= "[is_marked_local=" * string(info.is_marked_local) * "]}"
+    str *= "[is_marked_global=" * string(info.is_marked_global) * "]}"
+#    println(str)
 end
 
 type ParForContext
@@ -44,52 +48,121 @@ type ParForContext
 end
 
 type ScopeContext
+    parent_scope
+    is_hard_scope::Bool
     inherited_var::Dict{Symbol, VarInfo}
     local_var::Dict{Symbol, VarInfo}
     par_for_scope::Array{ScopeContext}
     child_scope::Array{ScopeContext}
-
     par_for_context::Array{ParForContext}
-    ScopeContext() = new(Dict{Symbol, VarInfo}(),
+
+    ScopeContext() = new(nothing,
+                         false,
+                         Dict{Symbol, VarInfo}(),
                          Dict{Symbol, VarInfo}(),
                          Array{ScopeContext, 1}(),
                          Array{ScopeContext, 1}(),
                          Array{ParForContext, 1}())
+
+    ScopeContext(parent_scope::ScopeContext) = new(parent_scope,
+                                                   false,
+                                                   Dict{Symbol, VarInfo}(),
+                                                   Dict{Symbol, VarInfo}(),
+                                                   Array{ScopeContext, 1}(),
+                                                   Array{ScopeContext, 1}(),
+                                                   Array{ParForContext, 1}())
 end
 
-function pretty_print(scope_context::ScopeContext, indent = 0)
+function print(scope_context::ScopeContext, indent = 0)
     indent_str = " " ^ indent
     println(indent_str * "inherited:")
     in_indent_str = " " ^ (indent + 1)
     for (var, info) in scope_context.inherited_var
-        println(in_indent_str, var, " ", info)
+        println(in_indent_str, var, "  ", string(info))
     end
     println(indent_str * "local:")
     for (var, info) in scope_context.local_var
-        println(in_indent_str, var, " ", info)
+        println(in_indent_str, var, "  ", string(info))
     end
     println(indent_str * "child scope:")
     for scope in scope_context.child_scope
-        pretty_print(scope, indent + 2)
+       print(scope, indent + 2)
     end
 
     println(indent_str * "par_for scope:")
     for scope in scope_context.par_for_scope
-        pretty_print(scope, indent + 2)
+        print(scope, indent + 2)
     end
 end
 
-function add_inherited_var!(scope_context::ScopeContext,
+# there would be a run time error if users defines a function named "a"
+# and try to use "a" as variable in @transform
+function is_var_defined(var::Symbol)::Bool
+    if isdefined(current_module(), var) && which(var) == current_module()
+        return true
+    else
+        return false
+    end
+end
+
+function is_var_defined_in_parent(
+    scope_context::ScopeContext,
+    var::Symbol,
+    info::VarInfo)
+    if scope_context.parent_scope == nothing
+        return is_var_defined(var)
+    else
+        parent_scope = scope_context.parent_scope
+        if var in keys(parent_scope.local_var) ||
+            var in keys(parent_scope.inherited_var)
+            return true
+        elseif parent_scope.is_hard_scope &&
+            info.is_assigned_to
+            return false
+        else
+            return is_var_defined_in_parent(parent_scope, var, info)
+        end
+    end
+end
+
+function add_global_var!(scope_context::ScopeContext,
+                         var::Symbol,
+                         info::VarInfo)
+    if var in keys(scope_context.local_var)
+        info.is_assigned_to |= scope_context.inherited_var[var].is_assigned_to
+        info.is_modified |= scope_context.inherited_var[var].is_modified
+        info.is_marked_local |= scope_context.inherited_var[var].is_marked_local
+        info.is_accumulator |= scope_context.inherited_var[var].is_accumulator
+        delete!(scope_context.local_var, var)
+        scope_context.inherited_var[var] = info
+    else
+        scope_context.inherited_var[var].is_assigned_to |= info.is_assigned_to
+        scope_context.inherited_var[var].is_modified |= info.is_modified
+        scope_context.inherited_var[var].is_accumulator |= info.is_accumulator
+        scope_context.inherited_var[var].is_marked_global |= info.is_marked_global
+    end
+end
+
+function prepare_par_for_scope(par_for_scope::ScopeContext)
+    for (var, info) in par_for_scope.inherited_var
+        if info.is_marked_global
+            error("cannot use global within @parallel_for")
+        end
+    end
+end
+
+function add_uncertain_var!(scope_context::ScopeContext,
                             var::Symbol,
                             info::VarInfo)
     if var in keys(scope_context.local_var)
-        if info.modified
-            scope_context.local_var[var].modified = true
-        end
+        scope_context.local_var[var].is_assigned_to |= info.is_assigned_to
+        scope_context.local_var[var].is_modified |= info.is_modified
+        scope_context.local_var[var].is_marked_local |= info.is_marked_local
+        scope_context.local_var[var].is_accumulator |= info.is_accumulator
     elseif var in keys(scope_context.inherited_var)
-        if info.modified
-            scope_context.inherited_var[var].modified = true
-        end
+        scope_context.inherited_var[var].is_assigned_to |= info.is_assigned_to
+        scope_context.inherited_var[var].is_modified |= info.is_modified
+        scope_context.inherited_var[var].is_accumulator |= info.is_accumulator
     else
         scope_context.inherited_var[var] = info
     end
@@ -99,40 +172,70 @@ function add_local_var!(scope_context::ScopeContext,
                         var::Symbol,
                         info::VarInfo)
     if var in keys(scope_context.inherited_var)
-        if scope_context.inherited_var[var].modified
-            info.modified = true
-        end
+        info.is_assigned_to |= scope_context.inherited_var[var].is_assigned_to
+        info.is_modified |= scope_context.inherited_var[var].is_modified
+        info.is_marked_local |= scope_context.inherited_var[var].is_marked_local
+        info.is_accumulator |= scope_context.inherited_var[var].is_accumulator
         delete!(scope_context.inherited_var, var)
         scope_context.local_var[var] = info
     elseif var in keys(scope_context.local_var)
-        scope_context.local_var[var].assigned_to = info.assigned_to
-        scope_context.local_var[var].modified = info.modified
-        scope_context.local_var[var].is_accumulator = info.is_accumulator
-        scope_context.local_var[var].marked_local = info.marked_local
+        @assert !scope_context.local_var[var].is_marked_global &&
+            !info.is_marked_global
+        scope_context.local_var[var].is_assigned_to |= info.is_assigned_to
+        scope_context.local_var[var].is_modified |= info.is_modified
+        scope_context.local_var[var].is_accumulator |= info.is_accumulator
+        scope_context.local_var[var].is_marked_local |= info.is_marked_local
     else
         scope_context.local_var[var] = info
     end
 end
 
-function merge_scope!(dst::ScopeContext,
-                      src::ScopeContext)
-    for (var, info) in src.inherited_var
-        @assert !info.assigned_to &&
-            !info.is_accumulator &&
-            !info.marked_local
-        add_inherited_var!(dst, var, info)
+function add_var!(scope_context::ScopeContext,
+                  var::Symbol,
+                  info::VarInfo)
+    # if I am sure var is local
+    if info.is_marked_local ||
+        !is_var_defined_in_parent(scope_context, var, info) ||
+        (scope_context.is_hard_scope && info.is_assigned_to)
+        add_local_var!(scope_context, var, info)
+    elseif info.is_marked_global
+        add_global_var!(scope_context, var, info)
+    else
+        add_uncertain_var!(scope_context, var, info)
     end
-    for (var, info) in src.local_var
-        add_local_var!(dst, var, info)
+end
+
+function is_var_accumulator(scope_context::ScopeContext,
+                            var::Symbol)::Bool
+    if var in keys(scope_context.inherited_var)
+        return scope_context.inherited_var[var].is_accumulator
+    elseif var in keys(scope_context.local_var)
+        return scope_context.local_var[var].is_accumulator
+    elseif scope_context.parent_scope == nothing
+        return false
+    else
+        return is_var_accumulator(scope_context.parent_scope, var)
     end
-    for scope in src.par_for_scope
-        push!(dst.par_for_scope, scope)
+end
+
+function add_child_scope!(parent::ScopeContext,
+                          child::ScopeContext,
+                          par_for::Bool = false)
+    for (var, info) in child.inherited_var
+        if info.is_marked_global
+            add_global_var!(parent, var, info)
+        elseif var in keys(parent.local_var) ||
+            (parent.is_hard_scope && info.is_assigned_to)
+            add_local_var!(parent, var, info)
+        else
+            add_uncertain_var!(parent, var, info)
+        end
+        info.is_accumulator |= is_var_accumulator(parent, var)
     end
-    for scope in src.child_scope
-        push!(dst.child_scope, scope)
-    end
-    for context in src.par_for_context
-        push!(dst.par_for_context, context)
+    if par_for
+        push!(parent.par_for_scope, child)
+    else
+        push!(parent.child_scope, child)
     end
 end
 
@@ -181,7 +284,7 @@ function transform_loop(expr::Expr, context::ScopeContext)
 #            push!(iterative_body.args, translated)
 #        end
     end
-    pretty_print(scope_context)
+    print(scope_context)
     println(ret)
 
     push!(ret.args,

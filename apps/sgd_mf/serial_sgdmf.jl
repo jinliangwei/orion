@@ -76,3 +76,5 @@ for i = 1:num_iterations
     end
     @printf "iteration = %d, error = %f\n" i sqrt((error / length(ratings)))
 end
+
+println(error)
