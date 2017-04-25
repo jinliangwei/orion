@@ -19,6 +19,7 @@ struct Config {
   const size_t kExecutorThreadPoolSize;
   const size_t kMinPartitionSizeKB;
   const std::string kHdfsNameNode;
+  const std::string kOrionHome;
 
   Config(size_t num_executors,
          size_t num_executors_per_worker,
@@ -30,7 +31,8 @@ struct Config {
          int32_t worker_id,
          size_t executor_thread_pool_size,
          size_t min_partition_size_kb,
-         const std::string &hdfs_name_node):
+         const std::string &hdfs_name_node,
+         const std::string &orion_home):
       kNumExecutors(num_executors),
       kNumExecutorsPerWorker(num_executors_per_worker),
       kMasterIp(master_ip),
@@ -41,7 +43,8 @@ struct Config {
       kWorkerId(worker_id),
       kExecutorThreadPoolSize(executor_thread_pool_size),
       kMinPartitionSizeKB(min_partition_size_kb),
-      kHdfsNameNode(hdfs_name_node) { }
+      kHdfsNameNode(hdfs_name_node),
+      kOrionHome(orion_home) { }
 };
 
 }

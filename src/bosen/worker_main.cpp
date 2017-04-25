@@ -32,6 +32,8 @@ DEFINE_uint64(executor_thread_pool_size, 4, "thread pool size");
 
 DEFINE_uint64(min_partition_size_kb, 1024, "minimun file partition size");
 
+DEFINE_string(orion_home, "", "Orion home directory");
+
 DEFINE_string(hdfs_name_node, "hdfs://localhost:9000",
               "name node URL of HDFS");
 
@@ -45,7 +47,8 @@ int main(int argc, char *argv[]) {
                               FLAGS_comm_buff_capacity, FLAGS_worker_id,
                               FLAGS_executor_thread_pool_size,
                               FLAGS_min_partition_size_kb,
-                              FLAGS_hdfs_name_node);
+                              FLAGS_hdfs_name_node,
+                              FLAGS_orion_home);
   orion::bosen::Executor executor(config, FLAGS_local_executor_index);
   executor.operator()();
 

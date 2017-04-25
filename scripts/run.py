@@ -31,7 +31,9 @@ def parse_config_file (config_file_path, config):
             continue
         for ckey, cvalue in value.items():
                 config[key][ckey] = cvalue
-    print (config)
+    #print (config)
+    if not config['worker']['orion_home']:
+        sys.exit("orion home is not set, abort!")
     return config
 
 def get_default_config():
@@ -46,7 +48,8 @@ def get_default_config():
         'num_executors_per_worker' : "1",
         'executor_thread_pool_size' : "4",
         'julia_bin' : "/home/ubuntu/julia-0.5.1/usr/bin",
-        'min_partition_size_kb' : "1024"
+        'min_partition_size_kb' : "1024",
+        'orion_home' : None
     }
     config['log'] = {
         'log_dir' : "",
@@ -117,6 +120,7 @@ def get_arg_strs(args, pargs):
         'worker_port' : pargs['worker']['port'],
         'executor_thread_pool_size' : pargs['worker']['executor_thread_pool_size'],
         'min_partition_size_kb' : pargs['worker']['min_partition_size_kb'],
+        'orion_home' : pargs['worker']['orion_home'],
         'hdfs_name_node' : pargs['hdfs']['name_node']
     }
 

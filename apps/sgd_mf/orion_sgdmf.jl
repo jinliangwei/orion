@@ -1,44 +1,42 @@
-push!(LOAD_PATH, "/home/ubuntu/orion/src/julia/")
-import orion
-import Orion
+include("/home/ubuntu/orion/src/julia/orion.jl")
+
+const master_ip = "127.0.0.1"
+const master_port = 10000
+const comm_buff_capacity = 1024
+
+# set path to the C++ runtime library
+Orion.set_lib_path("/home/ubuntu/orion/lib/liborion.so")
+# test library path
+Orion.helloworld()
+# initialize logging of the runtime library
+Orion.glog_init()
+Orion.init(master_ip, master_port, comm_buff_capacity)
 
 const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
 const K = 100
 const num_iterations = 1
 const step_size = 0.001
 
-const master_ip = "127.0.0.1"
-const master_port = 10000
-const comm_buff_capacity = 1024
-
-function parse_line(line::AbstractString)
+Orion.@share function parse_line(line::AbstractString)
     tokens = split(line, ',')
     @assert length(tokens) == 3
     key_tuple = (parse(Int64, String(tokens[1])),
                  parse(Int64, String(tokens[2])))
     value = parse(Float64, String(tokens[3]))
-    return (key_array, value_tuple)
+    return (key_tuple, value)
 end
 
-# set path to the C++ runtime library
-Orion.set_lib_path("/home/ubuntu/orion/lib/liborion.so")
-# initialize logging of the runtime library
-Orion.glog_init(C_NULL)
-Orion.init(master_ip, master_port, comm_buff_capacity)
-
-#Orion.stop()
-#exit(0)
 
 ratings = Orion.text_file(data_path, parse_line)
 Orion.materialize(ratings)
-max_x, max_y = Orion.get_dimensions(ratings)
+max_x, max_y = size(ratings)
 
 W = Orion.rand(max_x + 1, K)
 H = Orion.rand(max_y + 1, K)
 
-Orion.@iterative for i = 1:num_iterations
-    error = 0.0
-    for rating in ratings
+Orion.@transform for i = 1:num_iterations
+    Orion.@accumulator error = 0.0
+    Orion.@parallel_for for rating in ratings
 	x_idx = rating[1] + 1
 	y_idx = rating[2] + 1
 	rv = rating[3]
@@ -53,7 +51,7 @@ Orion.@iterative for i = 1:num_iterations
 	H[y_idx, :] = H_row - step_size .*H_grad
         error += (pred - rv) ^ 2
     end
-    @printf "iteration = %d, error = %f\n" i sqrt((error / length(ratings)))
+    #@printf "iteration = %d, error = %f\n" i sqrt((error / length(ratings)))
 end
 
 Orion.stop()

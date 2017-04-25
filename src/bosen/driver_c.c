@@ -49,7 +49,7 @@ extern "C" {
   const int32_t ORION_JULIA_MODULE_BASE = static_cast<int32_t>(orion::bosen::JuliaModule::kBase);
   const int32_t ORION_JULIA_MODULE_MAIN = static_cast<int32_t>(orion::bosen::JuliaModule::kMain);
   const int32_t ORION_JULIA_MODULE_TOP = static_cast<int32_t>(orion::bosen::JuliaModule::kTop);
-  const int32_t ORION_JULIA_MODULE_ORION_GENERATED = static_cast<int32_t>(orion::bosen::JuliaModule::kOrionGenerated);
+  const int32_t ORION_JULIA_MODULE_ORION_GEN = static_cast<int32_t>(orion::bosen::JuliaModule::kOrionGen);
 
   orion::bosen::Driver *driver = nullptr;
   orion::GLogConfig glog_config("julia_driver");

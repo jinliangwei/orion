@@ -1,6 +1,6 @@
 module Orion
 
-module OrionGenerated
+module OrionGen
 end
 using MacroTools
 using Sugar
@@ -17,6 +17,7 @@ include("dist_array.jl")
 include("parse_ast.jl")
 include("parse_function.jl")
 include("driver.jl")
-include("dependence_analysis.jl")
+include("transform.jl")
 include("translate_stmt.jl")
+include("codegen.jl")
 end

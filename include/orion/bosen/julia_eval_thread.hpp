@@ -31,6 +31,8 @@ class JuliaEvalThread {
   static constexpr size_t kNumEvents = 1;
   epoll_event es_[kNumEvents];
 
+  const std::string kOrionHome;
+
  private:
   void BlockNotifyExecutor(JuliaTask *task) {
     message::ExecuteMsgHelper::CreateMsg<
@@ -56,9 +58,11 @@ class JuliaEvalThread {
   }
 
  public:
-  JuliaEvalThread(size_t send_buff_capacity):
+  JuliaEvalThread(size_t send_buff_capacity,
+                  const std::string &orion_home):
       send_mem_(send_buff_capacity),
-      send_buff_(send_mem_.data(), send_buff_capacity) {
+      send_buff_(send_mem_.data(), send_buff_capacity),
+      kOrionHome(orion_home) {
     int ret = conn::Pipe::CreateUniPipe(&read_pipe_, &write_pipe_);
     CHECK_EQ(ret, 0) << "create pipe failed";
     ret = poll_.Init();
@@ -94,7 +98,7 @@ class JuliaEvalThread {
   }
 
   void operator() () {
-    julia_eval_.Init();
+    julia_eval_.Init(kOrionHome);
     while (true) {
       std::unique_lock<std::mutex> lock(mtx_);
       cv_.wait(lock, [this]{ return this->stop_ || (this->task_queue_.size() > 0); });

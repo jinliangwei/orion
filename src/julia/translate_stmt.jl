@@ -3,7 +3,7 @@
 # expr is contained in the scope denoted by scope_context
 function get_vars!(scope_context::ScopeContext, expr)
     if isa(expr, Symbol)
-        add_var!(expr, VarInfo())
+        add_var!(scope_context, expr, VarInfo())
         return
     end
     if isa(expr, Number) || isa(expr, String)
@@ -12,9 +12,12 @@ function get_vars!(scope_context::ScopeContext, expr)
     @assert isa(expr, Expr)
     if expr.head == :macrocall
         for arg in expr.args[2:length(expr.args)]
+            dump(arg)
             get_vars!(scope_context, arg)
         end
+        println("got vars from all macro args")
         if macrocall_get_module(expr) == :Orion
+            println(macrocall_get_symbol(expr))
             if macrocall_get_symbol(expr) == Symbol("@accumulator")
                 @assert expr.args[2].head == :(=) "Orion.@accumulator may only be applied to assignment"
                 info = VarInfo()
@@ -30,7 +33,7 @@ function get_vars!(scope_context::ScopeContext, expr)
                 iteration_space = for_get_iteration_space(expr)
                 @assert isa(iteration_space, Symbol)
                 @assert isa(eval(current_module(), iteration_space), DistArray)
-                par_for_context = ParForContext(iteration_var, iteration_space)
+                par_for_context = ParForContext(iteration_var, iteration_space, expr.args[2])
                 push!(scope_context.par_for_context, par_for_context)
                 par_for_scope = scope_context.child_scope[length(scope_context.child_scope)]
                 scope_context.child_scope = scope_context.child_scope[1:(length(scope_context.child_scope) - 1)]
@@ -40,6 +43,7 @@ function get_vars!(scope_context::ScopeContext, expr)
                 error("unsupported macro call in Orion transform scope")
             end
         end
+        println("done processing macro")
     elseif expr.head == :for
         #TODO: deal with loop header
         temp_scope_context = ScopeContext(scope_context)
@@ -53,7 +57,7 @@ function get_vars!(scope_context::ScopeContext, expr)
         expr.head == :(-=) ||
         expr.head == :(*=) ||
         expr.head == :(/=)
-        println("process assignment ", expr)
+        #println("process assignment ", expr)
         if isa(expr.args[1], Symbol)
             var = expr.args[1]
             info = VarInfo()
@@ -77,6 +81,9 @@ function get_vars!(scope_context::ScopeContext, expr)
             end
         end
         get_vars!(scope_context, expr.args[2])
+    elseif expr.head == :call
+        println("deal with function call")
+        dump(expr)
     end
 end
 

@@ -23,7 +23,7 @@ main(int argc, char *argv[]) {
   LOG(INFO) << "hello!";
   orion::bosen::Config config(FLAGS_num_executors, 0, FLAGS_master_ip,
                               FLAGS_master_port, "", 0, FLAGS_comm_buff_capacity,
-                              0, 0, 0, "");
+                              0, 0, 0, "", "");
   orion::bosen::Master master(config);
   master.Run();
   master.WaitUntilExit();

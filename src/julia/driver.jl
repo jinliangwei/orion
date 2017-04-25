@@ -1,6 +1,5 @@
 export helloworld, local_helloworld, glog_init
 
-using .Ast
 using Sugar
 
 function module_to_int32(m::Module)::Int32
@@ -14,8 +13,8 @@ function module_to_int32(m::Module)::Int32
     elseif m == Main
         ptr_val = cglobal((:ORION_JULIA_MODULE_MAIN, lib_path), Int32)
         ret = unsafe_load(ptr_val)
-    elseif m == OrionGenerated
-        ptr_val = cglobal((:ORION_JULIA_MODULE_ORION_GENERATED, lib_path), Int32)
+    elseif m == OrionGen
+        ptr_val = cglobal((:ORION_JULIA_MODULE_ORION_GEN, lib_path), Int32)
         ret = unsafe_load(ptr_val)
     else
         error("Unknown module", m)
@@ -117,6 +116,6 @@ function eval_expr_on_all(ex::Expr, ResultType::DataType, eval_module::Module)
           result_buff);
 end
 
-function create_accumulator(sym::Symbol, init_value)
-    println("created accumulator variable ", string(sym))
+function create_accumulator(var::Symbol)
+    println("created accumulator variable ", string(var))
 end

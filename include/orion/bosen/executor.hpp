@@ -243,7 +243,7 @@ Executor::Executor(const Config& config, int32_t index):
     thread_pool_(config.kExecutorThreadPoolSize, config.kCommBuffCapacity),
     julia_eval_recv_mem_(kCommBuffCapacity),
     julia_eval_send_mem_(kCommBuffCapacity),
-    julia_eval_thread_(kCommBuffCapacity),
+    julia_eval_thread_(kCommBuffCapacity, config.kOrionHome),
     host_info_(kNumExecutors) { }
 
 Executor::~Executor() { }

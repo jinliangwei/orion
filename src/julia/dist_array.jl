@@ -6,7 +6,7 @@ import Base
     3
 
 @enum DistArrayInitType DistArrayInitType_empty =
-    1 DistARrayInitType_uniform_random = 2
+    1 DistArrayInitType_uniform_random = 2
 
 type DistArray{T} <: AbstractArray{T}
     id::Int32
@@ -27,7 +27,7 @@ type DistArray{T} <: AbstractArray{T}
               parent_type::DistArrayParentType,
               flatten_results::Bool,
               map::Bool,
-              num_dims::Unsigned,
+              num_dims::Integer,
               ValueType::DataType,
               file_path::String,
               parent_id::Integer,
@@ -91,7 +91,7 @@ function text_file(
     parser_func_name = string(Base.function_name(parser_func))
 
     ValueType, num_dims, flatten_results =
-        Ast.parse_map_function(parser_func, (String,))
+        parse_map_function(parser_func, (String,))
 
     id = length(dist_arrays)
     dist_array = DistArray{ValueType}(
@@ -111,7 +111,7 @@ function text_file(
     return dist_array
 end
 
-function rand(ValueType::DataType, dims)::DistArray
+function rand(ValueType::DataType, dims...)::DistArray
     id = length(dist_arrays)
     dist_array = DistArray{ValueType}(
         id,
@@ -122,16 +122,17 @@ function rand(ValueType::DataType, dims)::DistArray
         ValueType,
         "",
         -1,
-        DistArrayInitType_random,
+        DistArrayInitType_uniform_random,
         Module(),
         "",
         false)
+    dist_array.dims = [dims...]
     dist_arrays[id] = dist_array
     return dist_array
 end
 
-function rand(dims)::DistArray
-    rand(Float32, dims)
+function rand(dims...)::DistArray
+    rand(Float32, dims...)
 end
 
 function materialize(dist_array::DistArray)

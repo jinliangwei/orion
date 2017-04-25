@@ -1,6 +1,4 @@
-push!(LOAD_PATH, "/home/ubuntu/orion/src/julia/")
-import orion
-import Orion
+include("/home/ubuntu/orion/src/julia/orion.jl")
 
 Orion.set_lib_path("/home/ubuntu/orion/lib/liborion.so")
 Orion.helloworld()

@@ -1,20 +1,24 @@
 @inline function macrocall_get_symbol(ex::Expr)::Symbol
-    if ex.args[1].head == :(.)
+    if isa(ex.args[1], Symbol)
+        return ex.args[1]
+    elseif ex.args[1].head == :(.)
         if typeof(ex.args[1].args[2]) == QuoteNode
             return ex.args[1].args[2].value
         else
             return ex.args[1].args[2].args[1]
         end
     else
-        return ex.args[1]
+        error("Unknown macro form")
     end
 end
 
 @inline function macrocall_get_module(ex::Expr)::Symbol
-    if ex.args[1].head == :(.)
+    if isa(ex.args[1], Symbol)
+        return ex.args[1]
+    elseif ex.args[1].head == :(.)
         return ex.args[1].args[1]
     else
-        return Symbol(which(ex.args[1]))
+        error("Unknown macro form")
     end
 end
 

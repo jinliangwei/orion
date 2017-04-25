@@ -41,10 +41,13 @@ type ParForContext
     iteration_var::Symbol
     iteration_space::Symbol
     iteration_index::Array{Symbol}
+    loop_stmt::Expr
     ParForContext(iteration_var::Symbol,
-                  iteration_space::Symbol) = new(iteration_var,
-                                         iteration_space,
-                                         Array{Symbol, 1}())
+                  iteration_space::Symbol,
+                  loop_stmt) = new(iteration_var,
+                                   iteration_space,
+                                   Array{Symbol, 1}(),
+                                   loop_stmt)
 end
 
 type ScopeContext
@@ -260,6 +263,29 @@ macro transform(expr::Expr)
     end
 end
 
+function get_vars_to_broadcast(scope_context::ScopeContext)
+    static_broadcast_var = Array{Symbol, 1}()
+    dynamic_broadcast_var_array = Array{Array{Symbol, 1}, 1}()
+    for par_for_scope in scope_context.par_for_scope
+        dynamic_broadcast_var = Array{Symbol, 1}()
+        for (var, info) in par_for_scope.inherited_var
+            if isa(eval(current_module(), var), DistArray)
+                continue
+            end
+            if var in keys(scope_context.inherited_var) &&
+                !info.is_modified &&
+                !info.is_assigned_to
+                println("static broadcast ", var)
+                push!(static_broadcast_var, var)
+            else
+                println("dynamic broadcast ", var)
+                push!(dynamic_broadcast_var, var)
+            end
+        end
+        push!(dynamic_broadcast_var_array, dynamic_broadcast_var)
+    end
+end
+
 function transform_loop(expr::Expr, context::ScopeContext)
     curr_module = current_module()
     iterative_loop_args = expr.args
@@ -273,20 +299,10 @@ function transform_loop(expr::Expr, context::ScopeContext)
 
     scope_context = ScopeContext()
     for stmt in expr.args[2].args
-        println(stmt)
         get_vars!(scope_context, stmt)
-#        dump(stmt)
-#        translated = translate_stmt(stmt, context)
-#        println(translated)
-#        if translated == nothing
-#            continue
-#        else
-#            push!(iterative_body.args, translated)
-#        end
     end
     print(scope_context)
-    println(ret)
-
+    get_vars_to_broadcast(scope_context)
     push!(ret.args,
           Expr(expr.head,
                esc(expr.args[1]),

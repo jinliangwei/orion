@@ -1,5 +1,3 @@
-module Ast
-
 function parse_map_function(
     func::Function,
     arg_types::Tuple # may have multiple methods for this function
@@ -60,7 +58,5 @@ function test_sugar(func::Function, arg_types::Tuple)
     #eval("function tf()\n  return 2\nend")
     a = parse_line("1,2,0.2")
     println(a[1])
-
-end
 
 end

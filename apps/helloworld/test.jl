@@ -1,6 +1,4 @@
-push!(LOAD_PATH, "/home/ubuntu/orion/src/julia/")
-import orion
-import Orion
+include("/home/ubuntu/orion/src/julia/orion.jl")
 
 macro print_ast(func)
     println(func)
@@ -54,8 +52,8 @@ ratings.dims = [100, 100]
 x_dim, y_dim = size(ratings)
 println((x_dim, y_dim))
 
-W = rand(x_dim, K)
-H = rand(y_dim, K)
+W = Orion.rand(x_dim, K)
+H = Orion.rand(y_dim, K)
 
 println(isa(ratings, Orion.DistArray))
 
@@ -76,5 +74,6 @@ Orion.@transform for i = 1:num_iterations
         H[y_idx, :] = H_row - step_size .*H_grad
         error += (pred - rv) ^ 2
     end
-    println("iteration = ", i, " error = ", error)
+    #println("iteration = ", i, " error = ", error)
+    @printf "iteration = %d, error = %f\n" i sqrt((error / length(ratings)))
 end

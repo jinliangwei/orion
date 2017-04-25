@@ -19,10 +19,12 @@ class JuliaEvaluator {
 
   jl_value_t* EvalExpr(const std::string &serialized_expr,
                        JuliaModule module);
+  jl_module_t* orion_gen_module_;
+  jl_module_t* orion_worker_module_;
  public:
   JuliaEvaluator() { }
   ~JuliaEvaluator() { }
-  void Init();
+  void Init(const std::string &orion_home);
   void AtExitHook() { jl_atexit_hook(0); }
   jl_value_t* EvalString(const std::string &code);
   void ExecuteTask(JuliaTask* task);
@@ -44,13 +46,17 @@ class JuliaEvaluator {
 };
 
 void
-JuliaEvaluator::Init() {
+JuliaEvaluator::Init(const std::string &orion_home) {
   jl_init(NULL);
-  jl_sym_t* module_sym = jl_symbol("OrionGenerated");
-  CHECK(module_sym != nullptr);
-  jl_module_t* module = jl_new_module(module_sym);
-  CHECK(module != nullptr);
-  SetOrionGeneratedModule(module);
+  jl_load((orion_home + "/src/julia/orion_worker.jl").c_str());
+  orion_gen_module_ = reinterpret_cast<jl_module_t*>(
+      jl_eval_string("OrionGen"));
+  CHECK(orion_gen_module_ != nullptr);
+  orion_worker_module_ = reinterpret_cast<jl_module_t*>(
+      jl_eval_string("OrionWorker"));
+  CHECK(orion_worker_module_ != nullptr);
+  SetOrionGenModule(orion_gen_module_);
+  SetOrionWorkerModule(orion_worker_module_);
 }
 
 void
