@@ -1,9 +1,4 @@
 import Base.print, Base.string
-symbol_counter = 0
-function generate_symbol()::String
-    symbol_counter += 1
-    return "orion_sym_" * string(symbol_counter)
-end
 
 function share_generated(ex::Expr)
     assert(ex.head == :function)
@@ -132,12 +127,7 @@ function add_global_var!(scope_context::ScopeContext,
                          var::Symbol,
                          info::VarInfo)
     if var in keys(scope_context.local_var)
-        info.is_assigned_to |= scope_context.inherited_var[var].is_assigned_to
-        info.is_modified |= scope_context.inherited_var[var].is_modified
-        info.is_marked_local |= scope_context.inherited_var[var].is_marked_local
-        info.is_accumulator |= scope_context.inherited_var[var].is_accumulator
-        delete!(scope_context.local_var, var)
-        scope_context.inherited_var[var] = info
+        error("conflicting classification of symbol ", var, " local or global?")
     else
         scope_context.inherited_var[var].is_assigned_to |= info.is_assigned_to
         scope_context.inherited_var[var].is_modified |= info.is_modified
@@ -175,6 +165,9 @@ function add_local_var!(scope_context::ScopeContext,
                         var::Symbol,
                         info::VarInfo)
     if var in keys(scope_context.inherited_var)
+        if scope_context.inherited_var[var].is_marked_global
+            error("conflicting classification for symbol ", var, " local or global?")
+        end
         info.is_assigned_to |= scope_context.inherited_var[var].is_assigned_to
         info.is_modified |= scope_context.inherited_var[var].is_modified
         info.is_marked_local |= scope_context.inherited_var[var].is_marked_local
@@ -193,12 +186,24 @@ function add_local_var!(scope_context::ScopeContext,
     end
 end
 
+# a variable may be added as many times as it occurs in the scope; basically a variable
+# is always added to inherited unless there's at least one occurance that makes it local.
+
+# it is added to local only if the occurance makes it certain (matches one or some
+# of the rules) that it is local, it will be added to local and removes itself
+# from inherited if it's there and aborts it can't do so
+
+# a variable is added to global only if it is certain that it is global
+
+# otherwise a variable is added as uncertain
 function add_var!(scope_context::ScopeContext,
                   var::Symbol,
                   info::VarInfo)
     # if I am sure var is local
     if info.is_marked_local ||
-        !is_var_defined_in_parent(scope_context, var, info) ||
+        # if this introduces a new variable that is not defined in the parent scope
+        # it must be local
+        (!is_var_defined_in_parent(scope_context, var, info) && info.is_assigned_to) ||
         (scope_context.is_hard_scope && info.is_assigned_to)
         add_local_var!(scope_context, var, info)
     elseif info.is_marked_global
@@ -264,15 +269,19 @@ macro transform(expr::Expr)
 end
 
 function get_vars_to_broadcast(scope_context::ScopeContext)
-    static_broadcast_var = Array{Symbol, 1}()
-    dynamic_broadcast_var_array = Array{Array{Symbol, 1}, 1}()
+    static_broadcast_var = Set{Symbol}()
+    dynamic_broadcast_var_array = Array{Set{Symbol}, 1}()
     for par_for_scope in scope_context.par_for_scope
-        dynamic_broadcast_var = Array{Symbol, 1}()
+        dynamic_broadcast_var = Set{Symbol}()
         for (var, info) in par_for_scope.inherited_var
             if isa(eval(current_module(), var), DistArray)
                 continue
             end
+            # we do not broadcast variables that are defined in other modules
             if var in keys(scope_context.inherited_var) &&
+                which(var) != current_module
+                continue
+            elseif var in keys(scope_context.inherited_var) &&
                 !info.is_modified &&
                 !info.is_assigned_to
                 println("static broadcast ", var)
@@ -284,6 +293,7 @@ function get_vars_to_broadcast(scope_context::ScopeContext)
         end
         push!(dynamic_broadcast_var_array, dynamic_broadcast_var)
     end
+    return (static_broadcast_var, dynamic_broadcast_var_array)
 end
 
 function transform_loop(expr::Expr, context::ScopeContext)
@@ -302,7 +312,17 @@ function transform_loop(expr::Expr, context::ScopeContext)
         get_vars!(scope_context, stmt)
     end
     print(scope_context)
-    get_vars_to_broadcast(scope_context)
+    static_bc_var, dynamic_bc_var_array = get_vars_to_broadcast(scope_context)
+    broadcast(static_bc_var)
+    #bc_expr_array = Array{Array{Expr, 1}, 1}()
+    for dynamic_bc_var in dynamic_bc_var_array
+        bc_expr_array = gen_stmt_broadcast_var(dynamic_bc_var)
+        #push!(bc_expr_array, expr_array)
+        for bc_expr in bc_expr_array
+            push!(iterative_body.args, bc_expr)
+        end
+    end
+
     push!(ret.args,
           Expr(expr.head,
                esc(expr.args[1]),
@@ -320,4 +340,13 @@ macro accumulator(expr::Expr)
 end
 
 macro parallel_for(expr::Expr)
+end
+
+function broadcast(var::Symbol)
+end
+
+function broadcast(var_set::Set{Symbol})
+    for var in var_set
+        println("broadcasting variable ", var)
+    end
 end

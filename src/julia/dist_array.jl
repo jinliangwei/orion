@@ -159,6 +159,7 @@ function materialize(dist_array::DistArray)
     elseif dist_array.parent_type == DistArrayParentType_dist_array
 
     elseif dist_array.parent_type == DistArrayParentType_init
+        return
         ccall((:orion_create_dist_array, lib_path),
               Void, (Int32, Int32, Bool, Bool, UInt64, Int32,
                      Cstring, Int32, Int32, Int32, Cstring, Ptr{Int64}),
@@ -175,7 +176,7 @@ function materialize(dist_array::DistArray)
               "",
               dist_array.dims)
    end
-              dist_array.is_materialized = true
+    dist_array.is_materialized = true
 end
 
 

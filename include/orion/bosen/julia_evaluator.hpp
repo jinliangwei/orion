@@ -42,20 +42,22 @@ class JuliaEvaluator {
       jl_function_t *parser_func,
       type::PrimitiveType result_type,
       Blob *value);
-
 };
 
 void
 JuliaEvaluator::Init(const std::string &orion_home) {
   jl_init(NULL);
-  jl_load((orion_home + "/src/julia/orion_worker.jl").c_str());
+
+  jl_load((orion_home + "/src/julia/orion_gen.jl").c_str());
   orion_gen_module_ = reinterpret_cast<jl_module_t*>(
       jl_eval_string("OrionGen"));
   CHECK(orion_gen_module_ != nullptr);
+  SetOrionGenModule(orion_gen_module_);
+
+  jl_load((orion_home + "/src/julia/orion_worker.jl").c_str());
   orion_worker_module_ = reinterpret_cast<jl_module_t*>(
       jl_eval_string("OrionWorker"));
   CHECK(orion_worker_module_ != nullptr);
-  SetOrionGenModule(orion_gen_module_);
   SetOrionWorkerModule(orion_worker_module_);
 }
 

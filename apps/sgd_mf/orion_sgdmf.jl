@@ -1,13 +1,14 @@
 include("/home/ubuntu/orion/src/julia/orion.jl")
 
-const master_ip = "127.0.0.1"
-const master_port = 10000
-const comm_buff_capacity = 1024
-
 # set path to the C++ runtime library
 Orion.set_lib_path("/home/ubuntu/orion/lib/liborion.so")
 # test library path
 Orion.helloworld()
+
+const master_ip = "127.0.0.1"
+const master_port = 10000
+const comm_buff_capacity = 1024
+
 # initialize logging of the runtime library
 Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity)
@@ -29,10 +30,14 @@ end
 
 ratings = Orion.text_file(data_path, parse_line)
 Orion.materialize(ratings)
-max_x, max_y = size(ratings)
+dim_x, dim_y = size(ratings)
 
-W = Orion.rand(max_x + 1, K)
-H = Orion.rand(max_y + 1, K)
+println((dim_x, dim_y))
+
+W = Orion.rand(dim_x, K)
+H = Orion.rand(dim_y, K)
+Orion.materialize(W)
+Orion.materialize(H)
 
 Orion.@transform for i = 1:num_iterations
     Orion.@accumulator error = 0.0
@@ -43,7 +48,7 @@ Orion.@transform for i = 1:num_iterations
 
         W_row = W[x_idx, :]
 	H_row = H[y_idx, :]
-	pred = dot(vec(W_row), vec(H_row))
+	pred = dot(W_row, H_row)
 	diff = rv - pred
 	W_grad = -2 * diff .* H_row
 	H_grad = -2 * diff .* W_row
@@ -51,7 +56,7 @@ Orion.@transform for i = 1:num_iterations
 	H[y_idx, :] = H_row - step_size .*H_grad
         error += (pred - rv) ^ 2
     end
-    #@printf "iteration = %d, error = %f\n" i sqrt((error / length(ratings)))
+    println("iteration = ", i, " error = ", error)
 end
 
 Orion.stop()

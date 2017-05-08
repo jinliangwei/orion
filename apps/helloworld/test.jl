@@ -74,6 +74,5 @@ Orion.@transform for i = 1:num_iterations
         H[y_idx, :] = H_row - step_size .*H_grad
         error += (pred - rv) ^ 2
     end
-    #println("iteration = ", i, " error = ", error)
-    @printf "iteration = %d, error = %f\n" i sqrt((error / length(ratings)))
+    println("iteration = ", i, " error = ", error)
 end

@@ -1,15 +1,28 @@
 module OrionGen
-const var_dict = Dict{Symbol, Any}()
 
-function read(var::Symbol)
-    return var_dict[var]
+function define(var::Symbol)
+    eval(Expr(:global,
+              Expr(:(=),
+                   var,
+                   :nothing)))
+    set_func = Expr(:function,
+                    Expr(:call,
+                         Symbol("set_", string(var)),
+                         :val),
+                    Expr(:block,
+                         Expr(:global,
+                              Expr(:(=),
+                                   var,
+                                   :val))))
+
+    eval(set_func)
+    get_func = Expr(:function,
+                    Expr(:call,
+                         Symbol("get_", string(var))),
+                    Expr(:block,
+                         Expr(:return,
+                              var)))
+    eval(get_func)
 end
 
-function write(var::Symbol, value)
-    var_dict[var] = value
-end
-
-function delete(var::Symbol)
-    delete!(var_dict, var)
-end
 end

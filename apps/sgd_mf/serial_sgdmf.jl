@@ -35,18 +35,17 @@ function get_dimension(ratings::Array{Tuple{Integer, Integer, Real}})
             max_y = ratings[idx][2]
         end
     end
-    return max_x, max_y
+    return max_x + 1, max_y + 1
 end
 
 
 println("serial sgd mf starts here!")
 ratings = load_data(data_path)
 
-max_x, max_y = get_dimension(ratings)
-println(max_x)
+dim_x, dim_y = get_dimension(ratings)
 
-W = rand(max_x + 1, K)
-H = rand(max_y + 1, K)
+W = rand(dim_x, K)
+H = rand(dim_y, K)
 
 for i = 1:num_iterations
     error = 0.0
@@ -63,18 +62,7 @@ for i = 1:num_iterations
 	H_grad = -2 * diff .* W_row
 	W[x_idx, :] = W_row - step_size .* W_grad
 	H[y_idx, :] = H_row - step_size .*H_grad
+        error += (pred - rv) ^ 2
     end
-    for rating in ratings
-	x_idx = rating[1] + 1
-	y_idx = rating[2] + 1
-	rv = rating[3]
-
-        W_row = W[x_idx, :]
-	H_row = H[y_idx, :]
-	pred = dot(W_row, H_row)
-	error += (pred - rv) ^ 2
-    end
-    @printf "iteration = %d, error = %f\n" i sqrt((error / length(ratings)))
+    println("iteration = ", i, " error = ", error)
 end
-
-println(error)
