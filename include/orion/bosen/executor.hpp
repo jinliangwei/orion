@@ -547,8 +547,9 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
   switch (msg_type) {
     case message::ExecuteMsgType::kJuliaEvalAck:
       {
-        auto *msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgJuliaEvalAck>(
-            recv_buff);
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgJuliaEvalAck>(
+              recv_buff);
         if (auto *task = dynamic_cast<ExecCppFuncTask*>(msg->task)) {
           switch (task->label) {
             case TaskLabel::kNone:
@@ -590,7 +591,8 @@ Executor::HandleExecuteMsg() {
           message::ExecuteMsgExecuteCode>(recv_buff);
         size_t expected_size = msg->task_size;
         bool received_next_msg
-            = ReceiveArbitraryBytes(master_.sock, &recv_buff, &master_recv_byte_buff_,
+            = ReceiveArbitraryBytes(master_.sock, &recv_buff,
+                                    &master_recv_byte_buff_,
                                     expected_size);
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;

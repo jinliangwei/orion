@@ -271,8 +271,10 @@ end
 function get_vars_to_broadcast(scope_context::ScopeContext)
     static_broadcast_var = Set{Symbol}()
     dynamic_broadcast_var_array = Array{Set{Symbol}, 1}()
+    accumulator_var_array = Array{Set{Symbol}, 1}()
     for par_for_scope in scope_context.par_for_scope
         dynamic_broadcast_var = Set{Symbol}()
+        accumulator_var = Set{Symbol}()
         for (var, info) in par_for_scope.inherited_var
             if isa(eval(current_module(), var), DistArray)
                 continue
@@ -282,18 +284,24 @@ function get_vars_to_broadcast(scope_context::ScopeContext)
                 which(var) != current_module
                 continue
             elseif var in keys(scope_context.inherited_var) &&
-                !info.is_modified &&
-                !info.is_assigned_to
+                !scope_context.inerited[var].is_modified &&
+                !scope_context.inherited[var].is_assigned_to
                 println("static broadcast ", var)
                 push!(static_broadcast_var, var)
+            elseif var in keys(scope_context.local_var) &&
+                info.is_accumulator
+                println("create accumulator ", var)
+                push!(accumulator_var,var)
             else
                 println("dynamic broadcast ", var)
                 push!(dynamic_broadcast_var, var)
             end
         end
         push!(dynamic_broadcast_var_array, dynamic_broadcast_var)
+        push!(accumulator_var_array, accumulator_var)
     end
-    return (static_broadcast_var, dynamic_broadcast_var_array)
+    return (static_broadcast_var, dynamic_broadcast_var_array,
+            accumulator_var_array)
 end
 
 function transform_loop(expr::Expr, context::ScopeContext)
@@ -312,7 +320,8 @@ function transform_loop(expr::Expr, context::ScopeContext)
         get_vars!(scope_context, stmt)
     end
     print(scope_context)
-    static_bc_var, dynamic_bc_var_array = get_vars_to_broadcast(scope_context)
+    static_bc_var, dynamic_bc_var_array,
+    accumulator_var_array = get_vars_to_broadcast(scope_context)
     broadcast(static_bc_var)
     #bc_expr_array = Array{Array{Expr, 1}, 1}()
     for dynamic_bc_var in dynamic_bc_var_array

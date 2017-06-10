@@ -21,6 +21,7 @@ class JuliaEvaluator {
                        JuliaModule module);
   jl_module_t* orion_gen_module_;
   jl_module_t* orion_worker_module_;
+  std::string lib_path_;
  public:
   JuliaEvaluator() { }
   ~JuliaEvaluator() { }
@@ -47,7 +48,7 @@ class JuliaEvaluator {
 void
 JuliaEvaluator::Init(const std::string &orion_home) {
   jl_init(NULL);
-
+  lib_path_ = orion_home + "/lib/liborion.so";
   jl_load((orion_home + "/src/julia/orion_gen.jl").c_str());
   orion_gen_module_ = reinterpret_cast<jl_module_t*>(
       jl_eval_string("OrionGen"));
@@ -59,6 +60,17 @@ JuliaEvaluator::Init(const std::string &orion_home) {
       jl_eval_string("OrionWorker"));
   CHECK(orion_worker_module_ != nullptr);
   SetOrionWorkerModule(orion_worker_module_);
+
+  jl_value_t *lib_path_str;
+  JL_GC_PUSH1(&lib_path_str);
+  lib_path_str = jl_cstr_to_string(lib_path_.c_str());
+  jl_function_t *set_lib_path_func
+      = GetFunction(orion_worker_module_, "set_lib_path");
+  jl_call1(set_lib_path_func, lib_path_str);
+  jl_function_t *helloworld_func
+      = GetFunction(orion_worker_module_, "helloworld");
+  jl_call0(helloworld_func);
+  JL_GC_POP();
 }
 
 void

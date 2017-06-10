@@ -13,6 +13,8 @@ DEFINE_int32(master_port, 10000,
              "incoming connections");
 DEFINE_uint64(comm_buff_capacity, 1024 * 4, "communication buffer capacity");
 
+DEFINE_string(lib_path, "", "orion library path");
+
 int
 main(int argc, char* argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
@@ -21,7 +23,7 @@ main(int argc, char* argv[]) {
   LOG(INFO) << "hello, driver is started!";
 
   orion::bosen::DriverConfig driver_config(
-      FLAGS_master_ip, FLAGS_master_port,
+      FLAGS_master_ip.c_str(), FLAGS_master_port,
       FLAGS_comm_buff_capacity);
 
   orion::bosen::Driver driver(driver_config);

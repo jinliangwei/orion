@@ -132,6 +132,8 @@ class MasterThread {
 
   std::unordered_map<int32_t, DistArrayMeta> dist_array_metas_;
 
+  std::string lib_path_;
+
  public:
   MasterThread(const Config &config);
   ~MasterThread();
@@ -148,7 +150,7 @@ class MasterThread {
   int HandleExecutorMsg(PollConn *poll_conn_ptr);
   int HandleExecuteMsg(PollConn *poll_conn_ptr);
   void ConstructDriverResponse(int32_t executor_id, size_t result_size);
-  void BroadcastAllExecutors();
+  void BroadcastToAllExecutors();
   void SendToExecutor(int executor_index);
   void SendToDriver();
 };
@@ -258,7 +260,7 @@ MasterThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
     if (!stopped_all_) {
       LOG(INFO) << "Command executors to stop";
       message::Helper::CreateMsg<message::ExecutorStop>(&send_buff_);
-      BroadcastAllExecutors();
+      BroadcastToAllExecutors();
       stopped_all_ = true;
     }
     driver_.sock.Close();
@@ -296,7 +298,7 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
               &send_buff_, kNumExecutors);
           send_buff_.set_next_to_send(host_info_.data(),
                                       kNumExecutors*sizeof(HostInfo));
-          BroadcastAllExecutors();
+          BroadcastToAllExecutors();
           send_buff_.clear_to_send();
           action_ = Action::kWaitingExecutorResponse;
         }
@@ -325,7 +327,7 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
                 &send_buff_, driver_recv_byte_buff_.GetSize());
           send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
                                       driver_recv_byte_buff_.GetSize());
-          BroadcastAllExecutors();
+          BroadcastToAllExecutors();
           send_buff_.clear_to_send();
           num_expected_executor_acks_ = kNumExecutors;
           num_recved_executor_acks_ = 0;
@@ -340,7 +342,7 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
                                       driver_recv_byte_buff_.GetSize());
           LOG(INFO) << "send buff size = " << send_buff_.get_size();
-          BroadcastAllExecutors();
+          BroadcastToAllExecutors();
           send_buff_.clear_to_send();
           num_expected_executor_acks_ = kNumExecutors;
           num_recved_executor_acks_ = 0;
@@ -407,7 +409,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
     case message::DriverMsgType::kStop:
       {
         message::Helper::CreateMsg<message::ExecutorStop>(&send_buff_);
-        BroadcastAllExecutors();
+        BroadcastToAllExecutors();
         stopped_all_ = true;
       }
       break;
@@ -417,7 +419,8 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
             message::DriverMsgExecuteCodeOnOne>(recv_buff);
         size_t expected_size = msg->task_size;
         bool received_next_msg
-            = ReceiveArbitraryBytes(driver_.sock, &recv_buff, &driver_recv_byte_buff_,
+            = ReceiveArbitraryBytes(driver_.sock, &recv_buff,
+                                    &driver_recv_byte_buff_,
                                     expected_size);
         if (received_next_msg) {
           executor_in_action_ = msg->executor_id;
@@ -585,7 +588,7 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
             send_buff_.set_next_to_send(dims.data(), dims.size()*sizeof(int64_t));
             num_recved_executor_acks_ = 0;
             num_expected_executor_acks_ = kNumExecutors;
-            BroadcastAllExecutors();
+            BroadcastToAllExecutors();
             send_buff_.reset_sent_sizes();
             send_buff_.clear_to_send();
             action_ = Action::kNone;
@@ -651,7 +654,7 @@ MasterThread::ConstructDriverResponse(int32_t executor_id,
 }
 
 void
-MasterThread::BroadcastAllExecutors() {
+MasterThread::BroadcastToAllExecutors() {
   for (int i = 0; i < kNumExecutors; ++i) {
     LOG(INFO) << "sending to " << i;
     conn::SendBuffer& send_buff = executors_[i]->send_buff;

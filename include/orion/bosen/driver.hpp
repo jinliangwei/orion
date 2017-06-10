@@ -21,7 +21,7 @@ class DriverConfig {
   const uint16_t kMasterPort;
   const size_t kCommBuffCapacity;
   DriverConfig(
-      const std::string& master_ip,
+      const char* master_ip,
       uint16_t master_port,
       size_t comm_buff_capacity):
       kMasterIp(master_ip),

@@ -63,7 +63,7 @@ extern "C" {
       uint16_t master_port,
       size_t comm_buff_capacity) {
     orion::bosen::DriverConfig driver_config(
-        std::string(master_ip), master_port,
+        master_ip, master_port,
         comm_buff_capacity);
     driver = new orion::bosen::Driver(driver_config);
     driver->ConnectToMaster();
