@@ -18,19 +18,16 @@ PERF_COUNT_ON_FLAGS = -DORION_PERF_COUNT
 endif
 
 # use -Wno-deprecated-declarations to turn off warnings from boost w/ g++-5
-CFLAGS = $(DFLAGS) $(PERF_COUNT_ON_FLAGS) \
+CFLAGS = $(DFLAGS) -fPIC $(PERF_COUNT_ON_FLAGS) \
 	-W -Wall -Werror -Wno-sign-compare \
 	-fno-builtin-malloc \
 	-fno-builtin-calloc \
 	-fno-builtin-realloc \
 	-fno-builtin-free \
-	-Wno-unused-parameter \
-	-I$(ORION_HOME)/include
+	-Wno-unused-parameter
+
 
 JULIA_HOME=@JULIA_HOME@
-
-CFLAGS += -I$(JULIA_HOME)/usr/include -I$(JULIA_HOME)/src -I$(JULIA_HOME)/src/support
-CFLAGS += -I$(ORION_HOME)/deps/include
 
 LIBS = -lgtest \
 	-lglog \
@@ -51,6 +48,9 @@ ifeq (@SANITIZER_ON@,thread)
 SANITIZER_FLAGS = -fsanitize=thread
 endif
 
+CFLAGS += -I$(ORION_HOME)/include -I$(JULIA_HOME)/usr/include -I$(JULIA_HOME)/src -I$(JULIA_HOME)/src/support
+CFLAGS += -I$(ORION_HOME)/deps/include
+
 CFLAGS += -DJULIA_ENABLE_THREADING=1 -DJULIA_INIT_DIR=\"$(JULIA_HOME)/usr/lib\"
 LDFLAGS = -Wl,-rpath,$(ORION_HOME)/lib/ -L$(ORION_HOME)/lib
 LDFLAGS += -Wl,-rpath,$(JULIA_HOME)/usr/lib -L$(JULIA_HOME)/usr/lib
@@ -65,19 +65,31 @@ LIBS += -lhdfs -ljvm
 endif
 
 ORION_LIB_NAME := orion
+ORION_JULIA_LIB_NAME := orion_julia
+
 ORION_LIB := lib/lib$(ORION_LIB_NAME).so
-orion_lib: $(ORION_LIB)
+ORION_JULIA_LIB := lib/lib$(ORION_JULIA_LIB_NAME).so
+
+orion_lib: $(ORION_LIB) $(ORION_JULIA_LIB)
 
 include deps/deps.mk
 include src/bosen/bosen.mk
 
 $(ORION_LIB): lib $(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ)
-	gcc -shared -Wl,-soname,liborion.so.0 -o liborion.so.0.0 \
+	gcc -shared -Wl,-soname,lib$(ORION_LIB_NAME).so.0 -o lib$(ORION_LIB_NAME).so.0.0 \
+		$(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ) \
+		$(LDFLAGS)
+	mv lib$(ORION_LIB_NAME).so.0.0 lib/
+	ln -sf $(ORION_HOME)/lib/lib$(ORION_LIB_NAME).so.0.0 $(ORION_HOME)/lib/lib$(ORION_LIB_NAME).so.0
+	ln -sf $(ORION_HOME)/lib/lib$(ORION_LIB_NAME).so.0.0 $(ORION_HOME)/$@
+
+$(ORION_JULIA_LIB): lib $(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ)
+	gcc -shared -Wl,-soname,lib$(ORION_JULIA_LIB_NAME).so.0 -o lib$(ORION_JULIA_LIB_NAME).so.0.0 \
 		$(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ) \
 		$(LIBS) $(LDFLAGS)
-	mv liborion.so.0.0 lib/
-	ln -sf $(ORION_HOME)/lib/liborion.so.0.0 $(ORION_HOME)/lib/liborion.so.0
-	ln -sf $(ORION_HOME)/lib/liborion.so.0.0 $(ORION_HOME)/$@
+	mv lib$(ORION_JULIA_LIB_NAME).so.0.0 lib/
+	ln -sf $(ORION_HOME)/lib/lib$(ORION_JULIA_LIB_NAME).so.0.0 $(ORION_HOME)/lib/lib$(ORION_JULIA_LIB_NAME).so.0
+	ln -sf $(ORION_HOME)/lib/lib$(ORION_JULIA_LIB_NAME).so.0.0 $(ORION_HOME)/$@
 
 all: bosen_exe bosen_test orion_lib
 
@@ -85,8 +97,6 @@ bin:
 	mkdir -p bin
 lib:
 	mkdir -p lib
-
-orion_libs: bosen_lib
 
 clean: bosen_clean
 	rm -rf lib

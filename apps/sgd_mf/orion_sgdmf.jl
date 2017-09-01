@@ -1,19 +1,22 @@
 include("/home/ubuntu/orion/src/julia/orion.jl")
 
+println("application started")
+
 # set path to the C++ runtime library
-Orion.set_lib_path("/home/ubuntu/orion/lib/liborion.so")
+Orion.set_lib_path("/home/ubuntu/orion/lib/liborion_julia.so")
 # test library path
 Orion.helloworld()
 
 const master_ip = "127.0.0.1"
-const master_port = 10000
+const master_port = 12000
 const comm_buff_capacity = 1024
 
 # initialize logging of the runtime library
 Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity)
 
-const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
+#const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
+const data_path = "file:///home/ubuntu/data/ml-10M100K/ratings.csv"
 const K = 100
 const num_iterations = 1
 const step_size = 0.001
@@ -40,7 +43,6 @@ Orion.materialize(W)
 Orion.materialize(H)
 
 Orion.@transform for i = 1:num_iterations
-    Orion.@accumulator error = 0.0
     Orion.@parallel_for for rating in ratings
 	x_idx = rating[1] + 1
 	y_idx = rating[2] + 1
@@ -54,7 +56,6 @@ Orion.@transform for i = 1:num_iterations
 	H_grad = -2 * diff .* W_row
 	W[x_idx, :] = W_row - step_size .* W_grad
 	H[y_idx, :] = H_row - step_size .*H_grad
-        error += (pred - rv) ^ 2
     end
     println("iteration = ", i, " error = ", error)
 end

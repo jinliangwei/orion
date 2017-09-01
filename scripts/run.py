@@ -48,7 +48,7 @@ def get_default_config():
         'num_executors_per_worker' : "1",
         'executor_thread_pool_size' : "4",
         'julia_bin' : "/home/ubuntu/julia-0.5.1/usr/bin",
-        'min_partition_size_kb' : "1024",
+        'partition_size_mb' : "1",
         'orion_home' : None
     }
     config['log'] = {
@@ -119,7 +119,7 @@ def get_arg_strs(args, pargs):
         'num_executors' : num_executors_total,
         'worker_port' : pargs['worker']['port'],
         'executor_thread_pool_size' : pargs['worker']['executor_thread_pool_size'],
-        'min_partition_size_kb' : pargs['worker']['min_partition_size_kb'],
+        'partition_size_mb' : pargs['worker']['partition_size_mb'],
         'orion_home' : pargs['worker']['orion_home'],
         'hdfs_name_node' : pargs['hdfs']['name_node']
     }

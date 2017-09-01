@@ -22,7 +22,7 @@ class DistArray {
             type::PrimitiveType value_type, int32_t executor_id);
   ~DistArray();
   DistArray(DistArray &&other);
-  void LoadPartitionFromTextFile(
+  void LoadPartitionsFromTextFile(
       JuliaEvaluator *julia_eval,
       const std::string &file_path,
       bool map,
@@ -155,7 +155,7 @@ DistArray::CreatePartition() {
 }
 
 void
-DistArray::LoadPartitionFromTextFile(
+DistArray::LoadPartitionsFromTextFile(
     JuliaEvaluator *julia_eval,
     const std::string &file_path,
     bool map,
@@ -165,16 +165,24 @@ DistArray::LoadPartitionFromTextFile(
     const std::string &mapper_func_name,
     Blob *result_buff) {
   CHECK(partitions_.empty());
-  auto *dist_array_partition = CreatePartition();
-  dist_array_partition->LoadTextFile(
-      julia_eval,
-      file_path,
-      kExecutorId,
-      map,
-      flatten_results,
-      num_dims, mapper_func_module, mapper_func_name,
-      result_buff);
-  partitions_.emplace(0, dist_array_partition);
+  bool read = true;
+  size_t partition_id = kExecutorId;
+  while (read) {
+    auto *dist_array_partition = CreatePartition();
+    read = dist_array_partition->LoadTextFile(
+        julia_eval,
+        file_path,
+        partition_id,
+        map,
+        flatten_results,
+        num_dims,
+        mapper_func_module,
+        mapper_func_name,
+        result_buff);
+    if (read)
+      partitions_.emplace(partition_id, dist_array_partition);
+    partition_id += kConfig.kNumExecutors;
+  }
 }
 
 void

@@ -48,7 +48,6 @@ W = rand(dim_x, K)
 H = rand(dim_y, K)
 
 for i = 1:num_iterations
-    error = 0.0
     for rating in ratings
 	x_idx = rating[1] + 1
 	y_idx = rating[2] + 1
@@ -62,7 +61,6 @@ for i = 1:num_iterations
 	H_grad = -2 * diff .* W_row
 	W[x_idx, :] = W_row - step_size .* W_grad
 	H[y_idx, :] = H_row - step_size .*H_grad
-        error += (pred - rv) ^ 2
     end
     println("iteration = ", i, " error = ", error)
 end

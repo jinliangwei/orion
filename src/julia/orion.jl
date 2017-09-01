@@ -20,4 +20,6 @@ include("driver.jl")
 include("transform.jl")
 include("translate_stmt.jl")
 include("codegen.jl")
+include("debug.jl")
+include("ast_walk.jl")
 end

@@ -834,7 +834,8 @@ Executor::CreateDistArray() {
         std::string mapper_func_name
             = map ? create_dist_array.mapper_func_name()
             : std::string();
-        auto cpp_func = std::bind(&DistArray::LoadPartitionFromTextFile,
+        exec_cpp_func_task_.result_buff.resize(sizeof(int64_t) * num_dims, 0);
+        auto cpp_func = std::bind(&DistArray::LoadPartitionsFromTextFile,
                                   &dist_array, std::placeholders::_1,
                                   file_path, map, flatten_results,
                                   num_dims, mapper_func_module, mapper_func_name,

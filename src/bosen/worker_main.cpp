@@ -30,7 +30,7 @@ DEFINE_int32(local_executor_index, 0, "executor id");
 
 DEFINE_uint64(executor_thread_pool_size, 4, "thread pool size");
 
-DEFINE_uint64(min_partition_size_kb, 1024, "minimun file partition size");
+DEFINE_uint64(partition_size_mb, 1, "file partition size");
 
 DEFINE_string(orion_home, "", "Orion home directory");
 
@@ -46,7 +46,7 @@ int main(int argc, char *argv[]) {
                               FLAGS_master_port, FLAGS_worker_ip, FLAGS_worker_port,
                               FLAGS_comm_buff_capacity, FLAGS_worker_id,
                               FLAGS_executor_thread_pool_size,
-                              FLAGS_min_partition_size_kb,
+                              FLAGS_partition_size_mb,
                               FLAGS_hdfs_name_node,
                               FLAGS_orion_home);
   orion::bosen::Executor executor(config, FLAGS_local_executor_index);

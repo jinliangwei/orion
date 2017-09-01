@@ -1,43 +1,47 @@
-@inline function macrocall_get_symbol(ex::Expr)::Symbol
-    if isa(ex.args[1], Symbol)
-        return ex.args[1]
-    elseif ex.args[1].head == :(.)
-        if typeof(ex.args[1].args[2]) == QuoteNode
-            return ex.args[1].args[2].value
+@inline function macrocall_oget_symbol(macro_identifier::Symbol)::Symbol
+    return macro_identifier
+end
+
+@inline function macrocall_get_symbol(macro_identifier::Expr)::Symbol
+    if macro_identifier.head == :(.)
+        if typeof(macro_identifier.args[2]) == QuoteNode
+            return macro_identifier.args[2].value
+        elseif typeof(macro_identifier.args[2]) == Expr
+            @assert macro_identifier.args[2].head == :quote
+            return macro_identifier.args[2].args[1]
         else
-            return ex.args[1].args[2].args[1]
+            dump(macro_identifier)
+            error("Unknown macro form")
         end
     else
+        dump(macro_identifier)
         error("Unknown macro form")
     end
 end
 
-@inline function macrocall_get_module(ex::Expr)::Symbol
-    if isa(ex.args[1], Symbol)
-        return ex.args[1]
-    elseif ex.args[1].head == :(.)
-        return ex.args[1].args[1]
+@inline function macrocall_get_module(macro_identifier::Symbol)::Symbol
+    if isa(macro_identifier, Symbol)
+        return Symbol(which(macro_identifier))
+    elseif macro_identifier.head == :(.)
+        return macro_identifier.args[1]
     else
+        dump(macro_identifier)
         error("Unknown macro form")
     end
 end
 
-@inline function for_get_iteration_var(ex::Expr)::Symbol
-    return ex.args[2].args[1].args[1]
+@inline function for_get_iteration_var(loop_stmt::Expr)::Symbol
+    return loop_stmt.args[1].args[1]
 end
 
-@inline function for_get_iteration_space(ex::Expr)
-    return ex.args[2].args[1].args[2]
+@inline function for_get_iteration_space(loop_stmt::Expr)
+    return loop_stmt.args[1].args[2]
 end
 
-@inline function ref_get_var(ex::Expr)
-    return ex.args[1]
+@inline function ref_get_var(ref_stmt::Expr)
+    return ref_stmt.args[1]
 end
 
-@inline function ref_get_subscripts(ex::Expr)::Array
-    return ex.args[2:length(ex.args)]
-end
-
-@inline function macro_get_arguments(ex::Expr)::Array
-    return ex.args[2:length(ex.args)]
+@inline function ref_get_subscripts(ref_stmt::Expr)::Array
+    return ref_stmt.args[2:length(ex.args)]
 end

@@ -41,19 +41,19 @@ bin/bosen: bin
 	mkdir -p bin/bosen
 
 $(BOSEN_OBJ): %.o: %.cpp deps $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
-	$(CXX) -fPIC $(CFLAGS) $(SANITIZER_FLAGS) -c $< -o $@
+	$(CXX) $(CFLAGS) $(SANITIZER_FLAGS) -c $< -o $@
 
 $(BOSEN_COBJ): %.o: %.c deps $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
-	$(CXX) -fPIC $(CFLAGS) $(SANITIZER_FLAGS) -c $< -o $@
+	$(CXX) $(CFLAGS) $(SANITIZER_FLAGS) -c $< -o $@
 
 $(BOSEN_PROTO_OBJ): src/bosen/protobuf/%.o: src/bosen/protobuf/%.cc src/bosen/protobuf/%.h
-	$(CXX) -fPIC $(CFLAGS) -I$(ORION_HOME)/include/orion/bosen $(SANITIZER_FLAGS) -c $< -o $@
+	$(CXX) $(CFLAGS) $(SANITIZER_FLAGS) -I$(ORION_HOME)/include/orion/bosen -c $< -o $@
 
 $(BOSEN_TEST_EXE): src/bosen/bosen_test_main.o orion_lib $(BOSEN_TEST_OBJ) bin/bosen
-	$(CXX) $(SANITIZER_FLAGS) $< $(BOSEN_TEST_OBJ) $(LDFLAGS) $(ASAN_LIBS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
+	$(CXX) $(SANITIZER_FLAGS) $< $(BOSEN_TEST_OBJ) $(LDFLAGS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
 
 $(BOSEN_MAIN_EXE): bin/%: src/%_main.o orion_lib bin/bosen
-	$(CXX) $(SANITIZER_FLAGS) $< $(LDFLAGS) $(ASAN_LIBS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
+	$(CXX) $(SANITIZER_FLAGS) $< $(LDFLAGS) -l$(ORION_LIB_NAME) $(LIBS) -o $@
 
 $(BOSEN_PROTO): protobuf/%: src/bosen/protobuf/%.proto
 	protoc -I=src/bosen/protobuf --cpp_out=src/bosen/protobuf src/bosen/$@.proto

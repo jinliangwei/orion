@@ -17,7 +17,7 @@ struct Config {
   const size_t kCommBuffCapacity {1024 * 4};
   const int32_t kWorkerId;
   const size_t kExecutorThreadPoolSize;
-  const size_t kMinPartitionSizeKB;
+  const size_t kPartitionSizeMB;
   const std::string kHdfsNameNode;
   const std::string kOrionHome;
 
@@ -30,7 +30,7 @@ struct Config {
          uint64_t comm_buff_capacity,
          int32_t worker_id,
          size_t executor_thread_pool_size,
-         size_t min_partition_size_kb,
+         size_t partition_size_mb,
          const std::string &hdfs_name_node,
          const std::string &orion_home):
       kNumExecutors(num_executors),
@@ -42,7 +42,7 @@ struct Config {
       kCommBuffCapacity(comm_buff_capacity),
       kWorkerId(worker_id),
       kExecutorThreadPoolSize(executor_thread_pool_size),
-      kMinPartitionSizeKB(min_partition_size_kb),
+      kPartitionSizeMB(partition_size_mb),
       kHdfsNameNode(hdfs_name_node),
       kOrionHome(orion_home) { }
 };

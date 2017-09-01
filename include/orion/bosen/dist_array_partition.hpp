@@ -110,16 +110,20 @@ DistArrayPartition<ValueType>::LoadTextFile(
   bool read = false;
   if (prefix == "hdfs") {
     read = LoadFromHDFS(kConfig.kHdfsNameNode, file_path, partition_id,
-                        kConfig.kNumExecutors, kConfig.kMinPartitionSizeKB * 1024,
+                        kConfig.kNumExecutors,
+                        kConfig.kPartitionSizeMB * 1024 * 1024,
                         &char_buff, &begin, &end);
   } else if (prefix == "file") {
     read = LoadFromPosixFS(file_path, partition_id,
-                           kConfig.kNumExecutors, kConfig.kMinPartitionSizeKB * 1024,
+                           kConfig.kNumExecutors,
+                           kConfig.kPartitionSizeMB * 1024 * 1024,
                            &char_buff, &begin, &end);
   } else {
     LOG(FATAL) << "Cannot parse the path specification " << path;
   }
-
+  if (!read) return read;
+  LOG(INFO) << "partition_id = " << partition_id
+            << " read done; start parsing";
   if (map) {
     Blob value(type::SizeOf(kValueType));
     auto* parser_func = julia_eval->GetFunction(GetJlModule(mapper_func_module),
@@ -141,13 +145,13 @@ DistArrayPartition<ValueType>::LoadTextFile(
 
       if (max_key != nullptr) {
         std::vector<int64_t> max_key_vec(num_dims, 0);
+        memcpy(max_key_vec.data(), max_key->data(), sizeof(int64_t) * num_dims);
         for (int i = 0; i < num_dims; i++) {
           for (int j = i; j < key_buff_.size(); j += num_dims) {
             max_key_vec[i] = std::max(max_key_vec[i], key_buff_[j]);
           }
         }
-        max_key->resize(sizeof(int64_t)*num_dims);
-        memcpy(max_key->data(), max_key_vec.data(), sizeof(int64_t)*num_dims);
+        memcpy(max_key->data(), max_key_vec.data(), sizeof(int64_t) * num_dims);
       }
     } else {
       char *line = strtok(char_buff.data() + begin, "\n");
@@ -206,11 +210,13 @@ DistArrayPartition<const char*>::LoadTextFile(
   bool read = false;
   if (prefix == "hdfs") {
     read = LoadFromHDFS(kConfig.kHdfsNameNode, file_path, partition_id,
-                        kConfig.kNumExecutors, kConfig.kMinPartitionSizeKB * 1024,
+                        kConfig.kNumExecutors,
+                        kConfig.kPartitionSizeMB * 1024 * 1024,
                         &char_buff, &begin, &end);
   } else if (prefix == "file") {
     read = LoadFromPosixFS(file_path, partition_id,
-                           kConfig.kNumExecutors, kConfig.kMinPartitionSizeKB * 1024,
+                           kConfig.kNumExecutors,
+                           kConfig.kPartitionSizeMB * 1024 * 1024,
                            &char_buff, &begin, &end);
   } else {
     LOG(FATAL) << "Cannot parse the path specification " << path;

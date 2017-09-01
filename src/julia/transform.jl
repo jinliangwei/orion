@@ -203,7 +203,8 @@ function add_var!(scope_context::ScopeContext,
     if info.is_marked_local ||
         # if this introduces a new variable that is not defined in the parent scope
         # it must be local
-        (!is_var_defined_in_parent(scope_context, var, info) && info.is_assigned_to) ||
+        (!is_var_defined_in_parent(scope_context, var, info) &&
+         info.is_assigned_to) ||
         (scope_context.is_hard_scope && info.is_assigned_to)
         add_local_var!(scope_context, var, info)
     elseif info.is_marked_global
@@ -305,39 +306,33 @@ function get_vars_to_broadcast(scope_context::ScopeContext)
 end
 
 function transform_loop(expr::Expr, context::ScopeContext)
-    curr_module = current_module()
-    iterative_loop_args = expr.args
-    @assert expr.args[1].head == :(=)
-    iteration_index = expr.args[1].args[1]
+    scope_context = get_vars!(nothing, expr)
+    print(scope_context)
+
     iterative_body = quote
     end
-    push!(iterative_body.args, Expr(:call, :println, esc(iteration_index)))
+    push!(iterative_body.args, Expr(:call, :println, "ran one iteration"))
     ret = quote
     end
 
-    scope_context = ScopeContext()
-    for stmt in expr.args[2].args
-        get_vars!(scope_context, stmt)
-    end
-    print(scope_context)
     static_bc_var, dynamic_bc_var_array,
     accumulator_var_array = get_vars_to_broadcast(scope_context)
     broadcast(static_bc_var)
     #bc_expr_array = Array{Array{Expr, 1}, 1}()
-    for dynamic_bc_var in dynamic_bc_var_array
-        bc_expr_array = gen_stmt_broadcast_var(dynamic_bc_var)
+#    for dynamic_bc_var in dynamic_bc_var_array
+#        bc_expr_array = gen_stmt_broadcast_var(dynamic_bc_var)
         #push!(bc_expr_array, expr_array)
-        for bc_expr in bc_expr_array
-            push!(iterative_body.args, bc_expr)
-        end
-    end
+#        for bc_expr in bc_expr_array
+#            push!(iterative_body.args, bc_expr)
+#        end
+#    end
 
-    push!(ret.args,
-          Expr(expr.head,
-               esc(expr.args[1]),
-               iterative_body
-               )
-          )
+ #   push!(ret.args,
+ #         Expr(expr.head,
+ #              esc(expr.args[1]),
+ #              iterative_body
+ #              )
+ #         )
     return ret
 end
 

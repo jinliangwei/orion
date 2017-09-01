@@ -48,6 +48,19 @@ type DistArray{T} <: AbstractArray{T}
                                            is_materialized,
                                            zeros(Int64, num_dims))
 
+    DistArray() = new(-1,
+                      DistArrayParentType_init,
+                      false,
+                      false,
+                      0,
+                     Float32,
+                      "",
+                      -1,
+                      DistArrayInitType_empty,
+                      Main,
+                      "",
+                      false,
+                      zeros(Int64, 0))
 end
 
 const dist_arrays = Dict{Int32, DistArray}()
