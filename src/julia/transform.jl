@@ -250,7 +250,7 @@ end
 
 macro share(ex::Expr)
     if ex.head == :function
-        eval_expr_on_all(ex, Void, Main)
+        eval_expr_on_all(ex, :Main)
     else
         error("Do not support sharing Expr of this kind")
     end
@@ -282,11 +282,12 @@ function get_vars_to_broadcast(scope_context::ScopeContext)
             end
             # we do not broadcast variables that are defined in other modules
             if var in keys(scope_context.inherited_var) &&
-                which(var) != current_module
+                which(var) != current_module()
+                println(var, " not in current module")
                 continue
             elseif var in keys(scope_context.inherited_var) &&
-                !scope_context.inerited[var].is_modified &&
-                !scope_context.inherited[var].is_assigned_to
+                !scope_context.inherited_var[var].is_modified &&
+                !scope_context.inherited_var[var].is_assigned_to
                 println("static broadcast ", var)
                 push!(static_broadcast_var, var)
             elseif var in keys(scope_context.local_var) &&
@@ -317,7 +318,13 @@ function transform_loop(expr::Expr, context::ScopeContext)
 
     static_bc_var, dynamic_bc_var_array,
     accumulator_var_array = get_vars_to_broadcast(scope_context)
-    broadcast(static_bc_var)
+    println("broadcat list ", static_bc_var)
+    define_var(static_bc_var)
+
+    partition_func_name = gen_unique_symbol()
+    partition_func = gen_partition_function(partition_func_name,
+                                            [(1,), (2,)], [(1,), (1,)])
+    eval_expr_on_all(partition_func, :OrionGen)
     #bc_expr_array = Array{Array{Expr, 1}, 1}()
 #    for dynamic_bc_var in dynamic_bc_var_array
 #        bc_expr_array = gen_stmt_broadcast_var(dynamic_bc_var)
@@ -344,13 +351,4 @@ macro accumulator(expr::Expr)
 end
 
 macro parallel_for(expr::Expr)
-end
-
-function broadcast(var::Symbol)
-end
-
-function broadcast(var_set::Set{Symbol})
-    for var in var_set
-        println("broadcasting variable ", var)
-    end
 end

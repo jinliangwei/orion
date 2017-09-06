@@ -13,24 +13,31 @@ namespace bosen {
 
 class JuliaEvaluator {
  private:
-  void UnboxResult(jl_value_t* value,
+  jl_value_t* BoxValue(
+      type::PrimitiveType result_type,
+      const uint8_t* value);
+
+  void UnboxValue(jl_value_t* value,
                    type::PrimitiveType result_type,
                    Blob *result_buff);
-
-  jl_value_t* EvalExpr(const std::string &serialized_expr,
-                       JuliaModule module);
+  void EvalExpr(const std::string &serialized_expr,
+                       JuliaModule module,
+                       Blob *result_buff);
   jl_module_t* orion_gen_module_;
   jl_module_t* orion_worker_module_;
   std::string lib_path_;
+  std::string orion_home_;
  public:
   JuliaEvaluator() { }
   ~JuliaEvaluator() { }
   void Init(const std::string &orion_home);
   void AtExitHook() { jl_atexit_hook(0); }
-  jl_value_t* EvalString(const std::string &code);
   void ExecuteTask(JuliaTask* task);
   inline jl_function_t* GetFunction(jl_module_t* module,
                                     const char* func_name);
+  void SetResult(jl_value_t *result,
+                 Blob *result_buff);
+
   void ParseString(
       const char* str,
       jl_function_t *parser_func,
@@ -43,11 +50,21 @@ class JuliaEvaluator {
       jl_function_t *parser_func,
       type::PrimitiveType result_type,
       Blob *value);
+
+  void ReloadOrionGenModule();
+
+  void DefineVar(std::string var_name,
+                 std::string var_value);
+  static void StaticDefineVar(
+      JuliaEvaluator *julia_eval,
+      std::string var_name,
+      std::string var_value);
 };
 
 void
 JuliaEvaluator::Init(const std::string &orion_home) {
   jl_init(NULL);
+  orion_home_ = orion_home;
   lib_path_ = orion_home + "/lib/liborion.so";
   jl_load((orion_home + "/src/julia/orion_gen.jl").c_str());
   orion_gen_module_ = reinterpret_cast<jl_module_t*>(
@@ -55,7 +72,7 @@ JuliaEvaluator::Init(const std::string &orion_home) {
   CHECK(orion_gen_module_ != nullptr);
   SetOrionGenModule(orion_gen_module_);
 
-  jl_load((orion_home + "/src/julia/orion_worker.jl").c_str());
+  //jl_load((orion_home + "/src/julia/orion_worker.jl").c_str());
   orion_worker_module_ = reinterpret_cast<jl_module_t*>(
       jl_eval_string("OrionWorker"));
   CHECK(orion_worker_module_ != nullptr);
@@ -73,8 +90,77 @@ JuliaEvaluator::Init(const std::string &orion_home) {
   JL_GC_POP();
 }
 
+jl_value_t*
+JuliaEvaluator::BoxValue(
+    type::PrimitiveType result_type,
+    const uint8_t* value) {
+  jl_value_t* ret = nullptr;
+  switch (result_type) {
+    case type::PrimitiveType::kVoid:
+      break;
+    case type::PrimitiveType::kInt8:
+      {
+        ret = jl_box_int8(*reinterpret_cast<const int8_t*>(value));
+      }
+      break;
+    case type::PrimitiveType::kUInt8:
+      {
+        ret = jl_box_uint8(*reinterpret_cast<const uint8_t*>(value));
+      }
+      break;
+    case type::PrimitiveType::kInt16:
+      {
+        ret = jl_box_int16(*reinterpret_cast<const int16_t*>(value));
+      }
+      break;
+    case type::PrimitiveType::kUInt16:
+      {
+        ret = jl_box_uint16(*reinterpret_cast<const uint16_t*>(value));
+      }
+      break;
+    case type::PrimitiveType::kInt32:
+      {
+        ret = jl_box_int32(*reinterpret_cast<const int32_t*>(value));
+      }
+      break;
+    case type::PrimitiveType::kUInt32:
+      {
+        ret = jl_box_uint32(*reinterpret_cast<const uint32_t*>(value));
+      }
+      break;
+    case type::PrimitiveType::kInt64:
+      {
+        ret = jl_box_int64(*reinterpret_cast<const int64_t*>(value));
+      }
+      break;
+    case type::PrimitiveType::kUInt64:
+      {
+        ret = jl_box_uint64(*reinterpret_cast<const uint64_t*>(value));
+      }
+      break;
+    case type::PrimitiveType::kFloat32:
+      {
+        ret = jl_box_float32(*reinterpret_cast<const float*>(value));
+      }
+      break;
+    case type::PrimitiveType::kFloat64:
+      {
+        ret = jl_box_float32(*reinterpret_cast<const double*>(value));
+      }
+      break;
+    case type::PrimitiveType::kString:
+      {
+        ret = jl_cstr_to_string(reinterpret_cast<const char*>(value));
+      }
+      break;
+    default:
+      LOG(FATAL) << "Unknown primitive type";
+  }
+  return ret;
+}
+
 void
-JuliaEvaluator::UnboxResult(jl_value_t* value,
+JuliaEvaluator::UnboxValue(jl_value_t* value,
                             type::PrimitiveType result_type,
                             Blob *result_buff) {
   switch (result_type) {
@@ -170,36 +256,69 @@ JuliaEvaluator::UnboxResult(jl_value_t* value,
   }
 }
 
-jl_value_t*
+void
 JuliaEvaluator::EvalExpr(const std::string &serialized_expr,
-                         JuliaModule module) {
-  jl_value_t *array_type, *serialized_expr_buff, *expr, *ret;
-  jl_array_t *serialized_expr_array;
-  JL_GC_PUSH5(&array_type, &serialized_expr_array, &serialized_expr_buff, &expr,
-              &ret);
+                         JuliaModule module,
+                         Blob *result_buff) {
+  LOG(INFO) << __func__ << " started!";
+  jl_value_t **jl_values;
+  JL_GC_PUSHARGS(jl_values, 7);
+  jl_value_t* &array_type = jl_values[0];
+  jl_value_t* &serialized_expr_buff = jl_values[1];
+  jl_value_t* &expr = jl_values[2];
+  jl_value_t* &ret = jl_values[3];
+  jl_value_t* &serialized_expr_array = jl_values[4];
+  jl_value_t* &buff = jl_values[5];
+  jl_value_t* &serialized_result_array = jl_values[6];
 
   array_type = jl_apply_array_type(jl_uint8_type, 1);
   std::vector<uint8_t> temp_serialized_expr(serialized_expr.size());
   memcpy(temp_serialized_expr.data(), serialized_expr.data(),
          serialized_expr.size());
-  serialized_expr_array = jl_ptr_to_array_1d(array_type,
-                                             temp_serialized_expr.data(),
-                                             serialized_expr.size(), 0);
+  serialized_expr_array = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
+      array_type,
+      temp_serialized_expr.data(),
+      serialized_expr.size(), 0));
+
   jl_function_t *io_buffer_func
       = GetFunction(jl_base_module, "IOBuffer");
+  CHECK(io_buffer_func != nullptr);
   serialized_expr_buff = jl_call1(io_buffer_func,
                                  reinterpret_cast<jl_value_t*>(serialized_expr_array));
+  LOG(INFO) << "serialized_expr_buff = " << (void*) serialized_expr_buff;
 
   jl_function_t *deserialize_func
       = GetFunction(jl_base_module, "deserialize");
+  CHECK(deserialize_func != nullptr);
   expr = jl_call1(deserialize_func, serialized_expr_buff);
+  LOG(INFO) << "deserialized expr = " << (void*) expr;
 
   jl_function_t *eval_func
       = GetFunction(jl_core_module, "eval");
+  CHECK(eval_func != nullptr);
+
   jl_module_t *jl_module = GetJlModule(module);
+  CHECK(jl_module != nullptr);
   ret = jl_call2(eval_func, reinterpret_cast<jl_value_t*>(jl_module), expr);
+  LOG(INFO) << "eval result = " << (void*) ret
+            << " unboxed = " << jl_unbox_int64(ret);
+
+  LOG(INFO) << "evaluated expr, ret = " << (void*) ret;
+  buff = jl_call0(io_buffer_func);
+
+  jl_function_t *serialize_func
+      = GetFunction(jl_base_module, "serialize");
+  CHECK(serialize_func != nullptr);
+  jl_call2(serialize_func, buff, ret);
+
+  jl_function_t *takebuff_array_func
+      = GetFunction(jl_base_module, "takebuf_array");
+  serialized_result_array = jl_call1(takebuff_array_func, buff);
+  size_t result_array_length = jl_array_len(serialized_result_array);
+  uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
+  result_buff->resize(result_array_length);
+  memcpy(result_buff->data(), array_bytes, result_array_length);
   JL_GC_POP();
-  return ret;
 }
 
 jl_function_t*
@@ -210,32 +329,18 @@ JuliaEvaluator::GetFunction(jl_module_t* module,
   return func;
 }
 
-jl_value_t*
-JuliaEvaluator::EvalString(const std::string &code) {
-  return jl_eval_string(code.c_str());
-}
-
 void
 JuliaEvaluator::ExecuteTask(JuliaTask* task) {
-  jl_value_t* ret = nullptr;
-  type::PrimitiveType result_type = type::PrimitiveType::kVoid;
-  Blob* result_buff = nullptr;
-  if (auto exec_code_task = dynamic_cast<ExecJuliaCodeTask*>(task)) {
-    ret = EvalString(exec_code_task->code);
-    result_type = exec_code_task->result_type;
-    result_buff = &exec_code_task->result_buff;
-  } else if (auto exec_cpp_func_task = dynamic_cast<ExecCppFuncTask*>(task)) {
+  if (auto exec_cpp_func_task = dynamic_cast<ExecCppFuncTask*>(task)) {
     exec_cpp_func_task->func(this);
   } else if (auto eval_expr_task = dynamic_cast<EvalJuliaExprTask*>(task)) {
+    Blob *result_buff = &eval_expr_task->result_buff;
     EvalExpr(eval_expr_task->serialized_expr,
-             eval_expr_task->module);
-    result_type = eval_expr_task->result_type,
-    result_buff = &eval_expr_task->result_buff;
+             eval_expr_task->module,
+             result_buff);
   } else {
     LOG(FATAL) << "Unknown task type!";
   }
-
-  UnboxResult(ret, result_type, result_buff);
 }
 
 
@@ -267,7 +372,7 @@ JuliaEvaluator::ParseString(
   }
   value = jl_get_nth_field(ret_tuple, 1);
   CHECK(jl_is_float64(value)) << "value ptr is " << (void*) value;
-  UnboxResult(value, result_type, value_buff);
+  UnboxValue(value, result_type, value_buff);
   JL_GC_POP();
 }
 
@@ -288,8 +393,64 @@ JuliaEvaluator::ParseStringValueOnly(
   CHECK(jl_is_tuple(ret_tuple));
   value = jl_get_nth_field(ret_tuple, 0);
   CHECK(jl_is_float64(value)) << "value ptr is " << (void*) value;
-  UnboxResult(value, result_type, value_buff);
+  UnboxValue(value, result_type, value_buff);
   JL_GC_POP();
+}
+
+void
+JuliaEvaluator::ReloadOrionGenModule() {
+  lib_path_ = orion_home_ + "/lib/liborion.so";
+  jl_load((orion_home_ + "/src/julia/orion_gen.jl").c_str());
+  orion_gen_module_ = reinterpret_cast<jl_module_t*>(
+      jl_eval_string("OrionGen"));
+  CHECK(orion_gen_module_ != nullptr);
+  SetOrionGenModule(orion_gen_module_);
+}
+
+void
+JuliaEvaluator::DefineVar(std::string var_name,
+                          std::string var_value) {
+  LOG(INFO) << __func__ << " var_name = " << var_name
+            << " var_value.size = " << var_value.size();
+
+  jl_value_t *array_type, *serialized_value_buff, *var_value_jl, *var_name_jl;
+  jl_array_t *serialized_value_array;
+  JL_GC_PUSH5(&array_type, &serialized_value_buff, &var_name_jl,
+              &var_value_jl, &serialized_value_array);
+
+  jl_function_t *define_setter_func
+      = GetFunction(orion_gen_module_, "define_setter");
+  var_name_jl = jl_cstr_to_string(var_name.c_str());
+  jl_call1(define_setter_func, var_name_jl);
+
+  array_type = jl_apply_array_type(jl_uint8_type, 1);
+  std::vector<uint8_t> temp_serialized_value(var_value.size());
+  memcpy(temp_serialized_value.data(), var_value.data(),
+         var_value.size());
+  serialized_value_array = jl_ptr_to_array_1d(array_type,
+                                              temp_serialized_value.data(),
+                                              temp_serialized_value.size(), 0);
+  jl_function_t *io_buffer_func
+      = GetFunction(jl_base_module, "IOBuffer");
+  serialized_value_buff = jl_call1(io_buffer_func,
+                                   reinterpret_cast<jl_value_t*>(serialized_value_array));
+
+  jl_function_t *deserialize_func
+      = GetFunction(jl_base_module, "deserialize");
+  var_value_jl = jl_call1(deserialize_func, serialized_value_buff);
+
+  jl_function_t *setter_func
+      = GetFunction(orion_gen_module_, (std::string("set_") + var_name).c_str());
+  jl_call1(setter_func, var_value_jl);
+  JL_GC_POP();
+}
+
+void
+JuliaEvaluator::StaticDefineVar(
+    JuliaEvaluator *julia_eval,
+    std::string var_name,
+    std::string var_value) {
+  julia_eval->DefineVar(var_name, var_value);
 }
 
 }

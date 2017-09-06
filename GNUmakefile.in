@@ -65,12 +65,12 @@ LIBS += -lhdfs -ljvm
 endif
 
 ORION_LIB_NAME := orion
-ORION_JULIA_LIB_NAME := orion_julia
+ORION_DRIVER_LIB_NAME := orion_driver
 
 ORION_LIB := lib/lib$(ORION_LIB_NAME).so
-ORION_JULIA_LIB := lib/lib$(ORION_JULIA_LIB_NAME).so
+ORION_DRIVER_LIB := lib/lib$(ORION_DRIVER_LIB_NAME).so
 
-orion_lib: $(ORION_LIB) $(ORION_JULIA_LIB)
+orion_lib: $(ORION_LIB) $(ORION_DRIVER_LIB)
 
 include deps/deps.mk
 include src/bosen/bosen.mk
@@ -83,13 +83,13 @@ $(ORION_LIB): lib $(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ)
 	ln -sf $(ORION_HOME)/lib/lib$(ORION_LIB_NAME).so.0.0 $(ORION_HOME)/lib/lib$(ORION_LIB_NAME).so.0
 	ln -sf $(ORION_HOME)/lib/lib$(ORION_LIB_NAME).so.0.0 $(ORION_HOME)/$@
 
-$(ORION_JULIA_LIB): lib $(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ)
-	gcc -shared -Wl,-soname,lib$(ORION_JULIA_LIB_NAME).so.0 -o lib$(ORION_JULIA_LIB_NAME).so.0.0 \
-		$(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ) \
+$(ORION_DRIVER_LIB): lib $(DRIVER_LIB_OBJ) $(DRIVER_LIB_COBJ) $(DRIVER_LIB_PROTO_OBJ)
+	gcc -shared -Wl,-soname,lib$(ORION_DRIVER_LIB_NAME).so.0 -o lib$(ORION_DRIVER_LIB_NAME).so.0.0 \
+		$(DRIVER_LIB_OBJ) $(DRIVER_LIB_COBJ) $(DRIVER_LIB_PROTO_OBJ) \
 		$(LIBS) $(LDFLAGS)
-	mv lib$(ORION_JULIA_LIB_NAME).so.0.0 lib/
-	ln -sf $(ORION_HOME)/lib/lib$(ORION_JULIA_LIB_NAME).so.0.0 $(ORION_HOME)/lib/lib$(ORION_JULIA_LIB_NAME).so.0
-	ln -sf $(ORION_HOME)/lib/lib$(ORION_JULIA_LIB_NAME).so.0.0 $(ORION_HOME)/$@
+	mv lib$(ORION_DRIVER_LIB_NAME).so.0.0 lib/
+	ln -sf $(ORION_HOME)/lib/lib$(ORION_DRIVER_LIB_NAME).so.0.0 $(ORION_HOME)/lib/lib$(ORION_DRIVER_LIB_NAME).so.0
+	ln -sf $(ORION_HOME)/lib/lib$(ORION_DRIVER_LIB_NAME).so.0.0 $(ORION_HOME)/$@
 
 all: bosen_exe bosen_test orion_lib
 

@@ -88,7 +88,6 @@ class JuliaEvalThread {
     cv_.notify_one();
     lock.unlock();
     runner_.join();
-
   }
 
   void SchedTask(JuliaTask* task) {

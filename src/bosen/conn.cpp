@@ -33,6 +33,8 @@ static size_t WriteAllUntilBlock(int fd, const void *buf, size_t count) {
 int Socket::Bind(uint32_t ip, uint16_t port) {
   socket_ = socket(AF_INET, SOCK_STREAM, 0);
   if (socket_ < 0) return -1;
+  int reuse_port = 1;
+  setsockopt(socket_, SOL_SOCKET, SO_REUSEPORT, &reuse_port, sizeof(reuse_port));
 
   sockaddr_in addr;
   bzero(&addr, sizeof(sockaddr_in));

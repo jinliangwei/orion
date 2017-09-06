@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <julia.h>
 
 extern "C" {
    extern const int32_t ORION_TYPE_VOID;
@@ -47,7 +48,7 @@ extern "C" {
   extern const int32_t ORION_JULIA_MODULE_BASE;
   extern const int32_t ORION_JULIA_MODULE_MAIN;
   extern const int32_t ORION_JULIA_MODULE_TOP;
-  extern const int32_t ORION_JULIA_MODULE_ORION_GENERATED;
+  extern const int32_t ORION_JULIA_MODULE_ORION_GEN;
 
   typedef struct VirtualBaseTable {
     size_t size;
@@ -69,32 +70,24 @@ extern "C" {
   void orion_init(
       const char *master_ip,
       uint16_t master_port,
-      size_t comm_buff_capacity);
+      size_t comm_buff_capacity,
+      size_t num_executors);
 
   void orion_connect_to_master();
 
-  void orion_execute_code_on_one(
-    int32_t executor_id,
-    const char* code,
-    int result_type,
-    void *result_buff);
-
-  void orion_call_func_on_one(
+  const uint8_t* orion_call_func_on_one(
     int32_t executor_id,
     const char *function_name,
     const TableDep *deps,
     size_t num_deps,
     int repetition,
     size_t num_iterations,
-    int result_type,
-    void *result_buff);
+    size_t *result_size);
 
-  void orion_eval_expr_on_all(
+  jl_value_t* orion_eval_expr_on_all(
       const uint8_t* expr,
       size_t expr_size,
-      int32_t result_type,
-      int32_t module,
-      void *result_buff);
+      int32_t module);
 
   void orion_create_dist_array(
       int32_t id,
@@ -109,6 +102,11 @@ extern "C" {
       int32_t mapper_func_module,
       const char* mapper_func_name,
       int64_t* dims);
+
+  void orion_define_var(
+      const char *var_name,
+      const uint8_t *var_value,
+      size_t value_size);
 
   void orion_stop();
 

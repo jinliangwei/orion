@@ -166,7 +166,7 @@ function materialize(dist_array::DistArray)
               dist_array.file_path,
               dist_array.parent_id,
               dist_array_init_type_to_int32(dist_array.init_type),
-              module_to_int32(dist_array.mapper_func_module),
+              module_to_int32(Symbol(dist_array.mapper_func_module)),
               dist_array.mapper_func_name,
               dist_array.dims)
     elseif dist_array.parent_type == DistArrayParentType_dist_array

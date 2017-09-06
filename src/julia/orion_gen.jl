@@ -1,28 +1,14 @@
+include("/home/ubuntu/orion/src/julia/orion_worker.jl")
+
 module OrionGen
 
-function define(var::Symbol)
-    eval(Expr(:global,
-              Expr(:(=),
-                   var,
-                   :nothing)))
-    set_func = Expr(:function,
-                    Expr(:call,
-                         Symbol("set_", string(var)),
-                         :val),
-                    Expr(:block,
-                         Expr(:global,
-                              Expr(:(=),
-                                   var,
-                                   :val))))
-
+function define_setter(var::AbstractString)
+    var_sym = Symbol(var)
+    set_func_name = Symbol("set_", var)
+    set_func = :(function $set_func_name(val)
+                   global $(var_sym) = val
+                 end)
     eval(set_func)
-    get_func = Expr(:function,
-                    Expr(:call,
-                         Symbol("get_", string(var))),
-                    Expr(:block,
-                         Expr(:return,
-                              var)))
-    eval(get_func)
 end
 
 end

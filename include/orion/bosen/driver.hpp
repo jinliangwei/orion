@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <julia.h>
 #include <orion/bosen/conn.hpp>
 #include <orion/bosen/driver_message.hpp>
 #include <orion/bosen/util.hpp>
@@ -20,13 +21,16 @@ class DriverConfig {
   const std::string kMasterIp;
   const uint16_t kMasterPort;
   const size_t kCommBuffCapacity;
+  const size_t kNumExecutors;
   DriverConfig(
       const char* master_ip,
       uint16_t master_port,
-      size_t comm_buff_capacity):
+      size_t comm_buff_capacity,
+      size_t num_executors):
       kMasterIp(master_ip),
       kMasterPort(master_port),
-      kCommBuffCapacity(comm_buff_capacity) { }
+      kCommBuffCapacity(comm_buff_capacity),
+      kNumExecutors(num_executors) { }
 };
 
 class Driver {
@@ -61,6 +65,7 @@ class Driver {
   const size_t kCommBuffCapacity;
   const std::string kMasterIp;
   const uint16_t kMasterPort;
+  const size_t kNumExecutors;
 
   Blob master_recv_mem_;
   Blob master_send_mem_;
@@ -97,11 +102,15 @@ class Driver {
   void BlockSendToMaster();
   void BlockRecvFromMaster();
 
+  static jl_function_t *GetFunction(jl_module_t* module,
+                                    const char* func_name);
+
  public:
   Driver(const DriverConfig& driver_config):
       kCommBuffCapacity(driver_config.kCommBuffCapacity),
       kMasterIp(driver_config.kMasterIp),
       kMasterPort(driver_config.kMasterPort),
+      kNumExecutors(driver_config.kNumExecutors),
       master_recv_mem_(kCommBuffCapacity),
       master_send_mem_(kCommBuffCapacity),
       master_(conn::Socket(),
@@ -127,25 +136,12 @@ class Driver {
 
   void ConnectToMaster();
 
-  void ExecuteCodeOnOne(
-      int32_t executor_id,
-      const char* code,
-      type::PrimitiveType result_type,
-      void *result_buff);
-
-  void ExecuteCodeOnAll(
-      const char* code,
-      type::PrimitiveType result_type,
-      void *result_buff);
-
-  void EvalExprOnAll(
+  jl_value_t* EvalExprOnAll(
       const uint8_t* expr,
       size_t expr_size,
-      type::PrimitiveType result_type,
-      JuliaModule module,
-      void *result_buff);
+      JuliaModule module);
 
-  void CallFuncOnOne(
+  const uint8_t* CallFuncOnOne(
       int32_t executor_id,
       const char* function_name,
       task::BaseTableType base_table_type,
@@ -154,10 +150,9 @@ class Driver {
       const std::vector<task::TableDep> &deps,
       task::Repetition repetition,
       int32_t num_iterations,
-      type::PrimitiveType result_type,
-      void *result_buff);
+      size_t *result_size);
 
-  void CallFuncOnAll(
+  const uint8_t* CallFuncOnAll(
       const char* function_name,
       task::BaseTableType base_table_type,
       const task::VirtualBaseTable &virtual_base_table,
@@ -165,8 +160,7 @@ class Driver {
       const std::vector<task::TableDep> &deps,
       task::Repetition repetition,
       int32_t num_iterations,
-      type::PrimitiveType result_type,
-      void *result_buff);
+      size_t *result_size);
 
   void CreateDistArray(
       int32_t id,
@@ -182,8 +176,20 @@ class Driver {
       const char* parser_func_name,
       int64_t *dims);
 
+  void DefineVariable(const char *var_name,
+                      const uint8_t *var_value,
+                      size_t value_size);
+
   void Stop();
 };
+
+jl_function_t*
+Driver::GetFunction(jl_module_t* module,
+                    const char* func_name) {
+  auto* func = jl_get_function(module, func_name);
+  CHECK(func != nullptr) << "func_name = " << func_name;
+  return func;
+}
 
 void
 Driver::BlockSendToMaster() {
@@ -273,16 +279,6 @@ Driver::CreateCallFuncTask(
     type::PrimitiveType result_type) { }
 
 void
-Driver::CreateExecuteCodeTask(
-    const char* code,
-    type::PrimitiveType result_type) {
-  task::ExecuteCode execute_code_task;
-  execute_code_task.set_code(code);
-  execute_code_task.set_result_type(static_cast<int32_t>(result_type));
-  execute_code_task.SerializeToString(&msg_buff_);
-}
-
-void
 Driver::ConnectToMaster() {
   uint32_t ip;
   int ret = GetIPFromStr(kMasterIp.c_str(), &ip);
@@ -296,89 +292,69 @@ Driver::ConnectToMaster() {
   CHECK_EQ(ret, 0);
 }
 
-void
-Driver::ExecuteCodeOnOne(
-    int32_t executor_id,
-    const char* code,
-    type::PrimitiveType result_type,
-    void *result_buff) {
-  result_buff_.Reset(type::SizeOf(result_type));
-  auto *execute_code_msg = message::DriverMsgHelper::CreateMsg<
-    message::DriverMsgExecuteCodeOnOne>(
-        &master_.send_buff, executor_id);
-  CreateExecuteCodeTask(code, result_type);
-  execute_code_msg->task_size = msg_buff_.size();
-  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
-  BlockSendToMaster();
-  master_.send_buff.clear_to_send();
-  master_.send_buff.reset_sent_sizes();
-  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
-  received_from_master_ = false;
-  BlockRecvFromMaster();
-  LOG(INFO) << "received from master!";
-  auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
-      master_recv_temp_buff_);
-  LOG(INFO) << "msg result bytes = " << msg->result_bytes;
-
-  if (msg->result_bytes > 0) {
-    LOG(INFO) << "result = " << *((double*) result_buff_.GetBytes());
-    if (result_buff != nullptr) {
-      memcpy(result_buff, result_buff_.GetBytes(), result_buff_.GetSize());
-    }
-    master_recv_temp_buff_.ClearOneAndNextMsg();
-  } else {
-    master_recv_temp_buff_.ClearOneMsg();
-  }
-}
-
-void
-Driver::ExecuteCodeOnAll(
-    const char* code,
-    type::PrimitiveType result_type,
-    void *result_buff) { }
-
-
-void
+jl_value_t*
 Driver::EvalExprOnAll(
     const uint8_t* expr,
     size_t expr_size,
-    type::PrimitiveType result_type,
-    JuliaModule module,
-    void *result_buff) {
+    JuliaModule module) {
   task::EvalExpr eval_expr_task;
   eval_expr_task.set_serialized_expr(
       std::string(reinterpret_cast<const char*>(expr), expr_size));
-  eval_expr_task.set_result_type(
-      static_cast<int32_t>(result_type));
   eval_expr_task.set_module(static_cast<int32_t>(module));
   eval_expr_task.SerializeToString(&msg_buff_);
   message::DriverMsgHelper::CreateMsg<message::DriverMsgEvalExpr>(
       &master_.send_buff, msg_buff_.size());
   master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
   BlockSendToMaster();
-  LOG(INFO) << "next_to_send size = " << msg_buff_.size();
   master_.send_buff.clear_to_send();
   master_.send_buff.reset_sent_sizes();
   expected_msg_type_ = message::DriverMsgType::kMasterResponse;
-  LOG(INFO) << "waiting from master";
   received_from_master_ = false;
   BlockRecvFromMaster();
-  LOG(INFO) << "waiting done";
-  LOG(INFO) << "result size = " << type::SizeOf(result_type);
   auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
       master_recv_temp_buff_);
 
+  jl_value_t *result_array = nullptr;
+  jl_value_t *result_array_type = jl_apply_array_type(jl_any_type, 1);
+
   if (msg->result_bytes > 0) {
-    if (result_buff != nullptr) {
-      memcpy(result_buff, result_buff_.GetBytes(), result_buff_.GetSize());
+    uint8_t *cursor = result_buff_.GetBytes();
+    jl_value_t *bytes_array_type = jl_apply_array_type(jl_uint8_type, 1);
+
+    jl_function_t *io_buffer_func
+        = GetFunction(jl_base_module, "IOBuffer");
+    jl_function_t *deserialize_func
+        = GetFunction(jl_base_module, "deserialize");
+
+    jl_value_t *serialized_result_array = nullptr,
+                *serialized_result_buff = nullptr,
+                   *deserialized_result = nullptr;
+    JL_GC_PUSH4(&serialized_result_array, &serialized_result_buff,
+                &deserialized_result, &result_array);
+    result_array = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(result_array_type, 0));
+    for (size_t i = 0; i < kNumExecutors; i++) {
+      size_t curr_result_size = *reinterpret_cast<const size_t*>(cursor);
+      serialized_result_array = reinterpret_cast<jl_value_t*>(
+          jl_ptr_to_array_1d(
+              bytes_array_type,
+              cursor + sizeof(size_t),
+              curr_result_size, 0));
+      serialized_result_buff = jl_call1(io_buffer_func,
+                                        reinterpret_cast<jl_value_t*>(serialized_result_array));
+      deserialized_result = jl_call1(deserialize_func, serialized_result_buff);
+      jl_array_ptr_1d_push(reinterpret_cast<jl_array_t*>(result_array), deserialized_result);
+      cursor += curr_result_size + sizeof(size_t);
     }
+    JL_GC_POP();
     master_recv_temp_buff_.ClearOneAndNextMsg();
   } else {
+    result_array = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(result_array_type, 0));
     master_recv_temp_buff_.ClearOneMsg();
   }
+  return result_array;
 }
 
-void
+const uint8_t*
 Driver::CallFuncOnOne(
     int32_t executor_id,
     const char* function_name,
@@ -388,10 +364,11 @@ Driver::CallFuncOnOne(
     const std::vector<task::TableDep> &deps,
     task::Repetition repetition,
     int32_t num_iterations,
-    type::PrimitiveType result_type,
-    void *result_buff) { }
+    size_t *result_size) {
+  return nullptr;
+}
 
-void
+const uint8_t*
 Driver::CallFuncOnAll(
     const char* function_name,
     task::BaseTableType base_table_type,
@@ -400,8 +377,9 @@ Driver::CallFuncOnAll(
     const std::vector<task::TableDep> &deps,
     task::Repetition repetition,
     int32_t num_iterations,
-    type::PrimitiveType result_type,
-    void *result_buff) { }
+    size_t *result_size) {
+  return nullptr;
+}
 
 void
 Driver::CreateDistArray(
@@ -481,6 +459,30 @@ Driver::Stop() {
   master_.send_buff.clear_to_send();
   master_.send_buff.reset_sent_sizes();
   master_.sock.Close();
+}
+
+void
+Driver::DefineVariable(const char *var_name,
+                       const uint8_t *var_value,
+                       size_t value_size) {
+  task::DefineVar define_var_task;
+  define_var_task.set_var_name(var_name);
+  define_var_task.set_var_value(var_value, value_size);
+  define_var_task.SerializeToString(&msg_buff_);
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgDefineVar>(
+      &master_.send_buff, msg_buff_.size());
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  LOG(INFO) << "waiting from master";
+  received_from_master_ = false;
+  BlockRecvFromMaster();
+  LOG(INFO) << "waiting done";
+  message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  master_recv_temp_buff_.ClearOneMsg();
 }
 
 }

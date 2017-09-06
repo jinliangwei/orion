@@ -18,15 +18,15 @@ class ByteBuffer {
   void Reset(size_t capacity);
   uint8_t* GetAvailMem();
   void IncSize(size_t size);
-  const uint8_t* GetBytes() const;
+  uint8_t* GetBytes();
   size_t GetSize() const;
 };
 
 ByteBuffer::ByteBuffer() { }
 ByteBuffer::~ByteBuffer() { }
 
-const uint8_t*
-ByteBuffer::GetBytes() const {
+uint8_t*
+ByteBuffer::GetBytes() {
   return buff_.data();
 }
 

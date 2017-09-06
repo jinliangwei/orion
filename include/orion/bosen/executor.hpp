@@ -117,11 +117,11 @@ class Executor {
       kExit = 1,
       kConnectToPeers = 2,
       kAckConnectToPeers = 3,
-      kExecuteCode = 4,
       kEvalExpr = 5,
       kCreateDistArray = 6,
       kTextFileLoadAck = 7,
       kCreateDistArrayAck = 8,
+      kDefineVar = 9,
       kExecutorAck = 10
   };
 
@@ -166,7 +166,6 @@ class Executor {
   JuliaEvalThread julia_eval_thread_;
 
   ExecJuliaFuncTask exec_julia_func_task_;
-  ExecJuliaCodeTask exec_julia_code_task_;
   ExecCppFuncTask exec_cpp_func_task_;
   EvalJuliaExprTask eval_julia_expr_task_;
 
@@ -202,9 +201,9 @@ class Executor {
   void ClearBeforeExit();
   void Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn);
   void Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn);
-  void ExecuteCode();
   void EvalExpr();
   void CreateDistArray();
+  void DefineVar();
 };
 
 Executor::Executor(const Config& config, int32_t index):
@@ -289,6 +288,7 @@ Executor::operator() () {
 
   while (true) {
     event_handler_.WaitAndHandleEvent();
+    LOG(INFO) << "action_ = " << static_cast<int>(action_);
     if (action_ == Action::kExit) break;
   }
   ClearBeforeExit();
@@ -387,16 +387,9 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           action_ = Action::kNone;
         }
         break;
-      case Action::kExecuteCode:
-        {
-          task_type_ = TaskType::kExecJuliaCode;
-          ExecuteCode();
-          action_ = Action::kNone;
-        }
-        break;
       case Action::kEvalExpr:
         {
-          task_type_ = TaskType::kEvalJuliaAst;
+          task_type_ = TaskType::kEvalJuliaExpr;
           EvalExpr();
           action_ = Action::kNone;
         }
@@ -412,20 +405,19 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         {
           size_t result_size = 0;
           const void *result_mem = nullptr;
-          if (task_type_ == TaskType::kExecJuliaCode) {
-            result_size = type::SizeOf(exec_julia_code_task_.result_type);
-            result_mem = exec_julia_code_task_.result_buff.data();
-            LOG(INFO) << "result = " << *((const double*) result_mem);
-          } else if (task_type_ == TaskType::kExecJuliaFunc) {
-            result_size = type::SizeOf(exec_julia_func_task_.result_type);
+          if (task_type_ == TaskType::kExecJuliaFunc) {
+            result_size = exec_julia_func_task_.result_buff.size();
             result_mem = exec_julia_func_task_.result_buff.data();
-          } else if (task_type_ == TaskType::kEvalJuliaAst) {
-            result_size = type::SizeOf(eval_julia_expr_task_.result_type);
+          } else if (task_type_ == TaskType::kEvalJuliaExpr) {
+            result_size = eval_julia_expr_task_.result_buff.size();
             result_mem = eval_julia_expr_task_.result_buff.data();
           } else if (task_type_ == TaskType::kExecCppFunc) {
           } else {
             LOG(FATAL) << "error!";
           }
+
+          LOG(INFO) << "task_type = " << static_cast<int>(task_type_)
+                    << " result_size = " << result_size;
 
           message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgExecutorAck>(
               &send_buff_, result_size);
@@ -457,6 +449,14 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           send_buff_.clear_to_send();
           send_buff_.reset_sent_sizes();
           action_ = Action::kNone;
+          LOG(INFO) << "Ack CreateDistArray";
+        }
+        break;
+      case Action::kDefineVar:
+        {
+          task_type_ = TaskType::kExecCppFunc;
+          DefineVar();
+          action_ = Action::kNone;
         }
         break;
       case Action::kExit:
@@ -465,6 +465,7 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         LOG(FATAL) << "unknown";
     }
   }
+  LOG(INFO) << __func__ << " done";
   return ret;
 }
 
@@ -493,6 +494,7 @@ Executor::HandleMasterMsg() {
       break;
     case message::Type::kExecutorStop:
       {
+        LOG(INFO) << "master commands stop!";
         action_ = Action::kExit;
         ret = EventHandler<PollConn>::kClearOneMsg | EventHandler<PollConn>::kExit;
       }
@@ -562,6 +564,11 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
                 action_ = Action::kTextFileLoadAck;
               }
               break;
+            case TaskLabel::kDefineVar:
+              {
+                action_ = Action::kExecutorAck;
+              }
+              break;
             default:
               LOG(FATAL) << "unknown task label";
           }
@@ -585,24 +592,6 @@ Executor::HandleExecuteMsg() {
   auto msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
   int ret = EventHandler<PollConn>::kClearOneMsg;
   switch (msg_type) {
-    case message::ExecuteMsgType::kExecuteCode:
-      {
-        auto* msg = message::ExecuteMsgHelper::get_msg<
-          message::ExecuteMsgExecuteCode>(recv_buff);
-        size_t expected_size = msg->task_size;
-        bool received_next_msg
-            = ReceiveArbitraryBytes(master_.sock, &recv_buff,
-                                    &master_recv_byte_buff_,
-                                    expected_size);
-        if (received_next_msg) {
-          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kExecuteCode;
-        } else {
-          ret = EventHandler<PollConn>::kNoAction;
-          action_ = Action::kNone;
-        }
-      }
-      break;
     case message::ExecuteMsgType::kEvalExpr:
       {
         auto* msg = message::ExecuteMsgHelper::get_msg<
@@ -658,6 +647,22 @@ Executor::HandleExecuteMsg() {
           message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgCreateDistArrayAck>(
               &send_buff_, dist_array_id);
 
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::ExecuteMsgType::kDefineVar:
+      {
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgDefineVar>(recv_buff);
+        size_t expected_size = msg->var_info_size;
+        bool received_next_msg =
+            ReceiveArbitraryBytes(master_.sock,
+                                  &recv_buff,
+                                  &master_recv_byte_buff_,
+                                  expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kDefineVar;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -770,22 +775,6 @@ Executor::Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn) {
 }
 
 void
-Executor::ExecuteCode() {
-  LOG(INFO) << __func__;
-  std::string task_str(
-      reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
-      master_recv_byte_buff_.GetSize());
-  task::ExecuteCode execute;
-  execute.ParseFromString(task_str);
-  LOG(INFO) << execute.code();
-
-  exec_julia_code_task_.result_type = static_cast<type::PrimitiveType>(
-      execute.result_type());
-  exec_julia_code_task_.code = execute.code();
-  julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_julia_code_task_));
-}
-
-void
 Executor::EvalExpr() {
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
@@ -793,8 +782,6 @@ Executor::EvalExpr() {
   task::EvalExpr eval_expr_task;
   eval_expr_task.ParseFromString(task_str);
   eval_julia_expr_task_.serialized_expr = eval_expr_task.serialized_expr();
-  eval_julia_expr_task_.result_type = static_cast<type::PrimitiveType>(
-      eval_expr_task.result_type());
   eval_julia_expr_task_.module = static_cast<JuliaModule>(
       eval_expr_task.module());
   julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&eval_julia_expr_task_));
@@ -858,6 +845,28 @@ Executor::CreateDistArray() {
       LOG(FATAL) << "unknown!" << static_cast<int>(parent_type);
   }
 
+}
+
+void
+Executor::DefineVar() {
+  LOG(INFO) << "Executor " << __func__;
+  std::string task_str(
+      reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
+      master_recv_byte_buff_.GetSize());
+
+  task::DefineVar define_var_task;
+  define_var_task.ParseFromString(task_str);
+
+  std::string var_name = define_var_task.var_name();
+  std::string var_value = define_var_task.var_value();
+  auto cpp_func = std::bind(
+      JuliaEvaluator::StaticDefineVar,
+      std::placeholders::_1,
+      var_name,
+      var_value);
+  exec_cpp_func_task_.func = cpp_func;
+  exec_cpp_func_task_.label = TaskLabel::kDefineVar;
+  julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
 }
 
 }

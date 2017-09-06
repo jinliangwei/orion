@@ -61,33 +61,24 @@ extern "C" {
   void orion_init(
       const char *master_ip,
       uint16_t master_port,
-      size_t comm_buff_capacity) {
+      size_t comm_buff_capacity,
+      size_t num_executors) {
     orion::bosen::DriverConfig driver_config(
         master_ip, master_port,
-        comm_buff_capacity);
+        comm_buff_capacity,
+        num_executors);
     driver = new orion::bosen::Driver(driver_config);
     driver->ConnectToMaster();
   }
 
-  void orion_execute_code_on_one(
-    int32_t executor_id,
-    const char* code,
-    int result_type,
-    void *result_buff) {
-    auto cast_result_type = static_cast<orion::bosen::type::PrimitiveType>(result_type);
-    driver->ExecuteCodeOnOne(executor_id, code,
-                             cast_result_type, result_buff);
-  }
-
-  void orion_call_func_on_one(
+  const uint8_t* orion_call_func_on_one(
       int32_t executor_id,
       const char *function_name,
       const TableDep *deps,
       size_t num_deps,
       int repetition,
       size_t num_iterations,
-      int result_type,
-      void *result_buff) { }
+      size_t *result_size) { return nullptr; }
 
   void orion_create_dist_array(
       int32_t id,
@@ -117,18 +108,22 @@ extern "C" {
         dims);
   }
 
-  void orion_eval_expr_on_all(
+  jl_value_t* orion_eval_expr_on_all(
       const uint8_t* expr,
       size_t expr_size,
-      int32_t result_type,
-      int32_t module,
-      void *result_buff) {
-    driver->EvalExprOnAll(
+      int32_t module) {
+    return driver->EvalExprOnAll(
         expr,
         expr_size,
-        static_cast<orion::bosen::type::PrimitiveType>(result_type),
-        static_cast<orion::bosen::JuliaModule>(module),
-        result_buff);
+        static_cast<orion::bosen::JuliaModule>(module));
+  }
+
+  void orion_define_var(
+      const char *var_name,
+      const uint8_t *var_value,
+      size_t value_size) {
+    driver->DefineVariable(
+        var_name, var_value, value_size);
   }
 
   void orion_stop() {

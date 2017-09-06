@@ -47,7 +47,7 @@ are as follows:
 
 function ast_walk(ast::Any, callback::Function, cbdata::Any)
     @dprintln(0, "ast_walk called")
-    from_expr(ast, 1, callback, cbdata, 0, false, true)
+    from_expr(ast, 1, callback, cbdata, 0, false, true, false)
 end
 
 function from_expr(ast::Any,
@@ -56,12 +56,13 @@ function from_expr(ast::Any,
                    cbdata::Any,
                    top_level_number,
                    is_top_level::Bool,
-                   read::Bool)
+                   read::Bool,
+                   is_called::Bool = false)
     @dprintln(2, "from_expr depth = ", depth, ",  AST: ", ast)
     # For each AST node, we first call the user-provided callback to see if they
     # want to do something with the node.
     # this is the only place where callback is called
-    ret = callback(ast, cbdata, top_level_number, is_top_level, read)
+    ret = callback(ast, cbdata, top_level_number, is_top_level, read, is_called)
     @dprintln(2, "callback ret = ", ret)
     if ret != AST_WALK_RECURSE && ret != AST_WALK_RECURSE_DUPLICATE
         return ret
@@ -120,6 +121,17 @@ function from_expr_helper(ast::Expr,
         args[2] = from_expr(args[2], depth, callback, cbdata, top_level_number,
                             false, read)
     elseif head == :line
+    elseif head == :call
+        args[1] = from_expr(args[1], depth + 1, callback, cbdata, top_level_number,
+                            false, read, true)
+        for i = 2:length(args)
+            args[i] = from_expr(args[i], depth + 1, callback, cbdata, top_level_number,
+                                false, read, false)
+        end
     end
+    ast.head = head
+    ast.args = args
+    ast.typ = typ
+    return ast
 end
 end

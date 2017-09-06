@@ -2,7 +2,12 @@ function get_vars_visit(expr::Any,
                         scope_context::ScopeContext,
                         top_level::Integer,
                         is_top_level::Bool,
-                        read::Bool)
+                        read::Bool,
+                        is_called::Bool = false)
+    #println("visit ", expr)
+    if is_called
+        return
+    end
     if isa(expr, Symbol)
         if expr == Symbol("@accumulator") ||
             expr == Symbol("@parallel_for") ||
@@ -14,6 +19,7 @@ function get_vars_visit(expr::Any,
         if !read
             info.is_modified = true
         end
+        #println("add symbol ", expr)
         add_var!(scope_context, expr, info)
         return
     end
@@ -83,6 +89,9 @@ function get_vars_visit(expr::Any,
        end
         return AstWalk.AST_WALK_RECURSE
     elseif expr.head == :call
+        #println("get :call ")
+        #dump(expr)
+        return AstWalk.AST_WALK_RECURSE
     elseif expr.head == :ref
     end
 end

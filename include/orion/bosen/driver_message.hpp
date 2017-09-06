@@ -17,39 +17,14 @@ struct DriverMsgStop {
   static constexpr DriverMsgType get_type() { return DriverMsgType::kStop; }
 };
 
-struct DriverMsgExecuteCodeOnOne {
-  int32_t executor_id;
-  size_t task_size;
- private:
-  DriverMsgExecuteCodeOnOne() = default;
-  friend class DefaultMsgCreator;
- public:
-  void Init(int32_t _executor_id) {
-    executor_id = _executor_id;
-  }
-  static constexpr DriverMsgType get_type() {
-    return DriverMsgType::kExecuteCodeOnOne; }
-};
-
-struct DriverMsgExecuteCodeOnAll {
-  size_t task_size;
- private:
-  DriverMsgExecuteCodeOnAll() = default;
-  friend class DefaultMsgCreator;
- public:
-  void Init() { }
-  static constexpr DriverMsgType get_type() {
-    return DriverMsgType::kExecuteCodeOnAll; }
-};
-
 struct DriverMsgMasterResponse {
   size_t result_bytes;
  private:
   DriverMsgMasterResponse() = default;
   friend class DefaultMsgCreator;
  public:
-  void Init(size_t _result_bytes) {
-    result_bytes = _result_bytes;
+  void Init(size_t _result_size) {
+    result_bytes = _result_size;
   }
   static constexpr DriverMsgType get_type() {
     return DriverMsgType::kMasterResponse;
@@ -81,6 +56,20 @@ struct DriverMsgEvalExpr {
   }
   static constexpr DriverMsgType get_type() {
     return DriverMsgType::kEvalExpr;
+  }
+};
+
+struct DriverMsgDefineVar {
+  size_t var_info_size;
+ private:
+  DriverMsgDefineVar() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _var_info_size) {
+    var_info_size = _var_info_size;
+  }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kDefineVar;
   }
 };
 

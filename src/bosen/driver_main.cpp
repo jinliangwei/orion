@@ -13,6 +13,8 @@ DEFINE_int32(master_port, 10000,
              "incoming connections");
 DEFINE_uint64(comm_buff_capacity, 1024 * 4, "communication buffer capacity");
 
+DEFINE_uint64(num_executors, 1, "number of executors");
+
 DEFINE_string(lib_path, "", "orion library path");
 
 int
@@ -24,13 +26,12 @@ main(int argc, char* argv[]) {
 
   orion::bosen::DriverConfig driver_config(
       FLAGS_master_ip.c_str(), FLAGS_master_port,
-      FLAGS_comm_buff_capacity);
+      FLAGS_comm_buff_capacity, FLAGS_num_executors);
 
   orion::bosen::Driver driver(driver_config);
   driver.ConnectToMaster();
-  double ret;
-  auto result_type = orion::bosen::type::PrimitiveType::kFloat64;
-  driver.ExecuteCodeOnOne(0, "sqrt(2.0)", result_type, &ret);
+  //auto result_type = orion::bosen::type::PrimitiveType::kFloat64;
+  //driver.ExecuteCodeOnOne(0, "sqrt(2.0)", result_type, &ret);
   driver.CreateDistArray(
       0,
       orion::bosen::task::TEXT_FILE,

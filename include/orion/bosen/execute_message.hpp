@@ -7,19 +7,6 @@ namespace orion {
 namespace bosen {
 namespace message {
 
-struct ExecuteMsgExecuteCode {
-  size_t task_size;
- private:
-  ExecuteMsgExecuteCode() = default;
-  friend class DefaultMsgCreator;
- public:
-  void Init(size_t _task_size) {
-    task_size = _task_size;
-  }
-  static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kExecuteCode; }
-};
-
 struct ExecuteMsgJuliaEvalAck {
   JuliaTask *task;
  private:
@@ -119,6 +106,20 @@ struct ExecuteMsgCreateDistArrayAck {
   }
   static constexpr ExecuteMsgType get_type() {
     return ExecuteMsgType::kCreateDistArrayAck;
+  }
+};
+
+struct ExecuteMsgDefineVar {
+  size_t var_info_size;
+ private:
+  ExecuteMsgDefineVar() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _var_info_size) {
+    var_info_size = _var_info_size;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kDefineVar;
   }
 };
 

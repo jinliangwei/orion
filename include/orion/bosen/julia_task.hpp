@@ -11,7 +11,8 @@ namespace bosen {
 
 enum class TaskLabel {
   kNone = 0,
-  kLoadDistArrayFromTextFile = 1
+    kLoadDistArrayFromTextFile = 1,
+    kDefineVar = 2
 };
 
 class JuliaEvaluator;
@@ -29,13 +30,6 @@ class ExecJuliaFuncTask : public JuliaTask {
   Blob result_buff;
 };
 
-class ExecJuliaCodeTask : public JuliaTask {
- public:
-  std::string code;
-  type::PrimitiveType result_type;
-  Blob result_buff;
-};
-
 class ExecCppFuncTask : public JuliaTask {
  public:
   std::function<void(JuliaEvaluator*)> func;
@@ -46,7 +40,6 @@ class ExecCppFuncTask : public JuliaTask {
 class EvalJuliaExprTask : public JuliaTask {
  public:
   std::string serialized_expr;
-  type::PrimitiveType result_type;
   JuliaModule module;
   Blob result_buff;
 };

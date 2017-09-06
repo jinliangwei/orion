@@ -33,6 +33,13 @@ BOSEN_PROTO_H := $(patsubst src/bosen/protobuf/%.proto,include/orion/bosen/%.pb.
 BOSEN_PROTO_OBJ := $(BOSEN_PROTO_SRC:.proto=.pb.o)
 BOSEN_PROTO := $(patsubst src/bosen/protobuf/%.proto,protobuf/%,$(BOSEN_PROTO_SRC))
 
+DRIVER_LIB_CPP := src/bosen/conn.cpp src/bosen/util.cpp
+DRIVER_LIB_C := src/bosen/driver_c.c
+
+DRIVER_LIB_OBJ := $(DRIVER_LIB_CPP:.cpp=_drlib.o)
+DRIVER_LIB_PROTO_OBJ := $(BOSEN_PROTO_OBJ:.pb.o=_drlib.pb.o)
+DRIVER_LIB_COBJ := $(DRIVER_LIB_C:.c=_drlib.o)
+
 bosen_exe: $(BOSEN_MAIN_EXE)
 bosen_test: $(BOSEN_TEST_EXE)
 bosen_proto: $(BOSEN_PROTO_CPP)
@@ -45,6 +52,15 @@ $(BOSEN_OBJ): %.o: %.cpp deps $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
 
 $(BOSEN_COBJ): %.o: %.c deps $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
 	$(CXX) $(CFLAGS) $(SANITIZER_FLAGS) -c $< -o $@
+
+$(DRIVER_LIB_OBJ): %_drlib.o: %.cpp deps $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
+	$(CXX) $(CFLAGS) -c $< -o $@
+
+$(DRIVER_LIB_PROTO_OBJ): %_drlib.pb.o: %.pb.cc %.pb.h deps $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
+	$(CXX) $(CFLAGS) -c $< -o $@
+
+$(DRIVER_LIB_COBJ): %_drlib.o: %.c deps $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
+	$(CXX) $(CFLAGS) -c $< -o $@
 
 $(BOSEN_PROTO_OBJ): src/bosen/protobuf/%.o: src/bosen/protobuf/%.cc src/bosen/protobuf/%.h
 	$(CXX) $(CFLAGS) $(SANITIZER_FLAGS) -I$(ORION_HOME)/include/orion/bosen -c $< -o $@

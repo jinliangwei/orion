@@ -22,4 +22,5 @@ include("translate_stmt.jl")
 include("codegen.jl")
 include("debug.jl")
 include("ast_walk.jl")
+include("evaluate.jl")
 end

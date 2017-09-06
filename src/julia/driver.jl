@@ -1,23 +1,22 @@
 export helloworld, local_helloworld, glog_init
 
-using Sugar
-
-function module_to_int32(m::Module)::Int32
+function module_to_int32(m::Symbol)::Int32
     local ret = -1
-    if m == Core
+    println(m)
+    if m == :Core
         ptr_val = cglobal((:ORION_JULIA_MODULE_CORE, lib_path), Int32)
         ret = unsafe_load(ptr_val)
-    elseif m == Base
+    elseif m == :Base
         ptr_val = cglobal((:ORION_JULIA_MODULE_BASE, lib_path), Int32)
         ret = unsafe_load(ptr_val)
-    elseif m == Main
+    elseif m == :Main
         ptr_val = cglobal((:ORION_JULIA_MODULE_MAIN, lib_path), Int32)
         ret = unsafe_load(ptr_val)
-    elseif m == OrionGen
+    elseif m == :OrionGen
         ptr_val = cglobal((:ORION_JULIA_MODULE_ORION_GEN, lib_path), Int32)
         ret = unsafe_load(ptr_val)
     else
-        error("Unknown module", m)
+        error("Unknown module ", m)
     end
     return ret
 end
@@ -37,10 +36,11 @@ end
 function init(
     master_ip::AbstractString,
     master_port::Integer,
-    comm_buff_capacity::Integer)
+    comm_buff_capacity::Integer,
+    num_executors::Integer)
     ccall((:orion_init, lib_path),
-          Void, (Cstring, UInt16, UInt64), master_ip, master_port,
-          comm_buff_capacity)
+          Void, (Cstring, UInt16, UInt64, UInt64), master_ip, master_port,
+          comm_buff_capacity, num_executors)
 end
 
 function execute_code(
@@ -103,19 +103,43 @@ function data_type_to_int32(ResultType::DataType)::Int32
     return ret
 end
 
-function eval_expr_on_all(ex::Expr, ResultType::DataType, eval_module::Module)
+function eval_expr_on_all(ex, eval_module::Symbol)
     buff = IOBuffer()
     serialize(buff, ex)
     buff_array = takebuf_array(buff)
-    result_buff = Array{ResultType}(1)
-    ccall((:orion_eval_expr_on_all, lib_path),
-          Void, (Ptr{UInt8}, UInt64, Int32, Int32, Ptr{Void}),
-          buff_array, length(buff_array),
-          data_type_to_int32(ResultType),
-          module_to_int32(eval_module),
-          result_buff);
+    result_array = ccall((:orion_eval_expr_on_all, lib_path),
+                         Any, (Ref{UInt8}, UInt64, Int32),
+                         buff_array, length(buff_array),
+                         module_to_int32(eval_module))
+    #result_array = Base.cconvert(Array{Array{UInt8}}, result_bytes)
+
+    println("result type = ", typeof(result_array),
+            " length = ", length(result_array))
+    #println("result = ", result_array[1])
 end
 
 function create_accumulator(var::Symbol)
     println("created accumulator variable ", string(var))
+end
+
+function define_var(var::Symbol)
+    @assert isdefined(current_module(), var)
+    value = eval(current_module(), var)
+    typ = typeof(eval(current_module(), var))
+    println("define variable ", var,
+            " value = ", value,
+            " type = ", typ)
+
+    buff = IOBuffer()
+    serialize(buff, value)
+    buff_array = takebuf_array(buff)
+    ccall((:orion_define_var, lib_path),
+          Void, (Cstring, Ptr{UInt8}, UInt64),
+          string(var), buff_array, length(buff_array))
+end
+
+function define_var(var_set::Set{Symbol})
+    for var in var_set
+        define_var(var)
+    end
 end

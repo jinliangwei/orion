@@ -70,12 +70,11 @@ class MasterThread {
     kNone = 0,
       kExit = 1,
       kExecutorConnectToPeers = 2,
-      kExecuteCodeOnOne = 3,
-      kExecuteCodeOnAll = 4,
       kEvalExpr = 5,
       kCreateDistArray = 6,
       kRespondToDriver = 7,
-      kWaitingExecutorResponse = 10
+      kDefineVar = 8,
+      kWaitingExecutorResponse = 40
   };
 
   const size_t kNumExecutors;
@@ -104,7 +103,7 @@ class MasterThread {
 
   size_t num_expected_executor_acks_ {0};
   size_t num_recved_executor_acks_ {0};
-  size_t expected_response_size_per_executor_ {0};
+  size_t accum_result_size_ {0};
 
   Blob send_mem_;
   conn::SendBuffer send_buff_;
@@ -303,23 +302,6 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           action_ = Action::kWaitingExecutorResponse;
         }
         break;
-      case Action::kExecuteCodeOnOne:
-        {
-          message::ExecuteMsgHelper::CreateMsg<
-            message::ExecuteMsgExecuteCode>(
-                &send_buff_, driver_recv_byte_buff_.GetSize());
-          send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
-                                      driver_recv_byte_buff_.GetSize());
-          SendToExecutor(executor_in_action_);
-          send_buff_.reset_sent_sizes();
-          send_buff_.clear_to_send();
-
-          num_expected_executor_acks_ = 1;
-          num_recved_executor_acks_ = 0;
-
-          action_ = Action::kWaitingExecutorResponse;
-        }
-        break;
       case Action::kEvalExpr:
         {
           message::ExecuteMsgHelper::CreateMsg<
@@ -364,26 +346,44 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           action_ = Action::kWaitingExecutorResponse;
         }
         break;
+      case Action::kDefineVar:
+        {
+          message::ExecuteMsgHelper::CreateMsg<
+            message::ExecuteMsgDefineVar>(
+                &send_buff_, driver_recv_byte_buff_.GetSize());
+          send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
+                                      driver_recv_byte_buff_.GetSize());
+          LOG(INFO) << "send buff size = " << send_buff_.get_size();
+          BroadcastToAllExecutors();
+          send_buff_.clear_to_send();
+          num_expected_executor_acks_ = kNumExecutors;
+          num_recved_executor_acks_ = 0;
+
+          action_ = Action::kWaitingExecutorResponse;
+        }
+        break;
       case Action::kRespondToDriver:
         {
-          message::DriverMsgHelper::CreateMsg<message::DriverMsgMasterResponse>(
-              &send_buff_,
-              expected_response_size_per_executor_*num_recved_executor_acks_);
-
-          if (expected_response_size_per_executor_ > 0) {
+          auto *msg = message::DriverMsgHelper::CreateMsg<message::DriverMsgMasterResponse>(
+              &send_buff_, accum_result_size_);
+          LOG(INFO) << "accum_result_size = " << accum_result_size_;
+          if (accum_result_size_ > 0) {
             if (num_expected_executor_acks_ == kNumExecutors) {
-              ConstructDriverResponse(-1, expected_response_size_per_executor_);
+              ConstructDriverResponse(-1, accum_result_size_);
             } else {
-              ConstructDriverResponse(executor_in_action_, expected_response_size_per_executor_);
+              ConstructDriverResponse(executor_in_action_,
+                                      accum_result_size_);
             }
             send_buff_.set_next_to_send(driver_send_byte_buff_.GetBytes(),
                                         driver_send_byte_buff_.GetSize());
+            msg->result_bytes += sizeof(size_t)*num_expected_executor_acks_;
           }
 
           SendToDriver();
           send_buff_.reset_sent_sizes();
           send_buff_.clear_to_send();
           action_ = Action::kNone;
+          accum_result_size_ = 0;
         }
         break;
       case Action::kExit:
@@ -408,25 +408,10 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
   switch (driver_msg_type) {
     case message::DriverMsgType::kStop:
       {
+        LOG(INFO) << "Driver commands stop!";
         message::Helper::CreateMsg<message::ExecutorStop>(&send_buff_);
         BroadcastToAllExecutors();
         stopped_all_ = true;
-      }
-      break;
-    case message::DriverMsgType::kExecuteCodeOnOne:
-      {
-        auto *msg = message::DriverMsgHelper::get_msg<
-            message::DriverMsgExecuteCodeOnOne>(recv_buff);
-        size_t expected_size = msg->task_size;
-        bool received_next_msg
-            = ReceiveArbitraryBytes(driver_.sock, &recv_buff,
-                                    &driver_recv_byte_buff_,
-                                    expected_size);
-        if (received_next_msg) {
-          executor_in_action_ = msg->executor_id;
-          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kExecuteCodeOnOne;
-        } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
     case message::DriverMsgType::kEvalExpr:
@@ -458,6 +443,23 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kCreateDistArray;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::DriverMsgType::kDefineVar:
+      {
+        LOG(INFO) << "master received DefineVarMsg";
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgDefineVar>(recv_buff);
+        size_t expected_size = msg->var_info_size;
+        bool received_next_msg
+            = ReceiveArbitraryBytes(driver_.sock, &recv_buff,
+                                    &driver_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          executor_in_action_ = -1;
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kDefineVar;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -542,14 +544,15 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
           if (received_next_msg) {
             ret = EventHandler<PollConn>::kClearOneAndNextMsg;
             num_recved_executor_acks_++;
+            accum_result_size_ += expected_size;
           }
         } else {
           num_recved_executor_acks_++;
           ret = EventHandler<PollConn>::kClearOneMsg;
+          accum_result_size_ = 0;
         }
 
         if (num_recved_executor_acks_ == num_expected_executor_acks_) {
-          expected_response_size_per_executor_ = expected_size;
           action_ = Action::kRespondToDriver;
         }
       }
@@ -593,7 +596,6 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
             send_buff_.clear_to_send();
             action_ = Action::kNone;
           } else {
-            expected_response_size_per_executor_ = 0;
             action_ = Action::kRespondToDriver;
           }
         }
@@ -636,20 +638,25 @@ MasterThread::ConstructDriverResponse(int32_t executor_id,
   if (result_size == 0) return;
   LOG(INFO) << __func__;
   if (executor_id < 0) {
-    driver_send_byte_buff_.Reset(kNumExecutors*result_size);
+    driver_send_byte_buff_.Reset(result_size + sizeof(size_t)*kNumExecutors);
     for (auto &byte_buff_iter : executor_byte_buff_) {
-      memcpy(driver_send_byte_buff_.GetAvailMem(),
+      *reinterpret_cast<size_t*>(driver_send_byte_buff_.GetAvailMem())
+          = byte_buff_iter.second.GetSize();
+
+      memcpy(driver_send_byte_buff_.GetAvailMem() + sizeof(size_t),
              byte_buff_iter.second.GetBytes(),
              byte_buff_iter.second.GetSize());
-      driver_send_byte_buff_.IncSize(byte_buff_iter.second.GetSize());
+      driver_send_byte_buff_.IncSize(byte_buff_iter.second.GetSize() + sizeof(size_t));
     }
   } else {
     auto &byte_buff = executor_byte_buff_.at(executor_id);
-    driver_send_byte_buff_.Reset(result_size);
-    memcpy(driver_send_byte_buff_.GetAvailMem(),
+    driver_send_byte_buff_.Reset(result_size + sizeof(size_t));
+    *reinterpret_cast<size_t*>(driver_send_byte_buff_.GetAvailMem())
+        = byte_buff.GetSize();
+    memcpy(driver_send_byte_buff_.GetAvailMem() + sizeof(size_t),
            byte_buff.GetBytes(),
            byte_buff.GetSize());
-    driver_send_byte_buff_.IncSize(byte_buff.GetSize());
+    driver_send_byte_buff_.IncSize(byte_buff.GetSize() + sizeof(size_t));
   }
 }
 
