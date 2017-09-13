@@ -108,6 +108,10 @@ extern "C" {
       const uint8_t *var_value,
       size_t value_size);
 
+  void orion_space_time_repartition_dist_array(
+      int32_t id,
+      const char *partition_func_name);
+
   void orion_stop();
 
   bool orion_glogconfig_set(const char* key, const char* value);

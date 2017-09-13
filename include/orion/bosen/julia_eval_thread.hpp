@@ -35,10 +35,12 @@ class JuliaEvalThread {
 
  private:
   void BlockNotifyExecutor(JuliaTask *task) {
+    LOG(INFO) << __func__;
     message::ExecuteMsgHelper::CreateMsg<
       message::ExecuteMsgJuliaEvalAck>(&send_buff_, task);
     bool sent = write_pipe_.Send(&send_buff_);
     if (sent) {
+      LOG(INFO) << "send done!";
       send_buff_.reset_sent_sizes();
       send_buff_.clear_to_send();
       return;
@@ -52,6 +54,7 @@ class JuliaEvalThread {
       CHECK(conn::Poll::EventConn<conn::Pipe>(es_, 0) == &write_pipe_);
       sent = write_pipe_.Send(&send_buff_);
     }
+    LOG(INFO) << "send done!";
     poll_.Remove(write_pipe_.get_write_fd());
     send_buff_.reset_sent_sizes();
     send_buff_.clear_to_send();

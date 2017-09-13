@@ -37,10 +37,11 @@ function init(
     master_ip::AbstractString,
     master_port::Integer,
     comm_buff_capacity::Integer,
-    num_executors::Integer)
+    _num_executors::Integer)
     ccall((:orion_init, lib_path),
           Void, (Cstring, UInt16, UInt64, UInt64), master_ip, master_port,
-          comm_buff_capacity, num_executors)
+          comm_buff_capacity, _num_executors)
+    global const num_executors = _num_executors
 end
 
 function execute_code(
@@ -115,7 +116,9 @@ function eval_expr_on_all(ex, eval_module::Symbol)
 
     println("result type = ", typeof(result_array),
             " length = ", length(result_array))
-    #println("result = ", result_array[1])
+    if length(result_array) > 0
+        println("typeof(result[1]) = ", typeof(result_array[1]))
+    end
 end
 
 function create_accumulator(var::Symbol)

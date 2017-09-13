@@ -1,3 +1,4 @@
+#pragma once
 #include <orion/bosen/conn.hpp>
 #include <functional>
 #include <glog/logging.h>
@@ -196,7 +197,8 @@ EventHandler<PollConn>::ReadAndRunReadEventHandler(PollConn* poll_conn_ptr) {
     bool recv = poll_conn_ptr->Receive();
     if (!recv) return false;
     if (recv_buff.is_eof()) return false;
-    CHECK (!recv_buff.is_error()) << "error during receiving " << errno;
+    CHECK (!recv_buff.is_error()) << "error during receiving " << errno
+                                  << " poll_conn_ptr = " << (void*) poll_conn_ptr;
     CHECK (!recv_buff.EOFAtIncompleteMsg()) << "error : early EOF";
   }
   return RunReadEventHandler(poll_conn_ptr);

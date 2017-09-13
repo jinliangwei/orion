@@ -12,7 +12,8 @@ namespace bosen {
 enum class TaskLabel {
   kNone = 0,
     kLoadDistArrayFromTextFile = 1,
-    kDefineVar = 2
+    kDefineVar = 2,
+    kComputeSpaceTimeRepartition = 3
 };
 
 class JuliaEvaluator;

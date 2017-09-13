@@ -73,6 +73,18 @@ struct DriverMsgDefineVar {
   }
 };
 
+struct DriverMsgSpaceTimeRepartitionDistArray {
+  size_t task_size;
+ private:
+  DriverMsgSpaceTimeRepartitionDistArray() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _task_size) { task_size = _task_size; }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kSpaceTimeRepartitionDistArray;
+  }
+};
+
 class DriverMsgHelper {
  public:
   template<typename Msg,

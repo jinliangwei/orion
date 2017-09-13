@@ -321,10 +321,19 @@ function transform_loop(expr::Expr, context::ScopeContext)
     println("broadcat list ", static_bc_var)
     define_var(static_bc_var)
 
-    partition_func_name = gen_unique_symbol()
-    partition_func = gen_partition_function(partition_func_name,
-                                            [(1,), (2,)], [(1,), (1,)])
-    eval_expr_on_all(partition_func, :OrionGen)
+    for curr_par_for_context in scope_context.par_for_context
+        iteration_space = curr_par_for_context.iteration_space
+        iteration_space_dist_array = eval(current_module(), iteration_space)
+        println(typeof(iteration_space_dist_array))
+        partition_func_name = gen_unique_symbol()
+        partition_func = gen_space_time_partition_function(partition_func_name,
+                                                [(1,), (2,)], [(1,), (1,)],
+                                                100, 100)
+        eval_expr_on_all(partition_func, :OrionGen)
+        space_time_repartition(iteration_space_dist_array,
+                               string(partition_func_name))
+    end
+
     #bc_expr_array = Array{Array{Expr, 1}, 1}()
 #    for dynamic_bc_var in dynamic_bc_var_array
 #        bc_expr_array = gen_stmt_broadcast_var(dynamic_bc_var)

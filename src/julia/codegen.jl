@@ -23,37 +23,46 @@ function gen_stmt_broadcast_var(var_set::Set{Symbol})::Array{Expr}
     return expr_array
 end
 
-function gen_partition_function(func_name::Symbol,
-                                dims::Array{Tuple{Int64}, 1},
-                                coeffs::Array{Tuple{Int64}, 1})
+function gen_space_time_partition_function(func_name::Symbol,
+                                           dims::Array{Tuple{Int64}, 1},
+                                           coeffs::Array{Tuple{Int64}, 1},
+                                           tile_length::Int64,
+                                           tile_width::Int64)
     @assert length(dims) == 2
     @assert length(coeffs) == 2
-    partition_key_1 = Expr(:call, :+, 0)
+    space_partition_id = Expr(:call, :+, 0)
     for i = 1:length(dims[1])
-        push!(partition_key_1.args,
+        push!(space_partition_id.args,
               :(dim_keys[$(dims[1][i])] * $(coeffs[1][i])))
     end
+    space_partition_id = Expr(:call, :fld, space_partition_id, tile_length)
 
-    partition_key_2 = Expr(:call, :+, 0)
+    time_partition_id = Expr(:call, :+, 0)
     for i = 1:length(dims[2])
-        push!(partition_key_2.args,
+        push!(time_partition_id.args,
               :(dim_keys[$(dims[2][i])] * $(coeffs[2][i])))
     end
+    time_partition_id = Expr(:call, :fld, time_partition_id, tile_width)
 
-    push_pk1_stmt = :(push!(results, $(partition_key_1)))
-    push_pk2_stmt = :(push!(results, $(partition_key_2)))
+    add_space_partition_id_stmt = :(results[2 * i - 1] = $(space_partition_id))
+    add_time_partition_id_stmt = :(results[2 * i] = $(time_partition_id))
 
     partition_func = :(
-        function $func_name(keys::Array{Int64, 1}, dims::Array{Int64, 1})
-           results = []
-            rev_dims = reverse(dims)
-            for key in keys
-              dim_keys = OrionWorker.from_int64_to_keys(key, rev_dims)
-              $push_pk1_stmt
-              $push_pk2_stmt
-            end
-            return results
-          end)
+        function $func_name(keys::Array{Int64, 1},
+                            dims::Array{Int64, 1},
+                            results::Array{Int32, 1})
+          rev_dims = reverse(dims)
+          println("keys.size() = ", length(keys),
+                " typeof(OrionWorker) = ", typeof(OrionWorker))
+          i = 1
+          for key in keys
+            #println(key)
+            dim_keys = OrionWorker.from_int64_to_keys(key, rev_dims)
+            $add_space_partition_id_stmt
+            $add_time_partition_id_stmt
+            i += 1
+          end
+        end)
 
     return partition_func
 end

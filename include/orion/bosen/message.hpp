@@ -101,7 +101,8 @@ enum class DriverMsgType {
     kMap = 7,
     kShuffle = 8,
     kMasterResponse = 9,
-    kDefineVar = 10
+    kDefineVar = 10,
+    kSpaceTimeRepartitionDistArray = 11
 };
 
 struct DriverMsg {
@@ -119,13 +120,14 @@ static_assert(std::is_pod<DriverMsg>::value,
 
 enum class ExecuteMsgType {
     kJuliaEvalAck = 2,
-    kEvalExpr = 3,
     kCreateDistArray = 4,
     kTextFileLoadAck = 5,
     kDistArrayDims = 6,
     kCreateDistArrayAck = 7,
-    kDefineVar = 8,
-    kExecutorAck = 10
+      kSpaceTimeRepartitionDistArrayData = 8,
+      kSpaceTimeRepartitionDistArrayRecved = 9,
+      kExecutorAck = 10,
+      kPeerRecvStop = 11
 };
 
 struct ExecuteMsg {

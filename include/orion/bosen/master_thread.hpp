@@ -4,6 +4,8 @@
 #include <iostream>
 #include <vector>
 #include <functional>
+#include <glog/logging.h>
+
 #include <unordered_map>
 #include <orion/bosen/task.pb.h>
 #include <orion/bosen/config.hpp>
@@ -70,10 +72,9 @@ class MasterThread {
     kNone = 0,
       kExit = 1,
       kExecutorConnectToPeers = 2,
-      kEvalExpr = 5,
+      kForwardDriverMsgToAll = 3,
       kCreateDistArray = 6,
       kRespondToDriver = 7,
-      kDefineVar = 8,
       kWaitingExecutorResponse = 40
   };
 
@@ -302,11 +303,10 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           action_ = Action::kWaitingExecutorResponse;
         }
         break;
-      case Action::kEvalExpr:
+      case Action::kForwardDriverMsgToAll:
         {
-          message::ExecuteMsgHelper::CreateMsg<
-            message::ExecuteMsgEvalExpr>(
-                &send_buff_, driver_recv_byte_buff_.GetSize());
+          LOG(INFO) << "forwarding to workers";
+          send_buff_.Copy(driver_poll_conn_.conn->recv_buff);
           send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
                                       driver_recv_byte_buff_.GetSize());
           BroadcastToAllExecutors();
@@ -342,22 +342,6 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
               std::piecewise_construct,
               std::forward_as_tuple(id),
               std::forward_as_tuple(num_dims));
-
-          action_ = Action::kWaitingExecutorResponse;
-        }
-        break;
-      case Action::kDefineVar:
-        {
-          message::ExecuteMsgHelper::CreateMsg<
-            message::ExecuteMsgDefineVar>(
-                &send_buff_, driver_recv_byte_buff_.GetSize());
-          send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
-                                      driver_recv_byte_buff_.GetSize());
-          LOG(INFO) << "send buff size = " << send_buff_.get_size();
-          BroadcastToAllExecutors();
-          send_buff_.clear_to_send();
-          num_expected_executor_acks_ = kNumExecutors;
-          num_recved_executor_acks_ = 0;
 
           action_ = Action::kWaitingExecutorResponse;
         }
@@ -398,7 +382,8 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
 int
 MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
   CHECK(action_ == Action::kNone)
-      << "currently have a task in hand and can't handle any driver message!";
+      << "currently have a task in hand and can't handle any driver message! "
+      << " action = " << static_cast<int>(action_);
   auto &recv_buff = poll_conn_ptr->get_recv_buff();
   auto msg_type = message::Helper::get_type(recv_buff);
   CHECK(msg_type == message::Type::kDriverMsg);
@@ -419,13 +404,17 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         auto *msg = message::DriverMsgHelper::get_msg<
             message::DriverMsgEvalExpr>(recv_buff);
         size_t expected_size = msg->ast_size;
+        LOG(INFO) << "received EvalExpr from driver, expected_size = "
+                   << expected_size;
+
         bool received_next_msg
             = ReceiveArbitraryBytes(driver_.sock, &recv_buff, &driver_recv_byte_buff_,
                                     expected_size);
         if (received_next_msg) {
+          LOG(INFO) << "msg receive is completed";
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kEvalExpr;
+          action_ = Action::kForwardDriverMsgToAll;
         } else ret = EventHandler<PollConn>::kNoAction;
 
       }
@@ -459,7 +448,23 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         if (received_next_msg) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kDefineVar;
+          action_ = Action::kForwardDriverMsgToAll;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::DriverMsgType::kSpaceTimeRepartitionDistArray:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgSpaceTimeRepartitionDistArray>(recv_buff);
+        size_t expected_size = msg->task_size;
+        bool received_next_msg
+            = ReceiveArbitraryBytes(driver_.sock, &recv_buff,
+                                    &driver_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          executor_in_action_ = -1;
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kForwardDriverMsgToAll;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;

@@ -20,6 +20,7 @@ class ByteBuffer {
   void IncSize(size_t size);
   uint8_t* GetBytes();
   size_t GetSize() const;
+  size_t GetCapacity() const;
 };
 
 ByteBuffer::ByteBuffer() { }
@@ -34,7 +35,7 @@ void
 ByteBuffer::Reset(size_t capacity) {
   size_ = 0;
   buff_.clear();
-  buff_.reserve(capacity);
+  buff_.resize(capacity);
 }
 
 uint8_t*
@@ -50,6 +51,11 @@ ByteBuffer::IncSize(size_t size) {
 size_t
 ByteBuffer::GetSize() const {
   return size_;
+}
+
+size_t
+ByteBuffer::GetCapacity() const {
+  return buff_.size();
 }
 
 }

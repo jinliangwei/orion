@@ -131,6 +131,7 @@ class Driver {
     event_handler_.SetClosedConnectionHandler(
       std::bind(&Driver::HandleClosedConnection, this,
                std::placeholders::_1));
+    jl_init(NULL);
   }
   ~Driver() { }
 
@@ -179,6 +180,10 @@ class Driver {
   void DefineVariable(const char *var_name,
                       const uint8_t *var_value,
                       size_t value_size);
+
+  void SpaceTimeRepartitionDistArray(
+      int32_t id,
+      const char *partition_func_name);
 
   void Stop();
 };
@@ -300,10 +305,12 @@ Driver::EvalExprOnAll(
   task::EvalExpr eval_expr_task;
   eval_expr_task.set_serialized_expr(
       std::string(reinterpret_cast<const char*>(expr), expr_size));
+  LOG(INFO) << __func__ << " module = " << static_cast<int32_t>(module);
   eval_expr_task.set_module(static_cast<int32_t>(module));
   eval_expr_task.SerializeToString(&msg_buff_);
   message::DriverMsgHelper::CreateMsg<message::DriverMsgEvalExpr>(
       &master_.send_buff, msg_buff_.size());
+  LOG(INFO) << "eval task size = " << msg_buff_.size();
   master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
   BlockSendToMaster();
   master_.send_buff.clear_to_send();
@@ -342,7 +349,12 @@ Driver::EvalExprOnAll(
       serialized_result_buff = jl_call1(io_buffer_func,
                                         reinterpret_cast<jl_value_t*>(serialized_result_array));
       deserialized_result = jl_call1(deserialize_func, serialized_result_buff);
+      if (jl_exception_occurred()) {
+        jl_exception_clear();
+        continue;
+      }
       jl_array_ptr_1d_push(reinterpret_cast<jl_array_t*>(result_array), deserialized_result);
+      LOG(INFO) << "pushed 1 object " << (void*) deserialized_result;
       cursor += curr_result_size + sizeof(size_t);
     }
     JL_GC_POP();
@@ -470,6 +482,31 @@ Driver::DefineVariable(const char *var_name,
   define_var_task.set_var_value(var_value, value_size);
   define_var_task.SerializeToString(&msg_buff_);
   message::DriverMsgHelper::CreateMsg<message::DriverMsgDefineVar>(
+      &master_.send_buff, msg_buff_.size());
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  LOG(INFO) << "waiting from master";
+  received_from_master_ = false;
+  BlockRecvFromMaster();
+  LOG(INFO) << "waiting done";
+  message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  master_recv_temp_buff_.ClearOneMsg();
+}
+
+void
+Driver::SpaceTimeRepartitionDistArray(
+    int32_t id,
+    const char *partition_func_name) {
+  task::SpaceTimeRepartitionDistArray repartition_dist_array_task;
+  repartition_dist_array_task.set_id(id);
+  repartition_dist_array_task.set_partition_func_name(partition_func_name);
+  repartition_dist_array_task.SerializeToString(&msg_buff_);
+
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgSpaceTimeRepartitionDistArray>(
       &master_.send_buff, msg_buff_.size());
   master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
   BlockSendToMaster();

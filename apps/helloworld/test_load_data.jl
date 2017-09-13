@@ -10,7 +10,7 @@ Orion.helloworld()
 const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 4
+const num_executors = 2
 
 # initialize logging of the runtime library
 Orion.glog_init()
@@ -34,33 +34,14 @@ end
 
 ratings = Orion.text_file(data_path, parse_line)
 Orion.materialize(ratings)
-dim_x, dim_y = size(ratings)
 
-println((dim_x, dim_y))
+Orion.define_var(:step_size)
 
-W = Orion.rand(dim_x, K)
-H = Orion.rand(dim_y, K)
-Orion.materialize(W)
-Orion.materialize(H)
-
-Orion.@transform for i = 1:num_iterations
-    Orion.@parallel_for for rating in ratings
-	x_idx = rating[1] + 1
-	y_idx = rating[2] + 1
-	rv = rating[3]
-
-        W_row = W[x_idx, :]
-	H_row = H[y_idx, :]
-	pred = dot(W_row, H_row)
-	diff = rv - pred
-	W_grad = -2 * diff .* H_row
-	H_grad = -2 * diff .* W_row
-	W[x_idx, :] = W_row - step_size .* W_grad
-	H[y_idx, :] = H_row - step_size .*H_grad
-    end
-end
-
-#H.save_as_text_file("/home/ubuntu/model/H")
-#W.save_as_text_file("/home/ubuntu/model/W")
+partition_func_name = Orion.gen_unique_symbol()
+partition_func = Orion.gen_space_time_partition_function(partition_func_name,
+                                                         [(1,), (2,)], [(1,), (1,)],
+                                                         100, 100)
+Orion.eval_expr_on_all(partition_func, :OrionGen)
+Orion.space_time_repartition(ratings, string(partition_func_name))
 
 Orion.stop()

@@ -3,7 +3,7 @@ AR = ar
 CC = gcc
 CXX = g++-5 -std=c++14
 
-ifeq (@JULIA_HOMW@,)
+ifeq (@JULIA_HOME@,)
 $(error JULIA_HOME is not set)
 endif
 

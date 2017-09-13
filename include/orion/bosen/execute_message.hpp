@@ -47,20 +47,6 @@ struct ExecuteMsgExecutorAck {
     return ExecuteMsgType::kExecutorAck; }
 };
 
-struct ExecuteMsgEvalExpr {
-  size_t ast_size;
- private:
-  ExecuteMsgEvalExpr() = default;
-  friend class DefaultMsgCreator;
- public:
-  void Init(size_t _ast_size) {
-    ast_size = _ast_size;
-  }
-  static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kEvalExpr;
-  }
-};
-
 struct ExecuteMsgTextFileLoadAck {
   size_t num_dims;
   int32_t dist_array_id;
@@ -109,17 +95,45 @@ struct ExecuteMsgCreateDistArrayAck {
   }
 };
 
-struct ExecuteMsgDefineVar {
-  size_t var_info_size;
+struct ExecuteMsgPeerRecvStop {
  private:
-  ExecuteMsgDefineVar() = default;
+  ExecuteMsgPeerRecvStop() = default;
   friend class DefaultMsgCreator;
  public:
-  void Init(size_t _var_info_size) {
-    var_info_size = _var_info_size;
+  void Init() { }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kPeerRecvStop;
+  }
+};
+
+struct ExecuteMsgSpaceTimeRepartitionDistArrayData {
+  int32_t dist_array_id;
+  size_t data_size;
+ private:
+  ExecuteMsgSpaceTimeRepartitionDistArrayData() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(int32_t _dist_array_id, size_t _data_size) {
+    dist_array_id = _dist_array_id;
+    data_size = _data_size;
   }
   static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kDefineVar;
+    return ExecuteMsgType::kSpaceTimeRepartitionDistArrayData;
+  }
+};
+
+struct ExecuteMsgSpaceTimeRepartitionDistArrayRecved {
+ public:
+  void *data_buff;
+ private:
+  ExecuteMsgSpaceTimeRepartitionDistArrayRecved() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(void *_data_buff) {
+    data_buff = _data_buff;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kSpaceTimeRepartitionDistArrayRecved;
   }
 };
 

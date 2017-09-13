@@ -95,6 +95,11 @@ message DefineVar {
   required bytes var_value = 2;
 }
 
+message SpaceTimeRepartitionDistArray {
+  required int32 id = 1;
+  required string partition_func_name = 2;
+}
+
 //message Map {
 //  required int32 src_table = 1;
 //  required int32 dst_table = 2;

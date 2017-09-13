@@ -10,6 +10,7 @@
 #include <orion/bosen/blob.hpp>
 #include <orion/bosen/config.hpp>
 #include <orion/bosen/abstract_dist_array_partition.hpp>
+#include <orion/bosen/dist_array.hpp>
 #include <orion/bosen/key.hpp>
 
 #ifdef ORION_USE_HDFS
@@ -28,10 +29,13 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   bool index_exists_ {false};
   const Config& kConfig;
   const type::PrimitiveType kValueType;
-
   // temporary to facilitate LoadTextFile
   std::vector<int64_t> key_buff_;
  public:
+  using KeyValueBuffer = std::pair<std::vector<int64_t>,
+                                   std::vector<ValueType>>;
+
+
   DistArrayPartition(const Config &config, type::PrimitiveType value_type);
   ~DistArrayPartition();
 
@@ -48,6 +52,15 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   void Insert(int64_t key, const Blob &buff) { }
   void Get(int64_t key, Blob *buff) { }
   void GetRange(int64_t start, int64_t end, Blob *buff) { }
+  std::vector<int64_t>& GetKeys() { return keys_; }
+  void *GetValues() { return &values_; }
+  void AppendKeyValue(int64_t key, const void* value);
+  void AddToSpaceTimePartitions(
+      DistArray *dist_array,
+      const std::vector<int32_t> &partition_ids);
+  size_t GetNumKeyValues();
+  size_t GetValueSize();
+  void CopyValues(void *mem) const;
 };
 
 /*----- Specialized for String (const char*) ------*/
@@ -78,6 +91,15 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
   void Insert(int64_t key, const Blob &buff) { }
   void Get(int64_t key, Blob *buff) { }
   void GetRange(int64_t start, int64_t end, Blob *buff) { }
+  std::vector<int64_t>& GetKeys() { return keys_; }
+  void *GetValues() { return &values_; }
+  void AppendKeyValue(int64_t key, const void* value);
+  void AddToSpaceTimePartitions(
+      DistArray *dist_array,
+      const std::vector<int32_t> &partition_ids);
+  size_t GetNumKeyValues();
+  size_t GetValueSize();
+  void CopyValues(void *mem) const;
 };
 
 /*---- template general implementation -----*/
@@ -182,6 +204,59 @@ DistArrayPartition<ValueType>::SetDims(const std::vector<int64_t> &dims) {
   return;
 }
 
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::AppendKeyValue(int64_t key, const void* value) {
+  ValueType v;
+  memcpy(&v, value,sizeof(ValueType));
+  keys_.emplace_back(key);
+  values_.emplace_back(v);
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::AddToSpaceTimePartitions(
+    DistArray* dist_array,
+    const std::vector<int32_t> &partition_ids) {
+  auto& new_partitions = dist_array->GetSpaceTimePartitions();
+  for (size_t i = 0; i < keys_.size(); i++) {
+    int64_t key = keys_[i];
+    ValueType value = values_[i];
+    int32_t space_partition_id = partition_ids[i * 2];
+    int32_t time_partition_id = partition_ids[i * 2 + 1];
+    auto &time_partitions = new_partitions[space_partition_id];
+    auto dist_array_partition_iter
+        = time_partitions.find(time_partition_id);
+    if (dist_array_partition_iter == time_partitions.end()) {
+      //LOG(INFO) << "created partition, space = " << space_partition_id
+      //          << " time = " << time_partition_id;
+      auto* partition = dist_array->CreatePartition();
+      auto ret = time_partitions.emplace(
+          std::make_pair(time_partition_id,
+                         partition));
+      CHECK(ret.second);
+      dist_array_partition_iter = ret.first;
+    }
+    auto* partition = dist_array_partition_iter->second;
+    partition->AppendKeyValue(key, &value);
+  }
+}
+
+template<typename ValueType>
+size_t DistArrayPartition<ValueType>::GetNumKeyValues() {
+  return keys_.size();
+}
+
+template<typename ValueType>
+size_t DistArrayPartition<ValueType>::GetValueSize() {
+  return type::SizeOf(kValueType);
+}
+
+template<typename ValueType>
+void DistArrayPartition<ValueType>::CopyValues(void *mem) const {
+  memcpy(mem, values_.data(), values_.size() * type::SizeOf(kValueType));
+}
+
 /*---- template const char* implementation -----*/
 DistArrayPartition<const char*>::DistArrayPartition(
     const Config &config,
@@ -226,6 +301,32 @@ DistArrayPartition<const char*>::LoadTextFile(
 
 void
 DistArrayPartition<const char*>::SetDims(const std::vector<int64_t> &dims) {
+}
+
+void
+DistArrayPartition<const char*>::AppendKeyValue(int64_t key, const void* value) {
+
+}
+
+void
+DistArrayPartition<const char*>::AddToSpaceTimePartitions(
+    DistArray *dist_array,
+    const std::vector<int32_t> &partition_ids) {
+
+}
+
+size_t
+DistArrayPartition<const char*>::GetNumKeyValues() {
+  return keys_.size();
+}
+
+size_t
+DistArrayPartition<const char*>::GetValueSize() {
+  return 0;
+}
+
+void
+DistArrayPartition<const char*>::CopyValues(void *mem) const {
 }
 
 }

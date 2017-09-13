@@ -1,7 +1,7 @@
-include("/home/ubuntu/orion/src/julia/orion_worker.jl")
+#include("/home/ubuntu/orion/src/julia/orion_worker.jl")
 
 module OrionGen
-
+using OrionWorker
 function define_setter(var::AbstractString)
     var_sym = Symbol(var)
     set_func_name = Symbol("set_", var)

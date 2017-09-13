@@ -192,6 +192,13 @@ function materialize(dist_array::DistArray)
     dist_array.is_materialized = true
 end
 
+function space_time_repartition(dist_array::DistArray,
+                     partition_func_name::AbstractString)
+    ccall((:orion_space_time_repartition_dist_array, lib_path),
+          Void, (Int32, Cstring),
+          dist_array.id,
+          partition_func_name)
+end
 
 function Base.size(dist_array::DistArray)
     return tuple(dist_array.dims...)

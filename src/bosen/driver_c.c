@@ -126,6 +126,12 @@ extern "C" {
         var_name, var_value, value_size);
   }
 
+  void orion_space_time_repartition_dist_array(
+      int32_t id,
+      const char *partition_func_name) {
+    driver->SpaceTimeRepartitionDistArray(id, partition_func_name);
+  }
+
   void orion_stop() {
     driver->Stop();
     delete driver;
