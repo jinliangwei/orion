@@ -19,10 +19,13 @@ sudo apt-get --ignore-missing -y install \
     cmake \
     libgoogle-perftools-dev \
     libgl1-mesa-glx \
-    openjdk-8-jdko \
+    openjdk-8-jdk \
     libprotobuf-dev \
     emacs \
-    autoconf
+    autoconf \
+    protobuf-compiler
+
+exit
 
 if [ ! -f /usr/lib/libcblas.so ]; then
     echo "link libcblas!!"
@@ -37,4 +40,4 @@ popd
 
 wget https://github.com/JuliaLang/julia/releases/download/v0.5.1/julia-0.5.1.tar.gz
 tar xvzf julia-0.5.1.tar.gz
-julia-0.5.1; make -j4; cd
+cd julia-0.5.1; make -j4; cd
