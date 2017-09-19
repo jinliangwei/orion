@@ -10,11 +10,7 @@ bool
 ReceiveArbitraryBytes(Conn &conn, conn::RecvBuffer* recv_buff,
                       ByteBuffer* byte_buff, size_t expected_size) {
   if (recv_buff->IsExepectingNextMsg()) {
-    LOG(INFO) << "receiving to "
-              << (void*) byte_buff->GetAvailMem();
     bool recv = conn.Recv(recv_buff, byte_buff->GetAvailMem());
-    LOG(INFO) << "byte_buff inc_size = "
-              << recv_buff->get_next_recved_size() - byte_buff->GetSize();
     byte_buff->IncSize(
         recv_buff->get_next_recved_size() - byte_buff->GetSize());
     if (!recv) return false;
@@ -22,7 +18,6 @@ ReceiveArbitraryBytes(Conn &conn, conn::RecvBuffer* recv_buff,
                                   << errno;
     CHECK (!recv_buff->EOFAtIncompleteMsg()) << "error : early EOF";
   } else {
-    LOG(INFO) << "set receive buff to expect next message";
     recv_buff->set_next_expected_size(expected_size);
     byte_buff->Reset(expected_size);
     if (recv_buff->get_size() > recv_buff->get_expected_size()) {

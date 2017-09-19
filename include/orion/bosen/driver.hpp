@@ -166,7 +166,7 @@ class Driver {
   void CreateDistArray(
       int32_t id,
       task::DistArrayParentType parent_type,
-      bool map,
+      int32_t map_type,
       bool flatten_results,
       size_t num_dims,
       type::PrimitiveType value_type,
@@ -175,7 +175,8 @@ class Driver {
       task::DistArrayInitType init_type,
       JuliaModule parser_func_module,
       const char* parser_func_name,
-      int64_t *dims);
+      int64_t *dims,
+      int32_t random_init_type);
 
   void DefineVariable(const char *var_name,
                       const uint8_t *var_value,
@@ -397,7 +398,7 @@ void
 Driver::CreateDistArray(
       int32_t id,
       task::DistArrayParentType parent_type,
-      bool map,
+      int32_t map_type,
       bool flatten_results,
       size_t num_dims,
       type::PrimitiveType value_type,
@@ -406,7 +407,8 @@ Driver::CreateDistArray(
       task::DistArrayInitType init_type,
       JuliaModule mapper_func_module,
       const char* mapper_func_name,
-      int64_t *dims) {
+      int64_t *dims,
+      int32_t random_init_type) {
   task::CreateDistArray create_dist_array;
   create_dist_array.set_id(id);
   create_dist_array.set_parent_type(parent_type);
@@ -424,15 +426,24 @@ Driver::CreateDistArray(
     case task::INIT:
       {
         create_dist_array.set_init_type(init_type);
+        if (init_type != task::EMPTY) {
+          for (size_t i = 0; i < num_dims; i++) {
+            LOG(INFO) << "add dim[" << i << "] = " << dims[i];
+            create_dist_array.add_dims(dims[i]);
+          }
+        }
+        if (map_type != task::NO_MAP && init_type != task::EMPTY) {
+          create_dist_array.set_random_init_type(random_init_type);
+        }
       }
       break;
     default:
       LOG(FATAL) << "unrecognized parent type = "
                  << static_cast<int>(parent_type);
   }
-  create_dist_array.set_map(map);
+  create_dist_array.set_map_type(static_cast<task::DistArrayMapType>(map_type));
   create_dist_array.set_flatten_results(flatten_results);
-  if (map) {
+  if (map_type != task::NO_MAP) {
    create_dist_array.set_mapper_func_module(
         static_cast<int>(mapper_func_module));
     create_dist_array.set_mapper_func_name(mapper_func_name);
@@ -455,7 +466,7 @@ Driver::CreateDistArray(
   auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
       master_recv_temp_buff_);
   CHECK_EQ(msg->result_bytes/sizeof(int64_t), num_dims);
-  if (msg->result_bytes > 0) {
+  if (parent_type == task::TEXT_FILE && msg->result_bytes > 0) {
     memcpy(dims, result_buff_.GetBytes(), result_buff_.GetSize());
     master_recv_temp_buff_.ClearOneAndNextMsg();
   } else {

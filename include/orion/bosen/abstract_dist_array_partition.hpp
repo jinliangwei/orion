@@ -8,6 +8,7 @@
 #include <orion/bosen/julia_module.hpp>
 #include <orion/bosen/julia_evaluator.hpp>
 #include <orion/noncopyable.hpp>
+#include <orion/bosen/task.pb.h>
 
 namespace orion {
 namespace bosen {
@@ -22,7 +23,7 @@ class AbstractDistArrayPartition {
       JuliaEvaluator *julia_eval,
       const std::string &file_path,
       int32_t partition_id,
-      bool map,
+      task::DistArrayMapType map_type,
       bool flatten_results,
       size_t num_dims,
       JuliaModule mapper_func_module,
@@ -42,6 +43,16 @@ class AbstractDistArrayPartition {
   virtual size_t GetNumKeyValues() = 0;
   virtual size_t GetValueSize() = 0;
   virtual void CopyValues(void *mem) const = 0;
+  virtual void RandomInit(
+      JuliaEvaluator *julia_eval,
+      const std::vector<int64_t> &dims,
+      int64_t key_begin,
+      size_t num_elements,
+      task::DistArrayInitType init_type,
+      task::DistArrayMapType map_type,
+      JuliaModule mapper_func_module,
+      const std::string &mapper_func_name,
+      type::PrimitiveType random_init_type) = 0;
  protected:
   DISALLOW_COPY(AbstractDistArrayPartition);
 

@@ -8,6 +8,7 @@
 #include <orion/bosen/blob.hpp>
 #include <orion/bosen/julia_task.hpp>
 #include <orion/bosen/julia_module.hpp>
+#include <orion/bosen/task.pb.h>
 
 namespace orion {
 namespace bosen {
@@ -72,6 +73,68 @@ class JuliaEvaluator {
       JuliaEvaluator *julia_eval,
       std::string repartition_func_name,
       DistArray *dist_array);
+
+  void RandNormal(
+      type::PrimitiveType type,
+      uint8_t *buff,
+      size_t array_len);
+
+  void RunMapGeneric(
+      task::DistArrayMapType map_type,
+      std::vector<int64_t> dims,
+      size_t num_keys,
+      int64_t *keys,
+      type::PrimitiveType input_value_type,
+      uint8_t *input_values,
+      std::vector<int64_t>* output_keys,
+      type::PrimitiveType output_value_type,
+      Blob *output_values,
+      JuliaModule mapper_func_module,
+      const std::string &mapper_func_name);
+
+  void RunMap(
+      std::vector<int64_t> dims,
+      size_t num_keys,
+      int64_t *keys,
+      type::PrimitiveType input_value_type,
+      uint8_t *input_values,
+      std::vector<int64_t>* output_keys,
+      type::PrimitiveType output_value_type,
+      Blob *output_values,
+      JuliaModule mapper_func_module,
+      const std::string &mapper_func_name);
+
+  void RunMapFixedKeys(
+      std::vector<int64_t> dims,
+      size_t num_keys,
+      int64_t *keys,
+      type::PrimitiveType input_value_type,
+      uint8_t *input_values,
+      type::PrimitiveType output_value_type,
+      Blob *output_values,
+      JuliaModule mapper_func_module,
+      const std::string &mapper_func_name);
+
+  void RunMapValues(
+      std::vector<int64_t> dims,
+      size_t num_keys,
+      type::PrimitiveType input_value_type,
+      uint8_t *input_values,
+      type::PrimitiveType output_value_type,
+      Blob *output_values,
+      JuliaModule mapper_func_module,
+      const std::string &mapper_func_name);
+
+  void RunMapValuesNewKeys(
+      std::vector<int64_t> dims,
+      size_t num_keys,
+      type::PrimitiveType input_value_type,
+      uint8_t *input_values,
+      std::vector<int64_t>* output_keys,
+      type::PrimitiveType output_value_type,
+      Blob *output_values,
+      JuliaModule mapper_func_module,
+      const std::string &mapper_func_name);
 };
 
 }

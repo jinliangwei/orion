@@ -2,6 +2,7 @@
 
 #include <string>
 #include <stdint.h>
+#include <julia.h>
 
 namespace orion {
 namespace bosen {
@@ -24,6 +25,9 @@ enum class PrimitiveType {
 };
 
 int SizeOf(PrimitiveType type);
+
+jl_datatype_t *GetJlDataType(PrimitiveType type);
+
 }
 
 }

@@ -186,7 +186,6 @@ Pipe::Send(SendBuffer *buf) const {
 }
 
 bool Pipe::Recv(RecvBuffer *buf) const {
-  LOG(INFO) << __func__;
   ssize_t ret = read(read_, buf->get_recv_mem(),
                      buf->get_capacity() - buf->get_size());
 
@@ -252,7 +251,6 @@ Socket::Send(SendBuffer *buf) const {
 }
 
 bool Socket::Recv(RecvBuffer *buf) const {
-  LOG(INFO) << __func__;
   ssize_t ret = read(socket_, buf->get_recv_mem(),
                      buf->get_capacity() - buf->get_size());
   if (ret < 0) {
@@ -276,9 +274,6 @@ bool Socket::Recv(RecvBuffer *buf) const {
 }
 
 bool Socket::Recv(RecvBuffer *buf, void *mem) const {
-  LOG(INFO) << __func__
-            << " buf->get_next_expected_size() = " << buf->get_next_expected_size()
-            << " buf->get_next_recved_size() = " << buf->get_next_recved_size();
   ssize_t ret = read(socket_, reinterpret_cast<uint8_t*>(mem),
                      buf->get_next_expected_size() \
                      - buf->get_next_recved_size());

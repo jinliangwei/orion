@@ -338,10 +338,15 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           create_dist_array.ParseFromString(task_buff);
           int32_t id = create_dist_array.id();
           size_t num_dims = create_dist_array.num_dims();
-          dist_array_metas_.emplace(
+          auto init_type = create_dist_array.init_type();
+          auto iter_pair = dist_array_metas_.emplace(
               std::piecewise_construct,
               std::forward_as_tuple(id),
-              std::forward_as_tuple(num_dims));
+              std::forward_as_tuple(num_dims, init_type));
+          auto meta_iter = iter_pair.first;
+          if (init_type != task::EMPTY) {
+            meta_iter->second.AssignDims(create_dist_array.dims().data());
+          }
 
           action_ = Action::kWaitingExecutorResponse;
         }

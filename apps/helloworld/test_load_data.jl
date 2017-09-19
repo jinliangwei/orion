@@ -10,7 +10,7 @@ Orion.helloworld()
 const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 2
+const num_executors = 4
 
 # initialize logging of the runtime library
 Orion.glog_init()
@@ -31,17 +31,21 @@ Orion.@share function parse_line(line::AbstractString)
     return (key_tuple, value)
 end
 
+Orion.@share function map_init_param(value::Float32)::Float32
+    return value / 10
+end
 
 ratings = Orion.text_file(data_path, parse_line)
 Orion.materialize(ratings)
+dim_x, dim_y = size(ratings)
+println((dim_x, dim_y))
 
-Orion.define_var(:step_size)
+W_init = Orion.randn(dim_x, K)
+W = Orion.map_value(W_init, map_init_param)
+Orion.materialize(W)
 
-partition_func_name = Orion.gen_unique_symbol()
-partition_func = Orion.gen_space_time_partition_function(partition_func_name,
-                                                         [(1,), (2,)], [(1,), (1,)],
-                                                         100, 100)
-Orion.eval_expr_on_all(partition_func, :OrionGen)
-Orion.space_time_repartition(ratings, string(partition_func_name))
+H_init = Orion.randn(dim_y, K)
+H = Orion.map_value(H_init, map_init_param)
+Orion.materialize(H)
 
 Orion.stop()

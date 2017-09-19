@@ -58,6 +58,61 @@ int SizeOf(PrimitiveType type) {
   }
 }
 
+jl_datatype_t *GetJlDataType(PrimitiveType type) {
+  switch (type) {
+    case PrimitiveType::kVoid:
+      {
+        return jl_void_type;
+      }
+    case PrimitiveType::kInt8:
+      {
+        return jl_int8_type;
+      }
+    case PrimitiveType::kUInt8:
+      {
+        return jl_uint8_type;
+      }
+    case PrimitiveType::kInt16:
+      {
+        return jl_int16_type;
+      }
+    case PrimitiveType::kUInt16:
+      {
+        return jl_uint16_type;
+      }
+    case PrimitiveType::kInt32:
+      {
+        return jl_int32_type;
+      }
+    case PrimitiveType::kUInt32:
+      {
+        return jl_uint32_type;
+      }
+    case PrimitiveType::kInt64:
+      {
+        return jl_int64_type;
+      }
+    case PrimitiveType::kUInt64:
+      {
+        return jl_uint64_type;
+      }
+    case PrimitiveType::kFloat32:
+      {
+        return jl_float32_type;
+      }
+    case PrimitiveType::kFloat64:
+      {
+        return jl_float64_type;
+      }
+    case PrimitiveType::kString:
+      {
+        return jl_string_type;
+      }
+    default:
+      return 0;
+  }
+}
+
 }
 }
 }

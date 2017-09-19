@@ -2,7 +2,6 @@ export helloworld, local_helloworld, glog_init
 
 function module_to_int32(m::Symbol)::Int32
     local ret = -1
-    println(m)
     if m == :Core
         ptr_val = cglobal((:ORION_JULIA_MODULE_CORE, lib_path), Int32)
         ret = unsafe_load(ptr_val)
@@ -15,8 +14,6 @@ function module_to_int32(m::Symbol)::Int32
     elseif m == :OrionGen
         ptr_val = cglobal((:ORION_JULIA_MODULE_ORION_GEN, lib_path), Int32)
         ret = unsafe_load(ptr_val)
-    else
-        error("Unknown module ", m)
     end
     return ret
 end

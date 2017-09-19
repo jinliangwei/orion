@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <vector>
+#include <map>
 #include <stx/btree_map>
 #include <stdio.h>
 #include <algorithm>
@@ -19,6 +20,51 @@
 
 namespace orion {
 namespace bosen {
+namespace {
+template<typename ValueType>
+void RandomInitAndRunMap(
+    JuliaEvaluator* julia_eval,
+    const std::vector<int64_t> &dims,
+    task::DistArrayInitType init_type,
+    task::DistArrayMapType map_type,
+    type::PrimitiveType random_init_type,
+    size_t num_elements,
+    int64_t *keys,
+    std::vector<int64_t> *output_keys,
+    type::PrimitiveType output_value_type,
+    Blob *output_values,
+    JuliaModule mapper_func_module,
+    const std::string &mapper_func_name) {
+  LOG(INFO) << __func__;
+  std::vector<ValueType> init_values(num_elements);
+  switch (init_type) {
+    case task::NORMAL_RANDOM:
+      {
+        julia_eval->RandNormal(random_init_type,
+                               reinterpret_cast<uint8_t*>(init_values.data()),
+                               num_elements);
+      }
+      break;
+    default:
+      LOG(FATAL) << "not yet supported " << static_cast<int>(init_type);
+  }
+  CHECK(map_type != task::NO_MAP);
+  LOG(INFO) << "init_values[10] = " << init_values[10];
+
+  julia_eval->RunMapGeneric(
+      map_type,
+      dims,
+      num_elements,
+      keys,
+      random_init_type,
+      reinterpret_cast<uint8_t*>(init_values.data()),
+      output_keys,
+      output_value_type,
+      output_values,
+      mapper_func_module,
+      mapper_func_name);
+}
+}
 
 template<typename ValueType>
 class DistArrayPartition : public AbstractDistArrayPartition {
@@ -35,13 +81,12 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   using KeyValueBuffer = std::pair<std::vector<int64_t>,
                                    std::vector<ValueType>>;
 
-
   DistArrayPartition(const Config &config, type::PrimitiveType value_type);
   ~DistArrayPartition();
 
   bool LoadTextFile(JuliaEvaluator *julia_eval,
                     const std::string &file_path, int32_t partition_id,
-                    bool map,
+                    task::DistArrayMapType map_type,
                     bool flatten_results,
                     size_t num_dims,
                     JuliaModule mapper_func_module,
@@ -61,6 +106,16 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   size_t GetNumKeyValues();
   size_t GetValueSize();
   void CopyValues(void *mem) const;
+  void RandomInit(
+      JuliaEvaluator* julia_eval,
+      const std::vector<int64_t> &dims,
+      int64_t key_begin,
+      size_t num_elements,
+      task::DistArrayInitType init_type,
+      task::DistArrayMapType map_type,
+      JuliaModule mapper_func_module,
+      const std::string &mapper_func_name,
+      type::PrimitiveType random_init_type);
 };
 
 /*----- Specialized for String (const char*) ------*/
@@ -80,7 +135,7 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
 
   bool LoadTextFile(JuliaEvaluator *julia_eval,
                     const std::string &file_path, int32_t partition_id,
-                    bool map,
+                    task::DistArrayMapType map_type,
                     bool flatten_results,
                     size_t num_dims,
                     JuliaModule mapper_func_module,
@@ -100,6 +155,16 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
   size_t GetNumKeyValues();
   size_t GetValueSize();
   void CopyValues(void *mem) const;
+  void RandomInit(
+      JuliaEvaluator* julia_eval,
+      const std::vector<int64_t> &dims,
+      int64_t key_begin,
+      size_t num_elements,
+      task::DistArrayInitType init_type,
+      task::DistArrayMapType map_type,
+      JuliaModule mapper_func_module,
+      const std::string &mapper_func_name,
+      type::PrimitiveType random_init_type);
 };
 
 /*---- template general implementation -----*/
@@ -118,7 +183,7 @@ bool
 DistArrayPartition<ValueType>::LoadTextFile(
     JuliaEvaluator *julia_eval,
     const std::string &path, int32_t partition_id,
-    bool map,
+    task::DistArrayMapType map_type,
     bool flatten_results,
     size_t num_dims,
     JuliaModule mapper_func_module,
@@ -146,7 +211,7 @@ DistArrayPartition<ValueType>::LoadTextFile(
   if (!read) return read;
   LOG(INFO) << "partition_id = " << partition_id
             << " read done; start parsing";
-  if (map) {
+  if (map_type == task::MAP_VALUES_NEW_KEYS) {
     Blob value(type::SizeOf(kValueType));
     auto* parser_func = julia_eval->GetFunction(GetJlModule(mapper_func_module),
                                                 mapper_func_name.c_str());
@@ -176,6 +241,7 @@ DistArrayPartition<ValueType>::LoadTextFile(
         memcpy(max_key->data(), max_key_vec.data(), sizeof(int64_t) * num_dims);
       }
     } else {
+      CHECK(map_type == task::MAP_VALUES);
       char *line = strtok(char_buff.data() + begin, "\n");
       while (line != nullptr) {
         julia_eval->ParseStringValueOnly(line, parser_func, kValueType,
@@ -184,10 +250,7 @@ DistArrayPartition<ValueType>::LoadTextFile(
         values_.push_back(*((ValueType*) value.data()));
       }
     }
-  } else {
-    LOG(FATAL) << "This is not the correct data type";
   }
-
   return read;
 }
 
@@ -257,6 +320,87 @@ void DistArrayPartition<ValueType>::CopyValues(void *mem) const {
   memcpy(mem, values_.data(), values_.size() * type::SizeOf(kValueType));
 }
 
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::RandomInit(
+    JuliaEvaluator* julia_eval,
+    const std::vector<int64_t> &dims,
+    int64_t key_begin,
+    size_t num_elements,
+    task::DistArrayInitType init_type,
+    task::DistArrayMapType map_type,
+    JuliaModule mapper_func_module,
+    const std::string &mapper_func_name,
+    type::PrimitiveType random_init_type) {
+  keys_.resize(num_elements);
+  for (size_t i = 0; i < num_elements; i++) {
+    keys_[i] = key_begin + i;
+  }
+  values_.resize(num_elements);
+
+  std::vector<int64_t> output_keys;
+  if (map_type == task::MAP || map_type == task::MAP_VALUES_NEW_KEYS) {
+    output_keys.resize(num_elements);
+  }
+
+  if (map_type == task::NO_MAP) {
+    LOG(INFO) << "no map!";
+    CHECK(kValueType == type::PrimitiveType::kFloat32 || kValueType == type::PrimitiveType::kFloat64);
+    switch (init_type) {
+      case task::NORMAL_RANDOM:
+        {
+          julia_eval->RandNormal(kValueType,
+                                 reinterpret_cast<uint8_t*>(values_.data()),
+                                 num_elements);
+        }
+        break;
+      default:
+        LOG(FATAL) << "not yet supported " << static_cast<int>(init_type);
+    }
+  } else {
+    LOG(INFO) << "random_init_type = " << static_cast<int>(random_init_type);
+    Blob output_values;
+    if (random_init_type == type::PrimitiveType::kFloat64) {
+      RandomInitAndRunMap<double>(
+          julia_eval,
+          dims,
+          init_type,
+          map_type,
+          random_init_type,
+          num_elements,
+          keys_.data(),
+          &output_keys,
+          kValueType,
+          &output_values,
+          mapper_func_module,
+          mapper_func_name);
+    } else {
+      CHECK(random_init_type == type::PrimitiveType::kFloat32) << "random_init_type = " << static_cast<int>(random_init_type);
+      RandomInitAndRunMap<float>(
+          julia_eval,
+          dims,
+          init_type,
+          map_type,
+          random_init_type,
+          num_elements,
+          keys_.data(),
+          &output_keys,
+          kValueType,
+          &output_values,
+          mapper_func_module,
+          mapper_func_name);
+    }
+    size_t num_elements_after_map = output_keys.size();
+    values_.resize(num_elements_after_map);
+    memcpy(values_.data(), output_values.data(), output_values.size());
+  }
+  LOG(INFO) << "values_[10] = " << values_[10];
+  if (map_type == task::MAP || map_type == task::MAP_VALUES_NEW_KEYS) {
+    keys_.resize(output_keys.size());
+    memcpy(keys_.data(), output_keys.data(), output_keys.size() * sizeof(int64_t));
+  }
+}
+
 /*---- template const char* implementation -----*/
 DistArrayPartition<const char*>::DistArrayPartition(
     const Config &config,
@@ -270,7 +414,7 @@ bool
 DistArrayPartition<const char*>::LoadTextFile(
     JuliaEvaluator *julia_eval,
     const std::string &path, int32_t partition_id,
-    bool map,
+    task::DistArrayMapType map_type,
     bool flatten_results,
     size_t num_dims,
     JuliaModule mapper_func_module,
@@ -327,6 +471,20 @@ DistArrayPartition<const char*>::GetValueSize() {
 
 void
 DistArrayPartition<const char*>::CopyValues(void *mem) const {
+}
+
+void
+DistArrayPartition<const char*>::RandomInit(
+    JuliaEvaluator* julia_eval,
+    const std::vector<int64_t> &dims,
+    int64_t key_begin,
+    size_t num_elements,
+    task::DistArrayInitType init_type,
+    task::DistArrayMapType map_type,
+    JuliaModule mapper_func_module,
+    const std::string &mapper_func_name,
+    type::PrimitiveType random_init_type) {
+  LOG(INFO) << "random init is not supported by element type const char*";
 }
 
 }

@@ -5,42 +5,23 @@ const num_iterations = 1
 const step_size = 0.001
 const factor = 1
 
+# set path to the C++ runtime library
+Orion.set_lib_path("/home/ubuntu/orion/lib/liborion_driver.so")
+# test library path
+Orion.helloworld()
+
 ratings = Orion.DistArray{Float32}()
 W = Orion.DistArray{Float32}()
 H = Orion.DistArray{Float32}()
 
-Orion.@objective function compute_loss(ratings, W, H)
-    Orion.@accumulator error = 0.0
-    for rating in ratings
-        x_idx = rating[1] + 1
-	y_idx = rating[2] + 1
-	rv = rating[3]
-
-        W_row = W[x_idx, :]
-	H_row = H[y_idx, :]
-	pred = dot(W_row, H_row)
-        error += (rv - pred) ^ 2
-    end
-    error /= length(ratings)
-    return error
+Orion.@share function parse_line(line::AbstractString)
+    tokens = split(line, ',')
+    @assert length(tokens) == 3
+    key_tuple = (parse(Int64, String(tokens[1])),
+                 parse(Int64, String(tokens[2])))
+    value = parse(Float64, String(tokens[3]))
+    return (key_tuple, value)
 end
 
-Orion.@evaluate compute_loss ratings W H 4
 
-Orion.@transform for i = 1:num_iterations
-    Orion.@parallel_for for rating in ratings
-	x_idx = rating[1] + 1
-	y_idx = rating[2] + 1
-	rv = rating[3]
-
-        W_row = W[x_idx, :]
-	H_row = H[y_idx, :]
-	pred = dot(W_row, H_row) * factor
-	diff = rv - pred
-	W_grad = -2 * diff .* H_row
-	H_grad = -2 * diff .* W_row
-	W[x_idx, :] = W_row - step_size .* W_grad
-	H[y_idx, :] = H_row - step_size .*H_grad
-    end
-    step_size *= 0.95
-end
+#ratings = Orion.text_file(data_path, parse_line)

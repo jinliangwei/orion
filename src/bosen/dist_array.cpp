@@ -125,12 +125,12 @@ DistArray::CreatePartition() const {
 void
 DistArray::LoadPartitionsFromTextFile(
     JuliaEvaluator *julia_eval,
-    const std::string &file_path,
-    bool map,
+    std::string file_path,
+    task::DistArrayMapType map_type,
     bool flatten_results,
     size_t num_dims,
     JuliaModule mapper_func_module,
-    const std::string &mapper_func_name,
+    std::string mapper_func_name,
     Blob *result_buff) {
   CHECK(partitions_.empty());
   bool read = true;
@@ -141,7 +141,7 @@ DistArray::LoadPartitionsFromTextFile(
         julia_eval,
         file_path,
         partition_id,
-        map,
+        map_type,
         flatten_results,
         num_dims,
         mapper_func_module,
@@ -156,6 +156,15 @@ DistArray::LoadPartitionsFromTextFile(
 void
 DistArray::SetDims(const std::vector<int64_t> &dims) {
   dims_ = dims;
+  for (auto partition : partitions_) {
+    partition.second->SetDims(dims_);
+  }
+}
+
+void
+DistArray::SetDims(const int64_t* dims, size_t num_dims) {
+  dims_.resize(num_dims);
+  memcpy(dims_.data(), dims, num_dims * sizeof(int64_t));
   for (auto partition : partitions_) {
     partition.second->SetDims(dims_);
   }
@@ -304,6 +313,41 @@ DistArray::DeserializeSpaceTimePartitions(
       AddSpaceTimePartition(space_id, time_id, partition);
     }
   }
+}
+
+void
+DistArray::RandomInit(
+      JuliaEvaluator *julia_eval,
+      task::DistArrayInitType init_type,
+      task::DistArrayMapType map_type,
+      JuliaModule mapper_func_module,
+      std::string mapper_func_name,
+      type::PrimitiveType random_init_type) {
+  size_t num_params = 1;
+  for (auto d : dims_) {
+    num_params *= d;
+  }
+  size_t num_params_this_executor = num_params / kConfig.kNumExecutors
+                                    + ((kExecutorId < (num_params % kConfig.kNumExecutors))
+                                       ? 1 : 0);
+  LOG(INFO) << __func__ << " num_params_this_executor = " << num_params_this_executor;
+  if (num_params_this_executor == 0) return;
+  int64_t key_begin = (kExecutorId < (num_params % kConfig.kNumExecutors))
+                      ? (num_params / kConfig.kNumExecutors + 1) * kExecutorId
+                      : (num_params / kConfig.kNumExecutors) * kExecutorId + (num_params % kConfig.kNumExecutors);
+  auto *dist_array_partition = CreatePartition();
+  dist_array_partition->RandomInit(
+      julia_eval,
+      dims_,
+      key_begin,
+      num_params_this_executor,
+      init_type,
+      map_type,
+      mapper_func_module,
+      mapper_func_name,
+      random_init_type);
+  partitions_.emplace(std::make_pair(kExecutorId, dist_array_partition));
+
 }
 
 }

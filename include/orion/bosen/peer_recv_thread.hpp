@@ -196,11 +196,12 @@ PeerRecvThread::operator() () {
     curr_poll_conn.type = PollConn::ConnType::peer;
     curr_poll_conn.id = num_peers;
     int ret = event_handler_.SetToReadOnly(&curr_poll_conn);
-    CHECK_EQ(ret, 0);
+    CHECK_EQ(ret, 0) << "errno = " << errno << " fd = " << sock.get_fd()
+                     << " i = " << num_peers
+                     << " id = " << kId;
   }
 
   while (true) {
-    LOG(INFO) << "before waitAndHandleEvent";
     event_handler_.WaitAndHandleEvent();
     if (action_ == Action::kExit) break;
   }
@@ -253,7 +254,6 @@ PeerRecvThread::HandleExecutorMsg() {
   switch (exec_msg_type) {
     case message::ExecuteMsgType::kPeerRecvStop:
       {
-        LOG(INFO) << "stopping!";
         action_ = Action::kExit;
         ret = EventHandler<PollConn>::kClearOneMsg | EventHandler<PollConn>::kExit;
       }
@@ -266,7 +266,6 @@ PeerRecvThread::HandleExecutorMsg() {
 
 int
 PeerRecvThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
-  LOG(INFO) << __func__;
   auto &recv_buff = poll_conn_ptr->get_recv_buff();
 
   auto msg_type = message::Helper::get_type(recv_buff);
@@ -276,8 +275,8 @@ PeerRecvThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
       {
         auto *msg = message::Helper::get_msg<message::ExecutorIdentity>(recv_buff);
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(poll_conn_ptr->conn);
-        LOG(INFO) << "executor id = " << msg->executor_id
-                  << " sock_fd = " << sock_conn->sock.get_fd();
+        //LOG(INFO) << "id = " << kId << " executor_id = " << msg->executor_id
+        //          << " sock_fd = " << sock_conn->sock.get_fd();
         peer_[msg->executor_id].reset(sock_conn);
         peer_sock_fds_[msg->executor_id] = sock_conn->sock.get_fd();
         poll_conn_ptr->id = msg->executor_id;

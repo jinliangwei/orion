@@ -44,12 +44,19 @@ extern "C" {
 
   const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_EMPTY = static_cast<int32_t>(orion::bosen::task::EMPTY);
   const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM = static_cast<int32_t>(orion::bosen::task::UNIFORM_RANDOM);
+  const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_NORMAL_RANDOM = static_cast<int32_t>(orion::bosen::task::NORMAL_RANDOM);
 
   const int32_t ORION_JULIA_MODULE_CORE = static_cast<int32_t>(orion::bosen::JuliaModule::kCore);
   const int32_t ORION_JULIA_MODULE_BASE = static_cast<int32_t>(orion::bosen::JuliaModule::kBase);
   const int32_t ORION_JULIA_MODULE_MAIN = static_cast<int32_t>(orion::bosen::JuliaModule::kMain);
   const int32_t ORION_JULIA_MODULE_TOP = static_cast<int32_t>(orion::bosen::JuliaModule::kTop);
   const int32_t ORION_JULIA_MODULE_ORION_GEN = static_cast<int32_t>(orion::bosen::JuliaModule::kOrionGen);
+
+  const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_NO_MAP = static_cast<int32_t>(orion::bosen::task::NO_MAP);
+  const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP = static_cast<int32_t>(orion::bosen::task::MAP);
+  const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_FIXED_KEYS = static_cast<int32_t>(orion::bosen::task::MAP_FIXED_KEYS);
+  const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES = static_cast<int32_t>(orion::bosen::task::MAP_VALUES);
+  const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES_NEW_KEYS = static_cast<int32_t>(orion::bosen::task::MAP_VALUES_NEW_KEYS);
 
   orion::bosen::Driver *driver = nullptr;
   orion::GLogConfig glog_config("julia_driver");
@@ -83,7 +90,7 @@ extern "C" {
   void orion_create_dist_array(
       int32_t id,
       int32_t parent_type,
-      bool map,
+      int32_t map_type,
       bool flatten_results,
       size_t num_dims,
       int32_t value_type,
@@ -92,11 +99,12 @@ extern "C" {
       int32_t init_type,
       int32_t mapper_func_module,
       const char* mapper_func_name,
-      int64_t* dims) {
+      int64_t* dims,
+      int32_t random_init_type) {
     driver->CreateDistArray(
         id,
         static_cast<orion::bosen::task::DistArrayParentType>(parent_type),
-        map,
+        map_type,
         flatten_results,
         num_dims,
         static_cast<orion::bosen::type::PrimitiveType>(value_type),
@@ -105,7 +113,8 @@ extern "C" {
         static_cast<orion::bosen::task::DistArrayInitType>(init_type),
         static_cast<orion::bosen::JuliaModule>(mapper_func_module),
         mapper_func_name,
-        dims);
+        dims,
+        random_init_type);
   }
 
   jl_value_t* orion_eval_expr_on_all(

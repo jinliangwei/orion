@@ -69,12 +69,21 @@ enum DistArrayParentType {
 enum DistArrayInitType {
   EMPTY = 1;
   UNIFORM_RANDOM = 2;
+  NORMAL_RANDOM = 3;
+}
+
+enum DistArrayMapType {
+  NO_MAP = 1;
+  MAP = 2;
+  MAP_FIXED_KEYS = 3;
+  MAP_VALUES = 4;
+  MAP_VALUES_NEW_KEYS = 5;
 }
 
 message CreateDistArray {
   required int32 id = 1;
   required DistArrayParentType parent_type = 2;
-  required bool map = 3;
+  required DistArrayMapType map_type = 3;
   required bool flatten_results = 4;
   required uint64 num_dims = 5;
   required int32 value_type = 6;
@@ -83,6 +92,8 @@ message CreateDistArray {
   optional DistArrayInitType init_type = 9;
   optional int32 mapper_func_module = 10;
   optional string mapper_func_name = 11;
+  repeated int64 dims = 12;
+  optional int32 random_init_type = 13; // used only if map is ture with random init
 }
 
 message EvalExpr {

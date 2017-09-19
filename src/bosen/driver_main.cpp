@@ -32,7 +32,7 @@ main(int argc, char* argv[]) {
   driver.ConnectToMaster();
   //auto result_type = orion::bosen::type::PrimitiveType::kFloat64;
   //driver.ExecuteCodeOnOne(0, "sqrt(2.0)", result_type, &ret);
-  driver.CreateDistArray(
+  /*driver.CreateDistArray(
       0,
       orion::bosen::task::TEXT_FILE,
       true,
@@ -45,7 +45,7 @@ main(int argc, char* argv[]) {
       orion::bosen::task::EMPTY,
       orion::bosen::JuliaModule::kMain,
       "parse_line",
-      nullptr);
+      nullptr);*/
 
   driver.Stop();
   //while(1);

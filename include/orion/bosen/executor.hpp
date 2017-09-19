@@ -128,7 +128,7 @@ class Executor {
       kExecutorAck = 10,
       kSpaceTimeRepartitionDistArray = 11,
       kSpaceTimeRepartitionDistArraySend = 12
-  };
+            };
 
   static const int32_t kPortSpan = 100;
   const size_t kCommBuffCapacity;
@@ -200,6 +200,7 @@ class Executor {
   void *julia_eval_result_ { nullptr };
   bool result_needed_ { true };
   std::unordered_map<int32_t, Blob> blob_send_buff_;
+  bool connected_to_peers_ { false };
 
  public:
   Executor(const Config& config, int32_t id);
@@ -318,7 +319,6 @@ Executor::operator() () {
   SetUpThreadPool();
 
   while (true) {
-    LOG(INFO) << "before wait and handle event";
     event_handler_.WaitAndHandleEvent();
     if (action_ == Action::kExit) break;
   }
@@ -352,7 +352,6 @@ Executor::InitPeerRecvThread() {
           prt_send_mem_.data(),
           kCommBuffCapacity));
   prt_poll_conn_.conn = prt_pipe_conn_.get();
-  LOG(INFO) << "prt_send_buff = " << (void*) &(prt_pipe_conn_->send_buff);
   prt_poll_conn_.type = PollConn::ConnType::peer_recv_thr;
   event_handler_.SetToReadOnly(&prt_poll_conn_);
 
@@ -364,12 +363,13 @@ Executor::InitPeerRecvThread() {
 void
 Executor::HandleConnection(PollConn* poll_conn_ptr) {
   conn::Socket accepted;
-  listen_.sock.Accept(&accepted);
+  int ret = listen_.sock.Accept(&accepted);
+  CHECK(ret == 0);
 
   peer_socks_[num_connected_peers_] = accepted;
   num_connected_peers_++;
 
-  if (kId > 0 && num_connected_peers_ == kId)
+  if (kId > 0 && num_connected_peers_ == kId && connected_to_peers_)
     InitPeerRecvThread();
 }
 
@@ -437,11 +437,15 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
       case Action::kConnectToPeers:
         {
           ConnectToPeers();
+          connected_to_peers_ = true;
           if (kNumExecutors == 1 || kId == 0) {
             action_ = Action::kAckConnectToPeers;
             InitPeerRecvThread();
-          }
-          else action_ = Action::kNone;
+          } else if (num_connected_peers_ == kId) {
+            CHECK(peer_recv_thr_.get() == nullptr);
+            action_ = Action::kNone;
+            InitPeerRecvThread();
+          } else action_ = Action::kNone;
         }
         break;
       case Action::kAckConnectToPeers:
@@ -513,6 +517,8 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         break;
       case Action::kCreateDistArrayAck:
         {
+          message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgCreateDistArrayAck>(
+              &send_buff_, dist_array_under_operation_);
           Send(&master_poll_conn_, &master_);
           send_buff_.clear_to_send();
           send_buff_.reset_sent_sizes();
@@ -627,8 +633,6 @@ Executor::HandlePeerRecvThrMsg(PollConn* poll_conn_ptr) {
           int *sock_fds = reinterpret_cast<int*>(prt_recv_byte_buff_.GetBytes());
 
           for (int i = 0; i < kId; i++) {
-            LOG(INFO) << "i = " << i
-                      << " sock_fd = " << sock_fds[i];
             conn::Socket sock(sock_fds[i]);
             uint8_t *recv_mem = peer_recv_mem_.data()
                       + kCommBuffCapacity * i;
@@ -725,6 +729,11 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
                 action_ = Action::kSpaceTimeRepartitionDistArraySend;
               }
               break;
+            case TaskLabel::kRandomInitDistArray:
+              {
+                action_ = Action::kCreateDistArrayAck;
+              }
+              break;
             default:
               LOG(FATAL) << "unknown task label";
           }
@@ -780,10 +789,9 @@ Executor::HandleExecuteMsg() {
           int32_t dist_array_id = msg->dist_array_id;
           auto &dist_array = dist_arrays_.at(dist_array_id);
           dist_array.SetDims(dims);
+          dist_array_under_operation_ = dist_array_id;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kCreateDistArrayAck;
-          message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgCreateDistArrayAck>(
-              &send_buff_, dist_array_id);
 
         } else ret = EventHandler<PollConn>::kNoAction;
       }
@@ -888,7 +896,6 @@ Executor::ConnectToPeers() {
     peer_conn_[i].conn = peer_[i].get();
     peer_conn_[i].type = PollConn::ConnType::peer;
     peer_socks_[i] = peer_sock;
-    LOG(INFO) << "send to peer, fd = " << peer_[i]->sock.get_fd();
     Send(&peer_conn_[i], peer_[i].get());
     //int ret = event_handler_.SetToReadOnly(&peer_conn_[i]);
     //CHECK_EQ(ret, 0);
@@ -929,6 +936,7 @@ Executor::ClearBeforeExit() {
 
   message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgPeerRecvStop>(
       &send_buff_);
+  LOG(INFO) << "stopping peer recv thread";
   Send(&prt_poll_conn_, prt_pipe_conn_.get());
   prt_runner_.join();
 }
@@ -946,7 +954,6 @@ Executor::Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn) {
     send_buff.clear_to_send();
   }
   bool sent = sock_conn->sock.Send(&send_buff_);
-  LOG(INFO) << "sent = " << sent;
   if (!sent) {
     LOG(INFO) << "have to copy!";
     send_buff.Copy(send_buff_);
@@ -1005,13 +1012,14 @@ Executor::CreateDistArray() {
   dist_array_under_operation_ = id;
   type::PrimitiveType value_type
       = static_cast<type::PrimitiveType>(create_dist_array.value_type());
-  dist_arrays_.emplace(
+  auto iter_pair = dist_arrays_.emplace(
       std::piecewise_construct,
       std::forward_as_tuple(id),
       std::forward_as_tuple(kConfig, value_type, kId));
+  auto &dist_array = iter_pair.first->second;
 
-  auto &dist_array = dist_arrays_.at(id);
-  bool map = create_dist_array.map();
+  task::DistArrayMapType map_type = create_dist_array.map_type();
+  bool map = (map_type != task::NO_MAP);
   bool flatten_results = create_dist_array.flatten_results();
   size_t num_dims = create_dist_array.num_dims();
   auto parent_type = create_dist_array.parent_type();
@@ -1028,7 +1036,7 @@ Executor::CreateDistArray() {
         exec_cpp_func_task_.result_buff.resize(sizeof(int64_t) * num_dims, 0);
         auto cpp_func = std::bind(&DistArray::LoadPartitionsFromTextFile,
                                   &dist_array, std::placeholders::_1,
-                                  file_path, map, flatten_results,
+                                  file_path, map_type, flatten_results,
                                   num_dims, mapper_func_module, mapper_func_name,
                                   &exec_cpp_func_task_.result_buff);
         exec_cpp_func_task_.func = cpp_func;
@@ -1043,6 +1051,29 @@ Executor::CreateDistArray() {
       break;
     case task::INIT:
       {
+        auto init_type = create_dist_array.init_type();
+        JuliaModule mapper_func_module
+            = map ? static_cast<JuliaModule>(create_dist_array.mapper_func_module())
+            : JuliaModule::kNone;
+        std::string mapper_func_name
+            = map ? create_dist_array.mapper_func_name()
+            : std::string();
+        type::PrimitiveType random_init_type
+            = static_cast<type::PrimitiveType>(create_dist_array.random_init_type());
+        LOG(INFO) << "set Dims = " << num_dims;
+        dist_array.SetDims(create_dist_array.dims().data(), num_dims);
+        auto cpp_func = std::bind(&DistArray::RandomInit,
+                                  &dist_array,
+                                  std::placeholders::_1,
+                                  init_type,
+                                  map_type,
+                                  mapper_func_module,
+                                  mapper_func_name,
+                                  random_init_type);
+        exec_cpp_func_task_.func = cpp_func;
+        LOG(INFO) << "scheduling task CreateDistArray RandomInit";
+        exec_cpp_func_task_.label = TaskLabel::kRandomInitDistArray;
+        julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
       }
       break;
     default:

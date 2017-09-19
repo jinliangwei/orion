@@ -43,6 +43,13 @@ extern "C" {
 
   extern const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_EMPTY;
   extern const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM;
+  extern const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_NORMAL_RANDOM;
+
+  extern const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_NO_MAP;
+  extern const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP;
+  extern const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_FIXED_KEYS;
+  extern const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES;
+  extern const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES_NEW_KEYS;
 
   extern const int32_t ORION_JULIA_MODULE_CORE;
   extern const int32_t ORION_JULIA_MODULE_BASE;
@@ -92,7 +99,7 @@ extern "C" {
   void orion_create_dist_array(
       int32_t id,
       int32_t parent_type,
-      bool map,
+      int32_t map_type,
       bool flatten_results,
       size_t num_dims,
       int32_t value_type,
@@ -101,7 +108,8 @@ extern "C" {
       int32_t init_type,
       int32_t mapper_func_module,
       const char* mapper_func_name,
-      int64_t* dims);
+      int64_t* dims,
+      int32_t random_init_type);
 
   void orion_define_var(
       const char *var_name,

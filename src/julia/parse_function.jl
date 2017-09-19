@@ -1,10 +1,19 @@
+# A map function maps a DistArray to another DistArray.
+# The function signature depends on the map type:
+# 1) map - map_func(key::Tuple, value::ValueType)::Tuple{Tuple, NewValueType}
+# 2) map_fixed_keys - map_func(key::Tuple, value::OldValueType)::NewValueType
+# 3) map_values - map_func(value::OldValueType)::NewValueType
+# 4) map_values_new_keys - map_func(value::OldValueType)::Tuple{Tuple, NewValueType}
+# The function may also return an array of the above types, in this case we set flatten to true.
+# The new and old value types must be a primitive type.
+
 function parse_map_function(
     func::Function,
     arg_types::Tuple # may have multiple methods for this function
-)::Tuple{DataType, UInt64, Bool}
-    if !all(isleaftype, arg_types)
-        error("Not all types are concrete: $arg_types")
-    end
+)::Tuple{DataType, UInt64, Bool, Bool}
+#    if !all(isleaftype, arg_types)
+#        error("Not all types are concrete: $arg_types")
+#    end
     rettype_array = Base.return_types(func, arg_types)
     @assert length(rettype_array) == 1
     rettype = first(rettype_array)
@@ -13,19 +22,23 @@ function parse_map_function(
         rettype = rettype.parameters[1]
         flatten_results = true
     end
-    @assert issubtype(rettype, Tuple)
+    local preserving_keys
+    local new_value_type
     local num_dims
-    if length(rettype.parameters) == 1
-        num_dims = 0
-    else
+    if issubtype(rettype, Tuple)
+        preserving_keys = false
         @assert length(rettype.parameters) == 2
         key_type = fieldtype(rettype, 1)
         @assert issubtype(key_type, Tuple)
+        @assert !(first(key_type.parameters) <: Vararg) "TODO: the number of dimensions of a key must be a compile time constant"
         num_dims = length(key_type.parameters)
+        new_value_type = fieldtype(rettype, 2)
+    else
+        preserving_keys = true
+        num_dims = 0
+        new_value_type = rettype
     end
-    value_type = fieldtype(rettype, 2)
-
-    return (value_type, num_dims, flatten_results)
+    return (new_value_type, num_dims, flatten_results, preserving_keys)
 end
 
 function test_sugar(func::Function, arg_types::Tuple)
