@@ -30,6 +30,8 @@ class AbstractDistArrayPartition {
       const std::string &mapper_func,
       Blob *result_buff) = 0;
   virtual void SetDims(const std::vector<int64_t> &dims) = 0;
+  virtual std::vector<int64_t> &GetDims() = 0;
+  virtual type::PrimitiveType GetValueType() = 0;
 
   virtual void Insert(int64_t key, const Blob &buff) = 0;
   virtual void Get(int64_t key, Blob *buff) = 0;
@@ -53,6 +55,17 @@ class AbstractDistArrayPartition {
       JuliaModule mapper_func_module,
       const std::string &mapper_func_name,
       type::PrimitiveType random_init_type) = 0;
+
+  virtual void ReadRange(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem) = 0;
+
+  virtual void WriteRange(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem) = 0;
+
  protected:
   DISALLOW_COPY(AbstractDistArrayPartition);
 

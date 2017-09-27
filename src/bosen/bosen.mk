@@ -34,7 +34,7 @@ BOSEN_PROTO_OBJ := $(BOSEN_PROTO_SRC:.proto=.pb.o)
 BOSEN_PROTO := $(patsubst src/bosen/protobuf/%.proto,protobuf/%,$(BOSEN_PROTO_SRC))
 
 DRIVER_LIB_CPP := src/bosen/conn.cpp src/bosen/util.cpp
-DRIVER_LIB_C := src/bosen/driver_c.c
+DRIVER_LIB_C := src/bosen/driver_c.c src/bosen/constants_c.c
 
 DRIVER_LIB_OBJ := $(DRIVER_LIB_CPP:.cpp=_drlib.o)
 DRIVER_LIB_PROTO_OBJ := $(BOSEN_PROTO_OBJ:.pb.o=_drlib.pb.o)

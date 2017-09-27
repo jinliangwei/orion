@@ -1,23 +1,5 @@
 export helloworld, local_helloworld, glog_init
 
-function module_to_int32(m::Symbol)::Int32
-    local ret = -1
-    if m == :Core
-        ptr_val = cglobal((:ORION_JULIA_MODULE_CORE, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif m == :Base
-        ptr_val = cglobal((:ORION_JULIA_MODULE_BASE, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif m == :Main
-        ptr_val = cglobal((:ORION_JULIA_MODULE_MAIN, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif m == :OrionGen
-        ptr_val = cglobal((:ORION_JULIA_MODULE_ORION_GEN, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    end
-    return ret
-end
-
 function helloworld()
     ccall((:orion_helloworld, lib_path), Void, ())
 end
@@ -57,50 +39,6 @@ function stop()
     ccall((:orion_stop, lib_path), Void, ())
 end
 
-function data_type_to_int32(ResultType::DataType)::Int32
-    local ret
-    if ResultType == Void
-        ptr_val = cglobal((:ORION_TYPE_VOID, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif ResultType == Int8
-        ptr_val = cglobal((:ORION_TYPE_INT8, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif ResultType == UInt8
-        ptr_val = cglobal((:ORION_TYPE_UINT8, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif ResultType == Int16
-        ptr_val = cglobal((:ORION_TYPE_INT16, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif ResultType == UInt16
-        ptr_val = cglobal((:ORION_TYPE_UINT16, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif ResultType == Int32
-        ptr_val = cglobal((:ORION_TYPE_INT32, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif ResultType == UInt32
-        ptr_val = cglobal((:ORION_TYPE_UINT32, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif ResultType == Int16
-        ptr_val = cglobal((:ORION_TYPE_INT64, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif ResultType == UInt64
-        ptr_val = cglobal((:ORION_TYPE_UINT64, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif ResultType == Float32
-        ptr_val = cglobal((:ORION_TYPE_FLOAT32, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif ResultType == Float64
-        ptr_val = cglobal((:ORION_TYPE_FLOAT64, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif ResultType == String
-        ptr_val = cglobal((:ORION_TYPE_STRING, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    else
-        ret = 12
-    end
-    return ret
-end
-
 function eval_expr_on_all(ex, eval_module::Symbol)
     buff = IOBuffer()
     serialize(buff, ex)
@@ -138,7 +76,7 @@ function define_var(var::Symbol)
           string(var), buff_array, length(buff_array))
 end
 
-function define_var(var_set::Set{Symbol})
+function define_vars(var_set::Set{Symbol})
     for var in var_set
         define_var(var)
     end

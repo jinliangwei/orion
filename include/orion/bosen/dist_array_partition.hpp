@@ -69,6 +69,7 @@ void RandomInitAndRunMap(
 template<typename ValueType>
 class DistArrayPartition : public AbstractDistArrayPartition {
  private:
+  DistArray *dist_array_;
   std::vector<int64_t> keys_;
   std::vector<ValueType> values_;
   stx::btree_map<int64_t, ValueType> index_;
@@ -77,11 +78,14 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   const type::PrimitiveType kValueType;
   // temporary to facilitate LoadTextFile
   std::vector<int64_t> key_buff_;
+  int64_t key_start_; // used (set to nonnegative when a dense index is built)
  public:
   using KeyValueBuffer = std::pair<std::vector<int64_t>,
                                    std::vector<ValueType>>;
 
-  DistArrayPartition(const Config &config, type::PrimitiveType value_type);
+  DistArrayPartition(DistArray *dist_array,
+                     const Config &config,
+                     type::PrimitiveType value_type);
   ~DistArrayPartition();
 
   bool LoadTextFile(JuliaEvaluator *julia_eval,
@@ -94,6 +98,9 @@ class DistArrayPartition : public AbstractDistArrayPartition {
                     Blob *max_key);
 
   void SetDims(const std::vector<int64_t> &dims);
+  std::vector<int64_t> &GetDims();
+  type::PrimitiveType GetValueType();
+
   void Insert(int64_t key, const Blob &buff) { }
   void Get(int64_t key, Blob *buff) { }
   void GetRange(int64_t start, int64_t end, Blob *buff) { }
@@ -116,12 +123,43 @@ class DistArrayPartition : public AbstractDistArrayPartition {
       JuliaModule mapper_func_module,
       const std::string &mapper_func_name,
       type::PrimitiveType random_init_type);
+
+  void ReadRange(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
+
+  void ReadRangeDense(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
+
+  void ReadRangeSparse(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
+
+  void WriteRange(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
+
+  void WriteRangeDense(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
+
+  void WriteRangeSparse(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
 };
 
 /*----- Specialized for String (const char*) ------*/
 template<>
 class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
  private:
+  DistArray *dist_array_;
   std::vector<int64_t> keys_;
   std::vector<char> values_;
   std::vector<size_t> str_offsets_;
@@ -129,8 +167,11 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
   bool index_exists_ {false};
   const Config& kConfig;
   const type::PrimitiveType kValueType;
+  int64_t key_start_; // used (set to nonnegative when a dense index is built)
  public:
-  DistArrayPartition(const Config &config, type::PrimitiveType value_type);
+  DistArrayPartition(DistArray *dist_array_,
+                     const Config &config,
+                     type::PrimitiveType value_type);
   ~DistArrayPartition();
 
   bool LoadTextFile(JuliaEvaluator *julia_eval,
@@ -142,7 +183,8 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
                     const std::string &mapper_func_name,
                     Blob *max_key);
   void SetDims(const std::vector<int64_t> &dims);
-
+  std::vector<int64_t> &GetDims();
+  type::PrimitiveType GetValueType();
   void Insert(int64_t key, const Blob &buff) { }
   void Get(int64_t key, Blob *buff) { }
   void GetRange(int64_t start, int64_t end, Blob *buff) { }
@@ -165,15 +207,48 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
       JuliaModule mapper_func_module,
       const std::string &mapper_func_name,
       type::PrimitiveType random_init_type);
+
+  void ReadRange(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
+
+  void ReadRangeDense(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
+
+  void ReadRangeSparse(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
+
+  void WriteRange(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
+
+  void WriteRangeDense(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
+
+  void WriteRangeSparse(
+      int64_t key_begin,
+      size_t num_elements,
+      void *mem);
 };
 
 /*---- template general implementation -----*/
 template<typename ValueType>
 DistArrayPartition<ValueType>::DistArrayPartition(
+    DistArray *dist_array,
     const Config &config,
     type::PrimitiveType value_type):
+    dist_array_(dist_array),
     kConfig(config),
-    kValueType(value_type) { }
+    kValueType(value_type),
+    key_start_(-1) { }
 
 template<typename ValueType>
 DistArrayPartition<ValueType>::~DistArrayPartition() { }
@@ -265,6 +340,18 @@ DistArrayPartition<ValueType>::SetDims(const std::vector<int64_t> &dims) {
     keys_.push_back(key);
   }
   return;
+}
+
+template<typename ValueType>
+std::vector<int64_t> &
+DistArrayPartition<ValueType>::GetDims() {
+  return dist_array_->GetDims();
+}
+
+template<typename ValueType>
+type::PrimitiveType
+DistArrayPartition<ValueType>::GetValueType() {
+  return dist_array_->GetValueType();
 }
 
 template<typename ValueType>
@@ -401,90 +488,84 @@ DistArrayPartition<ValueType>::RandomInit(
   }
 }
 
-/*---- template const char* implementation -----*/
-DistArrayPartition<const char*>::DistArrayPartition(
-    const Config &config,
-    type::PrimitiveType value_type):
-    kConfig(config),
-    kValueType(value_type) { }
-
-DistArrayPartition<const char*>::~DistArrayPartition() { }
-
-bool
-DistArrayPartition<const char*>::LoadTextFile(
-    JuliaEvaluator *julia_eval,
-    const std::string &path, int32_t partition_id,
-    task::DistArrayMapType map_type,
-    bool flatten_results,
-    size_t num_dims,
-    JuliaModule mapper_func_module,
-    const std::string &mapper_func_name,
-    Blob *max_key) {
-  LOG(INFO) << __func__;
-  size_t offset = path.find_first_of(':');
-  std::string prefix = path.substr(0, offset);
-  std::string file_path = path.substr(offset + 3, path.length() - offset - 3);
-  std::vector<char> char_buff;
-  size_t begin = 0, end = 0;
-  bool read = false;
-  if (prefix == "hdfs") {
-    read = LoadFromHDFS(kConfig.kHdfsNameNode, file_path, partition_id,
-                        kConfig.kNumExecutors,
-                        kConfig.kPartitionSizeMB * 1024 * 1024,
-                        &char_buff, &begin, &end);
-  } else if (prefix == "file") {
-    read = LoadFromPosixFS(file_path, partition_id,
-                           kConfig.kNumExecutors,
-                           kConfig.kPartitionSizeMB * 1024 * 1024,
-                           &char_buff, &begin, &end);
-  } else {
-    LOG(FATAL) << "Cannot parse the path specification " << path;
-  }
-  return read;
-}
-
+template<typename ValueType>
 void
-DistArrayPartition<const char*>::SetDims(const std::vector<int64_t> &dims) {
-}
-
-void
-DistArrayPartition<const char*>::AppendKeyValue(int64_t key, const void* value) {
-
-}
-
-void
-DistArrayPartition<const char*>::AddToSpaceTimePartitions(
-    DistArray *dist_array,
-    const std::vector<int32_t> &partition_ids) {
-
-}
-
-size_t
-DistArrayPartition<const char*>::GetNumKeyValues() {
-  return keys_.size();
-}
-
-size_t
-DistArrayPartition<const char*>::GetValueSize() {
-  return 0;
-}
-
-void
-DistArrayPartition<const char*>::CopyValues(void *mem) const {
-}
-
-void
-DistArrayPartition<const char*>::RandomInit(
-    JuliaEvaluator* julia_eval,
-    const std::vector<int64_t> &dims,
+DistArrayPartition<ValueType>::ReadRange(
     int64_t key_begin,
     size_t num_elements,
-    task::DistArrayInitType init_type,
-    task::DistArrayMapType map_type,
-    JuliaModule mapper_func_module,
-    const std::string &mapper_func_name,
-    type::PrimitiveType random_init_type) {
-  LOG(INFO) << "random init is not supported by element type const char*";
+    void *mem) {
+  auto &dist_array_meta = dist_array_->GetMeta();
+  bool is_dense = dist_array_meta.IsDense();
+  auto partition_scheme = dist_array_meta.GetPartitionScheme();
+
+  if (is_dense
+      && (partition_scheme == DistArrayPartitionScheme::k1D
+          || partition_scheme == DistArrayPartitionScheme::kRange)) {
+    ReadRangeDense(key_begin, num_elements, mem);
+  } else {
+    ReadRangeSparse(key_begin, num_elements, mem);
+  }
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::ReadRangeDense(
+    int64_t key_begin,
+    size_t num_elements,
+    void *mem) {
+  CHECK_LE(key_start_, 0) << " need to build dense index first";
+  CHECK(key_begin >= key_start_ && num_elements < keys_.size());
+  size_t offset = key_begin - key_start_;
+  memcpy(mem, values_.data() + offset, values_.size() * type::SizeOf(kValueType));
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::ReadRangeSparse(
+    int64_t key_begin,
+    size_t num_elements,
+    void *mem) {
+
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::WriteRange(
+    int64_t key_begin,
+    size_t num_elements,
+    void *mem) {
+  auto &dist_array_meta = dist_array_->GetMeta();
+  bool is_dense = dist_array_meta.IsDense();
+  auto partition_scheme = dist_array_meta.GetPartitionScheme();
+
+  if (is_dense
+      && (partition_scheme == DistArrayPartitionScheme::k1D
+          || partition_scheme == DistArrayPartitionScheme::kRange)) {
+    WriteRangeDense(key_begin, num_elements, mem);
+  } else {
+    WriteRangeSparse(key_begin, num_elements, mem);
+  }
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::WriteRangeDense(
+    int64_t key_begin,
+    size_t num_elements,
+    void *mem) {
+  CHECK_LE(key_start_, 0) << " need to build dense index first";
+  CHECK(key_begin >= key_start_ && num_elements < keys_.size());
+  size_t offset = key_begin - key_start_;
+  memcpy(values_.data() + offset, mem, values_.size() * type::SizeOf(kValueType));
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::WriteRangeSparse(
+    int64_t key_begin,
+    size_t num_elements,
+    void *mem) {
+
 }
 
 }

@@ -9,11 +9,22 @@ namespace bosen {
 DistArray::DistArray(
     const Config &config,
     type::PrimitiveType value_type,
-    int32_t executor_id):
+    int32_t executor_id,
+    size_t num_dims,
+    task::DistArrayParentType parent_type,
+    task::DistArrayInitType init_type,
+    const DistArrayMeta *parent_dist_array_meta,
+    bool is_dense):
     kConfig(config),
     kValueType(value_type),
     kValueSize(type::SizeOf(value_type)),
-    kExecutorId(executor_id) { }
+    kExecutorId(executor_id),
+    meta_(num_dims, parent_type, init_type,
+          parent_dist_array_meta,
+          is_dense) {
+  if (num_dims > 0)
+    dims_.resize(num_dims);
+}
 
 DistArray::~DistArray() {
   for (auto &partition_pair : partitions_) {
@@ -21,17 +32,18 @@ DistArray::~DistArray() {
   }
 }
 
-DistArray::DistArray(DistArray &&other):
+/*DistArray::DistArray(DistArray &&other):
     kConfig(other.kConfig),
     kValueType(other.kValueType),
     kValueSize(other.kValueSize),
     kExecutorId(other.kExecutorId),
-    partitions_(other.partitions_) {
+    partitions_(other.partitions_),
+    meta_(other.meta_) {
   other.partitions_.clear();
-}
+  } */
 
 AbstractDistArrayPartition*
-DistArray::CreatePartition() const {
+DistArray::CreatePartition() {
   AbstractDistArrayPartition *partition_ptr = nullptr;
   switch(kValueType) {
     case type::PrimitiveType::kVoid:
@@ -43,77 +55,77 @@ DistArray::CreatePartition() const {
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int8_t>(kConfig, kValueType));
+                new DistArrayPartition<int8_t>(this, kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kUInt8:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<uint8_t>(kConfig, kValueType));
+                new DistArrayPartition<uint8_t>(this, kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kInt16:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int16_t>(kConfig, kValueType));
+                new DistArrayPartition<int16_t>(this, kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kUInt16:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<uint16_t>(kConfig, kValueType));
+                new DistArrayPartition<uint16_t>(this, kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kInt32:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int32_t>(kConfig, kValueType));
+                new DistArrayPartition<int32_t>(this, kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kUInt32:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<uint32_t>(kConfig, kValueType));
+                new DistArrayPartition<uint32_t>(this, kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kInt64:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int64_t>(kConfig, kValueType));
+                new DistArrayPartition<int64_t>(this, kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kUInt64:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int64_t>(kConfig, kValueType));
+                new DistArrayPartition<int64_t>(this, kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kFloat32:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<float>(kConfig, kValueType));
+                new DistArrayPartition<float>(this, kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kFloat64:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<double>(kConfig, kValueType));
+                new DistArrayPartition<double>(this, kConfig, kValueType));
         break;
       }
     case type::PrimitiveType::kString:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<const char*>(kConfig, kValueType));
+                new DistArrayPartition<const char*>(this, kConfig, kValueType));
         break;
       }
     default:
@@ -159,6 +171,7 @@ DistArray::SetDims(const std::vector<int64_t> &dims) {
   for (auto partition : partitions_) {
     partition.second->SetDims(dims_);
   }
+  meta_.AssignDims(dims.data());
 }
 
 void
@@ -168,11 +181,22 @@ DistArray::SetDims(const int64_t* dims, size_t num_dims) {
   for (auto partition : partitions_) {
     partition.second->SetDims(dims_);
   }
+  meta_.AssignDims(dims);
 }
 
 std::vector<int64_t> &
 DistArray::GetDims() {
   return dims_;
+}
+
+DistArrayMeta &
+DistArray::GetMeta() {
+  return meta_;
+}
+
+type::PrimitiveType
+DistArray::GetValueType() {
+  return kValueType;
 }
 
 std::unordered_map<int32_t, AbstractDistArrayPartition*>&
@@ -188,7 +212,7 @@ DistArray::GetLocalPartition(int32_t partition_id) {
 
 }
 
-std::unordered_map<int32_t, DistArray::SpacePartition>&
+std::map<int32_t, DistArray::SpacePartition>&
 DistArray::GetSpaceTimePartitions() {
   return space_time_partitions_;
 }

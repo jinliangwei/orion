@@ -1012,17 +1012,26 @@ Executor::CreateDistArray() {
   dist_array_under_operation_ = id;
   type::PrimitiveType value_type
       = static_cast<type::PrimitiveType>(create_dist_array.value_type());
+  size_t num_dims = create_dist_array.num_dims();
+  auto parent_type = create_dist_array.parent_type();
+  auto init_type = create_dist_array.init_type();
+  DistArrayMeta *parent_dist_array_meta_ptr = nullptr;
+  if (parent_type == task::DIST_ARRAY) {
+    int32_t parent_id = create_dist_array.parent_id();
+    auto &parent_meta = dist_arrays_.at(parent_id).GetMeta();
+    parent_dist_array_meta_ptr = &parent_meta;
+  }
   auto iter_pair = dist_arrays_.emplace(
       std::piecewise_construct,
       std::forward_as_tuple(id),
-      std::forward_as_tuple(kConfig, value_type, kId));
+      std::forward_as_tuple(kConfig, value_type, kId,
+                            num_dims, parent_type, init_type,
+                            parent_dist_array_meta_ptr, false));
   auto &dist_array = iter_pair.first->second;
 
   task::DistArrayMapType map_type = create_dist_array.map_type();
   bool map = (map_type != task::NO_MAP);
   bool flatten_results = create_dist_array.flatten_results();
-  size_t num_dims = create_dist_array.num_dims();
-  auto parent_type = create_dist_array.parent_type();
   switch (parent_type) {
     case task::TEXT_FILE:
       {
@@ -1118,6 +1127,8 @@ Executor::SpaceTimeRepartitionDistArray() {
   std::string partition_func_name
       = repartition_dist_array_task.partition_func_name();
   auto &dist_array_to_repartition = dist_arrays_.at(id);
+  dist_array_to_repartition.GetMeta().SetPartitionScheme(
+      DistArrayPartitionScheme::kSpaceTime);
   auto cpp_func = std::bind(
         JuliaEvaluator::StaticComputeSpaceTimeRepartition,
         std::placeholders::_1,

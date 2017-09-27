@@ -338,11 +338,19 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           create_dist_array.ParseFromString(task_buff);
           int32_t id = create_dist_array.id();
           size_t num_dims = create_dist_array.num_dims();
+          auto parent_type = create_dist_array.parent_type();
           auto init_type = create_dist_array.init_type();
+          DistArrayMeta *parent_dist_array_meta_ptr = nullptr;
+          if (parent_type == task::DIST_ARRAY) {
+            int32_t parent_id = create_dist_array.parent_id();
+            auto &parent_meta = dist_array_metas_.at(parent_id);
+            parent_dist_array_meta_ptr = &parent_meta;
+          }
           auto iter_pair = dist_array_metas_.emplace(
               std::piecewise_construct,
               std::forward_as_tuple(id),
-              std::forward_as_tuple(num_dims, init_type));
+              std::forward_as_tuple(num_dims, parent_type, init_type,
+                                    parent_dist_array_meta_ptr, false));
           auto meta_iter = iter_pair.first;
           if (init_type != task::EMPTY) {
             meta_iter->second.AssignDims(create_dist_array.dims().data());
@@ -470,6 +478,16 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kForwardDriverMsgToAll;
+
+          task::SpaceTimeRepartitionDistArray repartition_task;
+          std::string task_buff(
+              reinterpret_cast<const char*>(driver_recv_byte_buff_.GetBytes()),
+              driver_recv_byte_buff_.GetSize());
+          repartition_task.ParseFromString(task_buff);
+          int32_t id = repartition_task.id();
+          auto &meta = dist_array_metas_.at(id);
+          meta.SetPartitionScheme(DistArrayPartitionScheme::kSpaceTime);
+
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;

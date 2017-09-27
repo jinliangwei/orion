@@ -4,59 +4,8 @@
 #include <orion/bosen/driver.h>
 #include <orion/bosen/driver.hpp>
 #include <orion/glog_config.hpp>
-#include <orion/bosen/task.pb.h>
 
 extern "C" {
-  const int32_t ORION_TYPE_VOID = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kVoid);
-  const int32_t ORION_TYPE_INT8 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kInt8);
-  const int32_t ORION_TYPE_UINT8 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kUInt8);
-  const int32_t ORION_TYPE_INT16 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kInt16);
-  const int32_t ORION_TYPE_UINT16 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kUInt16);
-  const int32_t ORION_TYPE_INT32 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kInt32);
-  const int32_t ORION_TYPE_UINT32 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kUInt32);
-  const int32_t ORION_TYPE_INT64 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kInt64);
-  const int32_t ORION_TYPE_UINT64 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kUInt64);
-  const int32_t ORION_TYPE_FLOAT32 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kFloat32);
-  const int32_t ORION_TYPE_FLOAT64 = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kFloat64);
-  const int32_t ORION_TYPE_STRING = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kString);
-
-  const int32_t ORION_TASK_TABLE_DEP_TYPE_PIPELINED = static_cast<int32_t>(orion::bosen::task::PIPELINED);
-  const int32_t ORION_TASK_TABLE_DEP_TYPE_RANDOM_ACCESS = static_cast<int32_t>(orion::bosen::task::RANDOM_ACCESS);
-
-  const int32_t ORION_TASK_READWRITE_READ_ONLY = static_cast<int32_t>(orion::bosen::task::READ_ONLY);
-  const int32_t ORION_TASK_READWRITE_WRITE_ONLY = static_cast<int32_t>(orion::bosen::task::WRITE_ONLY);
-  const int32_t ORION_TASK_READWRITE_READ_WRITE = static_cast<int32_t>(orion::bosen::task::READ_WRITE);
-
-  const int32_t ORION_TASK_REPETITION_ONE_PARTITION = static_cast<int32_t>(orion::bosen::task::ONE_PARTITION);
-  const int32_t ORION_TASK_REPETITION_ALL_LOCAL_PARTITIONS = static_cast<int32_t>(orion::bosen::task::ALL_LOCAL_PARTITIONS);
-  const int32_t ORION_TASK_REPETITION_ALL_PARTITIONS = static_cast<int32_t>(orion::bosen::task::ALL_PARTITIONS);
-
-  const int32_t ORION_TASK_PARTITION_SCHEME_STATIC = static_cast<int32_t>(orion::bosen::task::STATIC);
-  const int32_t ORION_TASK_PARTITION_SCHEME_DYNAMIC = static_cast<int32_t>(orion::bosen::task::DYNAMIC);
-  const int32_t ORION_TASK_PARTITION_SCHEME_RANDOM = static_cast<int32_t>(orion::bosen::task::RANDOM);
-
-  const int32_t ORION_TASK_BASETABLE_TYPE_VIRTUAL = static_cast<int32_t>(orion::bosen::task::VIRTUAL);
-  const int32_t ORION_TASK_BASETABLE_TYPE_CONCRETE = static_cast<int32_t>(orion::bosen::task::CONCRETE);
-
-  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_TEXT_FILE = static_cast<int32_t>(orion::bosen::task::TEXT_FILE);
-  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_DIST_ARRAY = static_cast<int32_t>(orion::bosen::task::DIST_ARRAY);
-  const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_INIT = static_cast<int32_t>(orion::bosen::task::INIT);
-
-  const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_EMPTY = static_cast<int32_t>(orion::bosen::task::EMPTY);
-  const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM = static_cast<int32_t>(orion::bosen::task::UNIFORM_RANDOM);
-  const int32_t ORION_TASK_DIST_ARRAY_INIT_TYPE_NORMAL_RANDOM = static_cast<int32_t>(orion::bosen::task::NORMAL_RANDOM);
-
-  const int32_t ORION_JULIA_MODULE_CORE = static_cast<int32_t>(orion::bosen::JuliaModule::kCore);
-  const int32_t ORION_JULIA_MODULE_BASE = static_cast<int32_t>(orion::bosen::JuliaModule::kBase);
-  const int32_t ORION_JULIA_MODULE_MAIN = static_cast<int32_t>(orion::bosen::JuliaModule::kMain);
-  const int32_t ORION_JULIA_MODULE_TOP = static_cast<int32_t>(orion::bosen::JuliaModule::kTop);
-  const int32_t ORION_JULIA_MODULE_ORION_GEN = static_cast<int32_t>(orion::bosen::JuliaModule::kOrionGen);
-
-  const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_NO_MAP = static_cast<int32_t>(orion::bosen::task::NO_MAP);
-  const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP = static_cast<int32_t>(orion::bosen::task::MAP);
-  const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_FIXED_KEYS = static_cast<int32_t>(orion::bosen::task::MAP_FIXED_KEYS);
-  const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES = static_cast<int32_t>(orion::bosen::task::MAP_VALUES);
-  const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES_NEW_KEYS = static_cast<int32_t>(orion::bosen::task::MAP_VALUES_NEW_KEYS);
 
   orion::bosen::Driver *driver = nullptr;
   orion::GLogConfig glog_config("julia_driver");

@@ -48,6 +48,10 @@ ifeq (@SANITIZER_ON@,thread)
 SANITIZER_FLAGS = -fsanitize=thread
 endif
 
+ifeq (@SANITIZER_ON@,none)
+ORION_LIB_LINKER_LIBS = $(LIBS)
+endif
+
 CFLAGS += -I$(ORION_HOME)/include -I$(JULIA_HOME)/usr/include -I$(JULIA_HOME)/src -I$(JULIA_HOME)/src/support
 CFLAGS += -I$(ORION_HOME)/deps/include
 
@@ -78,7 +82,7 @@ include src/bosen/bosen.mk
 $(ORION_LIB): lib $(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ)
 	gcc -shared -Wl,-soname,lib$(ORION_LIB_NAME).so.0 -o lib$(ORION_LIB_NAME).so.0.0 \
 		$(BOSEN_LIB_OBJ) $(BOSEN_LIB_COBJ) $(BOSEN_PROTO_OBJ) \
-		$(LDFLAGS)
+		$(ORION_LIB_LINKER_LIBS) $(LDFLAGS)
 	mv lib$(ORION_LIB_NAME).so.0.0 lib/
 	ln -sf $(ORION_HOME)/lib/lib$(ORION_LIB_NAME).so.0.0 $(ORION_HOME)/lib/lib$(ORION_LIB_NAME).so.0
 	ln -sf $(ORION_HOME)/lib/lib$(ORION_LIB_NAME).so.0.0 $(ORION_HOME)/$@

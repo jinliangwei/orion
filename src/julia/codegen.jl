@@ -23,7 +23,40 @@ function gen_stmt_broadcast_var(var_set::Set{Symbol})::Array{Expr}
     return expr_array
 end
 
-function gen_space_time_partition_function(func_name::Symbol,
+function gen_2d_partition_function(func_name::Symbol,
+                                   time_partition_dim::Int64,
+                                   space_partition_dim::Int64,
+                                   time_dim_tile_size::Int64,
+                                   space_dim_tile_size::Int64)
+
+    space_partition_id = :(dim_keys[$space_partition_dim] % space_dim_tile_size)
+    time_partition_id = :(dim_keys[$time_partition_dim] % time_dim_tile_size)
+
+    add_space_partition_id_stmt = :(results[2 * i - 1] = $(space_partition_id))
+    add_time_partition_id_stmt = :(results[2 * i] = $(time_partition_id))
+
+    partition_func = :(
+        function $func_name(keys::Vector{Int64},
+                            dims::Vector{Int64},
+                            results::Vector{Int32})
+          rev_dims = reverse(dims)
+          println("keys.size() = ", length(keys),
+                " typeof(OrionWorker) = ", typeof(OrionWorker))
+          i = 1
+          for key in keys
+            #println(key)
+            dim_keys = OrionWorker.from_int64_to_keys(key, rev_dims)
+            $add_space_partition_id_stmt
+            $add_time_partition_id_stmt
+            i += 1
+          end
+        end)
+
+    return partition_func
+
+end
+
+function gen_utransform_2d_partition_function(func_name::Symbol,
                                            dims::Array{Tuple{Int64}, 1},
                                            coeffs::Array{Tuple{Int64}, 1},
                                            tile_length::Int64,
@@ -330,4 +363,147 @@ function gen_parser_function(func_name::Symbol,
                              map_func_modules::Vector{Module},
                              map_types::Vector{DistArrayMapType},
                              map_flattens::Vector{Bool})
+end
+
+type DistArrayAccessRewriteContext
+    iteration_var::Symbol
+    dist_array_sym_to_index::Dict{Symbol, Int64}
+    DistArrayAccessRewriteContext(iteration_var::Symbol,
+                                  dist_array_sym_to_index::Dict{Symbol, Int64}) = new(
+                                      iteration_var,
+                                      dist_array_sym_to_index)
+end
+
+function rewrite_dist_array_access_visit(expr,
+                                         context::DistArrayAccessRewriteContext,
+                                         top_level::Integer,
+                                         is_top_level::Bool,
+                                         read::Bool)
+    if isa(expr, Expr) &&
+        expr.head == :ref
+        expr_referenced = expr.args[1]
+        if isa(expr_referenced, Expr) &&
+            expr_referenced.head == :(.) &&
+            expr_referenced.args[1] == context.iteration_var &&
+            isa(expr_referenced.args[2], QuoteNode)
+            if expr_referenced.args[2].value == :key
+                return :(dim_keys[$(expr.args[2])])
+            elseif expr_referenced.args[2].value == :value
+                return :value
+            end
+        elseif isa(expr_referenced, Symbol)
+            if !isdefined(current_module(), expr_referenced)
+                return expr
+            end
+            ref_dist_array = eval(current_module(), expr_referenced)
+            if !isa(ref_dist_array, DistArray)
+                return expr
+            end
+            if write
+                @assert false
+            end
+            da_index = context.dist_array_sym_to_index[expr_referenced]
+
+            call_expr = :(dist_array_read(dist_array_partitions[$da_index]))
+            index_tuple_expr = Expr(:tuple)
+            index_tuple_expr.args = expr.args[2:end]
+            push!(call_expr.args, index_tuple_expr)
+        else
+            return  expr
+        end
+    elseif isa(expr, Expr) &&
+        expr.head == :(=)
+        expr_assigned = expr.args[1]
+        if isa(expr_assigned, Expr) &&
+            expr_assigned.head == :ref
+            expr_referenced = expr_assigned.args[1]
+            if isa(expr_referenced, Symbol)
+                if !isdefined(current_module(), expr_referenced)
+                    return expr
+                end
+                ref_dist_array = eval(current_module(), expr_referenced)
+                if !isa(ref_dist_array, DistArray)
+                    return expr
+                end
+                da_index = context.dist_array_sym_to_index[expr_referenced]
+                values_array = expr.args[2]
+                call_expr = :(dist_array_write(dist_array_partitions[$da_index]))
+                index_tuple_expr = Expr(:tuple)
+                index_tuple_expr.args = expr_assigned.args[2:end]
+                push!(call_expr.args, index_tuple_expr)
+                push!(call_expr.args, values_array)
+            else
+                return expr
+            end
+        else
+            return expr
+        end
+    elseif isa(expr, Expr) &&
+        (expr.head == :(+=) ||
+         expr.head == :(-=) ||
+         expr.head == :(.*=) ||
+         expr.head == :(./=))
+        @assert false
+    elseif isa(expr, Symbol) ||
+        isa(expr, Number) ||
+        isa(expr, String)
+        return expr
+    else
+        return AstWalk.AST_WALK_RECURSIVE
+    end
+end
+
+# this is a very incomplete version, just to make MF and LDA work
+function gen_loop_body_function(func_name::Symbol,
+                                loop_body,
+                                par_for_context::ParForContext,
+                                par_for_scope::ScopeContext)
+
+    @assert isa(loop_body, Expr)
+    @assert loop_body.head == :block
+    func_body = deepcopy(loop_body)
+    iteration_space = par_for_context.iteration_space
+    iteration_space_dist_array = eval(current_module(), iteration_space)
+    iter_space_value_type = iteration_space_dist_array.ValueType
+
+    dist_array_access_dict = par_for_context.dist_array_access_dict
+    accessed_dist_array_id_vec = Vector{Int32}()
+    accessed_dist_array_sym_to_index = Dict{Symbol, Int32}()
+
+    for dist_array_access_pair in dist_array_access_dict
+        da_sym = dist_array_access_pair.first
+        da_id = eval(current_module(), da_sym).id
+        push!(accessed_dist_array_id_vec, da_id)
+        accessed_dist_array_sym_to_index[da_sym] = length(accessed_dist_array_id_vec)
+    end
+    sort!(accessed_dist_arrays, lt = ((x, y) -> x[2] < y[2]))
+    println(accessed_dist_arrays)
+
+    dist_array_access_rewrite_context = DistArrayAccessRewriteContext(
+        par_for_context.iteration_var,
+        accessed_dist_array_sym_to_index)
+    func_body =
+
+    batch_loop_stmt = :(
+        for i in 1:length(keys)
+          key = keys[i]
+          value = values[i]
+          dim_keys = OrionWorker.from_int64_to_keys(key, rev_dims)
+        end
+    )
+    for stmt in loop_body.args
+        rewritten_stmt = AstWalk.ast_walk(
+            deepcopy(stmt),
+            rewrite_dist_array_access_visit,
+            dist_array_access_rewrite_context)
+        push!(batch_loop_stmt.args, rewritten_stmt)
+    end
+    loop_func = :(
+    function $func_name(keys::Vector{Int64},
+                        values::Vector{$iter_space_value_type},
+                        dist_array_partitions::Vector{Ptr{Void}})
+        $(batch_loop_stmt)
+    end
+    )
+    return loop_func
 end

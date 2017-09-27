@@ -18,7 +18,6 @@ import Base.copy
     4 DistArrayMapType_map_values_new_keys =
     5
 
-
 type DistArray{T} <: AbstractArray{T}
     id::Int32
     parent_type::DistArrayParentType
@@ -34,6 +33,7 @@ type DistArray{T} <: AbstractArray{T}
     is_materialized::Bool
     dims::Array{Int64, 1}
     random_init_type::DataType
+    is_dense::Bool
 
     DistArray(id::Integer,
               parent_type::DistArrayParentType,
@@ -47,20 +47,22 @@ type DistArray{T} <: AbstractArray{T}
               mapper_func_module::Module,
               mapper_func_name::String,
               is_materialized::Bool,
-              random_init_type::DataType) = new(id,
-                                           parent_type,
-                                           flatten_results,
-                                           map_type,
-                                           num_dims,
-                                           ValueType,
-                                           file_path,
-                                           parent_id,
-                                           init_type,
-                                           mapper_func_module,
-                                           mapper_func_name,
-                                           is_materialized,
-                                            zeros(Int64, num_dims),
-                                            random_init_type)
+              random_init_type::DataType,
+              is_dense::Bool) = new(id,
+                                    parent_type,
+                                    flatten_results,
+                                    map_type,
+                                    num_dims,
+                                    ValueType,
+                                    file_path,
+                                    parent_id,
+                                    init_type,
+                                    mapper_func_module,
+                                    mapper_func_name,
+                                    is_materialized,
+                                    zeros(Int64, num_dims),
+                                    random_init_type,
+                                    is_dense)
 
     DistArray() = new(-1,
                       DistArrayParentType_init,
@@ -75,72 +77,17 @@ type DistArray{T} <: AbstractArray{T}
                       "",
                       false,
                       zeros(Int64, 0),
-                      Void)
+                      Void,
+                      false)
 end
 
 const dist_arrays = Dict{Int32, DistArray}()
 dist_array_id_counter = 0
 
-function dist_array_parent_type_to_int32(t::DistArrayParentType)::Int32
-    local ret::Int32
-    if t == DistArrayParentType_text_file
-        ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_PARENT_TYPE_TEXT_FILE, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif t == DistArrayParentType_dist_array
-        ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_PARENT_TYPE_DIST_ARRAY, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif t == DistArrayParentType_init
-        ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_PARENT_TYPE_INIT, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    else
-        error("Unknown ", t)
-    end
-    return ret
-end
-
-function dist_array_init_type_to_int32(t::DistArrayInitType)::Int32
-    local ret::Int32
-    if t == DistArrayInitType_empty
-        ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_INIT_TYPE_EMPTY, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif t == DistArrayInitType_uniform_random
-        ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif t == DistArrayInitType_normal_random
-        ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_INIT_TYPE_NORMAL_RANDOM, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    else
-        error("Unknown ", t)
-    end
-    return ret
-end
-
-function dist_array_map_type_to_int32(map_type::DistArrayMapType)::Int32
-    local ret::Int32
-    if map_type == DistArrayMapType_no_map
-        ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_MAP_TYPE_NO_MAP, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif map_type == DistArrayMapType_map
-        ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif map_type == DistArrayMapType_map_fixed_keys
-        ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_FIXED_KEYS, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif map_type == DistArrayMapType_map_values
-        ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    elseif map_type == DistArrayMapType_map_values_new_keys
-        ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES_NEW_KEYS, lib_path), Int32)
-        ret = unsafe_load(ptr_val)
-    else
-        error("unknown ", map_type)
-    end
-    return ret
-end
-
 function text_file(
     file_path::AbstractString,
-    parser_func::Function)::DistArray
+    parser_func::Function,
+    is_dense::Bool = false)::DistArray
 
     parser_func_module = which(Base.function_name(parser_func))
     parser_func_name = string(Base.function_name(parser_func))
@@ -169,7 +116,8 @@ function text_file(
         parser_func_module,
         parser_func_name,
         false,
-        Void)
+        Void,
+        is_dense)
     dist_arrays[id] = dist_array
     return dist_array
 end
@@ -192,7 +140,8 @@ function rand(ValueType::DataType, dims...)::DistArray
         Module(),
         "",
         false,
-        ValueType)
+        ValueType,
+        true)
     dist_array.dims = [dims...]
     dist_arrays[id] = dist_array
     return dist_array
@@ -220,7 +169,8 @@ function randn(ValueType::DataType, dims...)::DistArray
         Module(),
         "",
         false,
-        ValueType)
+        ValueType,
+        true)
     dist_array.dims = [dims...]
     dist_arrays[id] = dist_array
     return dist_array
@@ -398,7 +348,8 @@ function map_generic(parent_dist_array::DistArray,
         map_func_module,
         map_func_name,
         false,
-        parent_dist_array.random_init_type)
+        parent_dist_array.random_init_type,
+        parent_dist_array.is_dense)
     dist_array.dims = parent_dist_array.dims
     dist_arrays[id] = dist_array
     return dist_array

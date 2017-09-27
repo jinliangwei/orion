@@ -1,16 +1,10 @@
-include("/home/ubuntu/orion/src/julia/orion.jl")
+include("/home/ubuntu/orion/src/julia/orion_worker.jl")
 
-function visit(ast::Any,
-               cbdata,
-               top_level_num,
-               is_top_level,
-               read)
-    println("hello world")
-    return Orion.AstWalk.AST_WALK_RECURSE
-end
+OrionWorker.set_lib_path("/home/ubuntu/orion/lib/liborion.so")
+#OrionWorker.helloworld()
+OrionWorker.load_constants()
+ret = OrionWorker.dist_array_read(Ptr{Void}(0), (1,))
+println(ret)
 
-macro ast_walk(ast)
-    Orion.AstWalk.ast_walk(ast, visit, 1)
-end
-
-@ast_walk a = 1
+ret = OrionWorker.dist_array_read(Ptr{Void}(0), (2:4, 2:4))
+println(ret)

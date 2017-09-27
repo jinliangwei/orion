@@ -47,7 +47,7 @@ are as follows:
 
 function ast_walk(ast::Any, callback::Function, cbdata::Any)
     @dprintln(0, "ast_walk called")
-    from_expr(ast, 1, callback, cbdata, 0, false, true, false)
+    from_expr(ast, 1, callback, cbdata, 0, false, true)
 end
 
 function from_expr(ast::Any,
@@ -56,13 +56,12 @@ function from_expr(ast::Any,
                    cbdata::Any,
                    top_level_number,
                    is_top_level::Bool,
-                   read::Bool,
-                   is_called::Bool = false)
+                   read::Bool)
     @dprintln(2, "from_expr depth = ", depth, ",  AST: ", ast)
     # For each AST node, we first call the user-provided callback to see if they
     # want to do something with the node.
     # this is the only place where callback is called
-    ret = callback(ast, cbdata, top_level_number, is_top_level, read, is_called)
+    ret = callback(ast, cbdata, top_level_number, is_top_level, read)
     @dprintln(2, "callback ret = ", ret)
     if ret != AST_WALK_RECURSE && ret != AST_WALK_RECURSE_DUPLICATE
         return ret
@@ -110,28 +109,148 @@ function from_expr_helper(ast::Expr,
             args[i] = from_expr(args[i], depth, callback, cbdata,
                                 top_level_number, false, read)
         end
-    elseif head == :(=) ||
-        head == :(.=) ||
-        head == :(+=) ||
-        head == :(-=) ||
-        head == :(*=) ||
-        head == :(/=)
-        args[1] = from_expr(args[1], depth, callback, cbdata, top_level_number,
+    elseif head in Set([:(=), :(.=), :(+=), :(/=), :(*=), :(-=)])
+         args[1] = from_expr(args[1], depth, callback, cbdata, top_level_number,
                             false, false)
         args[2] = from_expr(args[2], depth, callback, cbdata, top_level_number,
                             false, read)
     elseif head == :line
     elseif head == :call
         args[1] = from_expr(args[1], depth + 1, callback, cbdata, top_level_number,
-                            false, read, true)
+                            false, read)
         for i = 2:length(args)
             args[i] = from_expr(args[i], depth + 1, callback, cbdata, top_level_number,
-                                false, read, false)
+                                false, read)
         end
+    elseif head == :block
+        args = from_exprs(args, depth + 1, callback, cbdata, top_level_number, read)
     end
     ast.head = head
     ast.args = args
     ast.typ = typ
     return ast
 end
+
+function from_exprs(ast, depth, callback, cbdata::Any, top_level_number, read)
+    len = length(ast)
+    top_level = false
+    body = Vector{Any}()
+    for i = 1:len
+        new_expr = from_expr(ast[i], depth, callback, cbdata, i, top_level, read)
+        if new_expr != AST_WALK_REMOVE
+            push!(body, new_expr)
+        end
+    end
+    return body
+end
+
+
+# The following are for non-Expr AST nodes are generally leaf nodes of the AST where no
+# recursive processing is possible.
+function from_expr_helper(ast::Symbol,
+                          depth,
+                          callback,
+                          cbdata::Any,
+                          top_level_number,
+                          is_top_level,
+                          read)
+    @dprintln(2, typeof(ast), " type")
+    # Intentionally do nothing.
+    return ast
+end
+
+function from_expr_helper(ast::NewvarNode,
+                          depth,
+                          callback,
+                          cbdata::Any,
+                          top_level_number,
+                          is_top_level,
+                          read)
+    return NewvarNode(from_expr(ast.slot, depth, callback, cbdata, top_level_number, false, read))
+end
+
+function from_expr_helper(ast::Union{LineNumberNode,LabelNode,GotoNode,DataType,AbstractString,Void,Function,Module},
+                          depth,
+                          callback,
+                          cbdata::Any,
+                          top_level_number,
+                          is_top_level,
+                          read)
+    # Intentionally do nothing.
+    return ast
+end
+
+function from_expr_helper(ast::Tuple,
+                          depth,
+                          callback,
+                          cbdata::Any,
+                          top_level_number,
+                          is_top_level,
+                          read)
+
+    # N.B. This also handles the empty tuple correctly.
+
+    new_tt = Expr(:tuple)
+    for i = 1:length(ast)
+        push!(new_tt.args, from_expr(ast[i], depth, callback, cbdata, top_level_number, false, read))
+    end
+    new_tt.typ = typeof(ast)
+    ast = eval(new_tt)
+
+    return ast
+end
+
+function from_expr_helper(ast::QuoteNode, depth,
+                          callback,
+                          cbdata::Any,
+                          top_level_number,
+                          is_top_level,
+                          read)
+    value = ast.value
+    #TODO: fields: value
+    @dprintln(2,"QuoteNode type ",typeof(value))
+
+    return ast
+end
+
+function from_expr_helper(ast::SimpleVector,
+                          depth,
+                          callback,
+                          cbdata::Any,
+                          top_level_number,
+                          is_top_level,
+                          read)
+
+    new_values = [from_expr(ast[i], depth, callback, cbdata, top_level_number, false, read) for i = 1:length(ast)]
+    return Core.svec(new_values...)
+end
+
+"""
+The catchall function to process other kinds of AST nodes.
+"""
+function from_expr_helper(ast::Any,
+                          depth,
+                          callback,
+                          cbdata::Any,
+                          top_level_number,
+                          is_top_level,
+                          read)
+    asttyp = typeof(ast)
+
+    if isdefined(:GetfieldNode) && asttyp == GetfieldNode  # GetfieldNode = value + name
+        @dprintln(2,"GetfieldNode type ",typeof(ast.value), " ", ast)
+    elseif isdefined(:GlobalRef) && asttyp == GlobalRef
+        @dprintln(2,"GlobalRef type ",typeof(ast.mod), " ", ast)  # GlobalRef = mod + name
+    elseif isbits(asttyp)
+        #skip
+    elseif is(asttyp, LambdaInfo)
+        #skip
+    else
+        println(ast, "ast = ", ast, " type = ", typeof(ast))
+        throw(string("from_expr: unknown AST (", typeof(ast), ",", ast, ")"))
+    end
+
+    return ast
+end
+
 end

@@ -25,12 +25,15 @@ const step_size = 0.001
 Orion.@share function parse_line(line::AbstractString)
     tokens = split(line, ',')
     @assert length(tokens) == 3
-    key_tuple = (parse(Int64, String(tokens[1])),
-                 parse(Int64, String(tokens[2])))
+    key_tuple = (parse(Int64, String(tokens[1])) + 1,
+                 parse(Int64, String(tokens[2])) + 1)
     value = parse(Float64, String(tokens[3]))
     return (key_tuple, value)
 end
 
+Orion.@share function map_init_param(value::Float32)::Float32
+    return value / 10
+end
 
 ratings = Orion.text_file(data_path, parse_line)
 Orion.materialize(ratings)
@@ -38,16 +41,19 @@ dim_x, dim_y = size(ratings)
 
 println((dim_x, dim_y))
 
-W = Orion.rand(dim_x, K)
-H = Orion.rand(dim_y, K)
+W = Orion.randn(dim_x, K)
+W = Orion.map_value(W, map_init_param)
 Orion.materialize(W)
+
+H = Orion.randn(dim_y, K)
+H = Orion.map_value(H, map_init_param)
 Orion.materialize(H)
 
 Orion.@transform for i = 1:num_iterations
     Orion.@parallel_for for rating in ratings
-	x_idx = rating[1] + 1
-	y_idx = rating[2] + 1
-	rv = rating[3]
+	x_idx = rating.key[1]
+	y_idx = rating.key[2]
+	rv = rating.value
 
         W_row = W[x_idx, :]
 	H_row = H[y_idx, :]
