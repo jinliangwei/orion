@@ -12,7 +12,6 @@ function get_scope_context_visit(expr::Any,
     is_par_for = isa(scope_context_info.helper_context, ParForContext)
 
     if isa(expr, Symbol)
-        println(expr)
         if expr == Symbol("@accumulator") ||
             expr == Symbol("@parallel_for") ||
             expr == :(:) ||

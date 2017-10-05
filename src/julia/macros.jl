@@ -28,18 +28,9 @@ macro accumulator(expr::Expr)
 end
 
 function transform_loop(expr::Expr, context::ScopeContext)
-    scope_context = get_scope_context!(nothing, expr)
-    print(scope_context)
-
-    flow_graph_entry, flow_graph_exits = build_flow_graph(expr)
-    compute_use_def_flow_graph(flow_graph_entry)
-    compute_dominators(flow_graph_entry)
-    compute_im_doms(flow_graph_entry)
-    construct_dominance_frontier(flow_graph_entry)
-    put_phi_here = locate_phi(flow_graph_entry)
-    insert_phi(flow_graph_entry, put_phi_here)
-    ssa_context = compute_ssa_defs(flow_graph_entry)
-    compute_ssa_reaches(flow_graph_entry, ssa_context)
+    @time scope_context = get_scope_context!(nothing, expr)
+#    print(scope_context)
+    @time flow_analysis(expr)
     return
 
     iterative_body = quote

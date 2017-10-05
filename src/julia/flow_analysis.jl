@@ -62,7 +62,8 @@ function build_flow_graph(expr::Expr)
     build_context = FlowGraphBuildContext()
     graph_entry = create_basic_block(build_context)
     push!(graph_entry.predecessors, nothing)
-    return graph_entry, build_flow_graph(expr, graph_entry, build_context)
+    graph_exits = build_flow_graph(expr, graph_entry, build_context)
+    return graph_entry, graph_exits, build_context
 end
 
 function print_basic_block(bb::BasicBlock)
@@ -111,12 +112,16 @@ function print_flow_graph(entry::BasicBlock)
     traverse_flow_graph(entry, print_flow_graph_visit, nothing)
 end
 
-function compute_use_def_flow_graph_visit(bb::BasicBlock, cbdata)
-    compute_use_def(bb)
+function print_flow_graph(bb_list::Vector{BasicBlock})
+    for bb in bb_list
+        print_basic_block(bb)
+    end
 end
 
-function compute_use_def_flow_graph(entry::BasicBlock)
-    traverse_flow_graph(entry, compute_use_def_flow_graph_visit, nothing)
+function compute_use_def(bb_list::Vector{BasicBlock})
+    for bb in bb_list
+        compute_use_def_bb(bb)
+    end
 end
 
 function build_flow_graph(expr::Expr, bb::BasicBlock,
@@ -318,7 +323,7 @@ function compute_use_def_expr(stmt, bb::BasicBlock)
      end
 end
 
-function compute_use_def(bb::BasicBlock)
+function compute_use_def_bb(bb::BasicBlock)
     for stmt in bb.stmts
         compute_use_def_expr(stmt, bb)
     end
@@ -351,8 +356,7 @@ function flow_graph_to_list(entry::BasicBlock)
     return vec
 end
 
-function compute_dominators(entry::BasicBlock)
-    bb_list = flow_graph_to_list(entry)
+function compute_dominators(bb_list::Vector{BasicBlock})
     for bb in bb_list
         if isempty(bb.predecessors)
             bb.dominators = Set([bb])
@@ -382,8 +386,7 @@ function compute_dominators(entry::BasicBlock)
     end
 end
 
-function compute_im_doms(entry::BasicBlock)
-    bb_list = flow_graph_to_list(entry)
+function compute_im_doms(bb_list::Vector{BasicBlock})
     for bb in bb_list
         bb.im_doms = Set{BasicBlock}()
         strict_doms = setdiff(bb.dominators, Set([bb]))
@@ -405,8 +408,7 @@ function compute_im_doms(entry::BasicBlock)
     end
 end
 
-function compute_dominatees(entry::BasicBlock)
-    bb_list = flow_graph_to_list(entry)
+function compute_dominatees(bb_list::Vector{BasicBlock})
     for bb in bb_list
         for dom in bb.dominators
             push!(dom.dominatees, bb)
@@ -414,10 +416,8 @@ function compute_dominatees(entry::BasicBlock)
     end
 end
 
-function construct_dominance_frontier(entry::BasicBlock)
-    compute_im_doms(entry)
-    compute_dominatees(entry)
-    bb_list = flow_graph_to_list(entry)
+function construct_dominance_frontier(bb_list::Vector{BasicBlock})
+    compute_dominatees(bb_list)
     # topological sorting based on dominance
     dom_reverse_list = Vector{BasicBlock}()
     while length(dom_reverse_list) < length(bb_list)
@@ -464,10 +464,9 @@ type SccContext
                        Set{Set{BasicBlock}}())
 end
 
-function strongly_connected_components(entry::BasicBlock,
+function strongly_connected_components(bb_list::Vector{BasicBlock},
                                        get_successors_func)
     scc_context = SccContext()
-    bb_list = flow_graph_to_list(entry)
 
     for bb in bb_list
         if !(bb in keys(scc_context.index))
@@ -481,30 +480,30 @@ function get_successors_phi_insertion(bb::BasicBlock)
     return bb.df
 end
 
-function strongly_connected_components_helper(entry::BasicBlock,
+function strongly_connected_components_helper(bb::BasicBlock,
                                              context::SccContext,
                                              get_successors_func)
-    context.index[entry] = context.counter
-    context.low_link[entry] = context.counter
+    context.index[bb] = context.counter
+    context.low_link[bb] = context.counter
     context.counter += 1
-    push!(context.stack, entry)
-    context.on_stack[entry] = true
+    push!(context.stack, bb)
+    context.on_stack[bb] = true
 
-    for suc in get_successors_func(entry)
+    for suc in get_successors_func(bb)
         if !(suc in keys(context.index))
             strongly_connected_components_helper(suc, context, get_successors_func)
-            context.low_link[entry] = min(context.low_link[suc], context.low_link[entry])
+            context.low_link[bb] = min(context.low_link[suc], context.low_link[bb])
         elseif context.on_stack[suc]
-            context.low_link[entry] = min(context.low_link[entry], context.index[suc])
+            context.low_link[bb] = min(context.low_link[bb], context.index[suc])
         end
     end
 
-    if context.low_link[entry] == context.index[entry]
+    if context.low_link[bb] == context.index[bb]
         connected = Set{BasicBlock}()
         bb_iter = pop!(context.stack)
         context.on_stack[bb_iter] = false
         push!(connected, bb_iter)
-        while bb_iter != entry
+        while bb_iter != bb
             bb_iter = pop!(context.stack)
             context.on_stack[bb_iter] = false
             push!(connected, bb_iter)
@@ -522,8 +521,8 @@ type DfNode
 
 end
 
-function locate_phi(fg_entry::BasicBlock)
-    connected = strongly_connected_components(fg_entry, get_successors_phi_insertion)
+function locate_phi(bb_list::Vector{BasicBlock})
+    connected = strongly_connected_components(bb_list, get_successors_phi_insertion)
     df_nodes = Vector{DfNode}()
     bb_to_df_map = Dict{BasicBlock, DfNode}()
     for connected_set in connected
@@ -535,7 +534,6 @@ function locate_phi(fg_entry::BasicBlock)
         end
     end
 
-    bb_list = flow_graph_to_list(fg_entry)
     for bb in bb_list
         for df in bb.df
             if bb_to_df_map[bb] != bb_to_df_map[df]
@@ -603,14 +601,13 @@ function locate_phi(fg_entry::BasicBlock)
     return put_phi_bb
 end
 
-function insert_phi(entry::BasicBlock,
+function insert_phi(bb_list::Vector{BasicBlock},
                     put_phi_bb::Dict{BasicBlock, Set{Symbol}})
-    bb_list = flow_graph_to_list(entry)
     for bb in bb_list
         phis = put_phi_bb[bb]
         for phi in phis
             if phi in bb.uses
-                println("bb = ", bb.id, " insert ", phi)
+                #println("bb = ", bb.id, " insert ", phi)
                 insert!(bb.stmts, 1, (phi, Vector{Symbol}()))
             end
         end
@@ -633,14 +630,10 @@ function print_ssa_defs(ssa_context::SsaContext)
     end
 end
 
-function compute_ssa_defs(entry::BasicBlock)
-    bb_list = flow_graph_to_list(entry)
+function compute_ssa_defs(bb_list::Vector{BasicBlock})
     ssa_context = SsaContext()
     for bb in bb_list
         compute_ssa_defs_basic_block(bb, ssa_context)
-    end
-    for (key, val) in ssa_context.ssa_defs
-        println(key, " ", val[1], " ", val[2].assignment, " ", val[2].mutations)
     end
     return ssa_context
 end
@@ -654,7 +647,6 @@ function compute_ssa_defs_stmt(stmt,
         ssa_var = get_unique_sp_symbol()
         context.ssa_defs[ssa_var] = (sym, VarDef(def))
         sym_to_ssa_var_map[sym] = ssa_var
-        println(stmt, " def ", sym, " to ", ssa_var)
         return stmt
     elseif isa(stmt, Symbol)
         if stmt in keys(sym_to_ssa_var_map)
@@ -686,7 +678,6 @@ function compute_ssa_defs_stmt(stmt,
                 end
                 context.ssa_defs[ssa_var] = (assigned_to, VarDef(assigned_expr))
                 sym_to_ssa_var_map[assigned_to] = ssa_var
-                println(stmt, " def ", assigned_to, " to ", ssa_var)
                 return Expr(stmt.head, ssa_var, assigned_expr)
             else
                 @assert isa(assigned_to, Expr)
@@ -710,7 +701,6 @@ function compute_ssa_defs_stmt(stmt,
 
                 if var_mutated != nothing
                     sym_to_ssa_var_map[var_mutated] = new_ssa_var
-                    println(stmt, " def ", var_mutated, " to ", new_ssa_var)
                 end
                 return stmt
             end
@@ -748,7 +738,6 @@ function compute_ssa_defs_stmt(stmt,
                             push!(context.ssa_defs[new_ssa_var][2].mutations, stmt)
                         end
                         sym_to_ssa_var_map[var_mutated] = new_ssa_var
-                        println(stmt, " def ", var_mutated, " to ", new_ssa_var)
                     end
                 end
             end
@@ -801,9 +790,8 @@ function compute_ssa_defs_basic_block(bb::BasicBlock,
     end
 end
 
-function compute_ssa_reaches(entry::BasicBlock,
+function compute_ssa_reaches(bb_list::Vector{BasicBlock},
                              context::SsaContext)
-    bb_list = flow_graph_to_list(entry)
     changed = true
     while changed
         changed = false
@@ -831,11 +819,11 @@ function compute_ssa_reaches(entry::BasicBlock,
         end
     end
 
-    print_ssa_defs(context)
+    #print_ssa_defs(context)
     for bb in bb_list
         propagate_ssa_reaches(bb, context)
     end
-    print_flow_graph(entry)
+#    print_flow_graph(bb_list)
 end
 
 function propagate_ssa_reaches_stmt(stmt,
@@ -866,7 +854,6 @@ end
 
 function propagate_ssa_reaches(bb::BasicBlock,
                                context::SsaContext)
-    println("propagate for bb ", bb.id)
     ssa_reaches_dict = bb.ssa_reaches_dict
     ssa_defs = context.ssa_defs
     for ssa_sym in bb.ssa_reaches
@@ -883,4 +870,61 @@ function propagate_ssa_reaches(bb::BasicBlock,
             bb.stmts[idx] = propagate_ssa_reaches_stmt(stmt, sym, ssa_syms)
         end
     end
+end
+
+function flow_analysis(expr::Expr)
+    flow_graph_entry, flow_graph_exits, context = build_flow_graph(expr)
+    bb_list = flow_graph_to_list(flow_graph_entry)
+
+    compute_use_def(bb_list)
+    compute_dominators(bb_list)
+    compute_im_doms(bb_list)
+
+    construct_dominance_frontier(bb_list)
+    put_phi_here = locate_phi(bb_list)
+
+    insert_phi(bb_list, put_phi_here)
+    ssa_context = compute_ssa_defs(bb_list)
+    compute_ssa_reaches(bb_list, ssa_context)
+end
+
+function traverse_for_loop(loop_entry::BasicBlock,
+                           callback,
+                           cbdata)
+    bb_list = Vector{BasicBlock}()
+    for suc in loop_entry.successors
+        if suc[1] == true
+            push!(bb_list, suc[2])
+        end
+    end
+
+    visited = Set{Int64}()
+    while !isempty(bb_list)
+        bb = shift!(bb_list)
+        if bb.id in visited
+            continue
+        end
+        push!(visited, bb.id)
+        callback(bb, cbdata)
+        for suc in bb.successors
+            push!(bb_list, suc[2])
+        end
+    end
+end
+
+function get_dist_array_access_stmt(stmt,
+                                    access_dict::Dict{Symbol, Vector{DistArrayAccess}})
+end
+
+function get_dist_array_access_visit(bb::BasicBlock,
+                                     access_dict::Dict{Symbol, Vector{DistArrayAccess}})
+    for stmt in bb.stmts
+        get_dist_array_access_stmt(stmt, access_dict)
+    end
+end
+
+function get_dist_array_access(par_for_loop_entry::BasicBlock)
+    access_dict = Dict{Symbol, Vector{DistArrayAccess}}()
+    traverse_for_loop(par_for_loop_entry, get_dist_array_access_visit,
+                      access_dict)
 end
