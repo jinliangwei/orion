@@ -1,8 +1,8 @@
 include("/home/ubuntu/orion/src/julia/orion.jl")
 
 const K = 100
-const num_iterations = 1
-const step_size = 0.001
+const num_iterations = 10
+step_size = 0.001
 
 # set path to the C++ runtime library
 Orion.set_lib_path("/home/ubuntu/orion/lib/liborion_driver.so")
@@ -37,6 +37,7 @@ Orion.@transform for i = 1:num_iterations
 	W[x_idx, :] = W_row - step_size .* W_grad
 	H[y_idx, :] = H_row - step_size .*H_grad .* K
     end
+    step_size = step_size * 0.9
 end
 
 #ratings = Orion.text_file(data_path, parse_line)

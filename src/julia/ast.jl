@@ -30,29 +30,31 @@ end
     end
 end
 
-@inline function for_get_iteration_var(loop_stmt::Expr)::Symbol
-    return loop_stmt.args[1].args[1]
-end
-
-@inline function for_get_iteration_space(loop_stmt::Expr)
-    return loop_stmt.args[1].args[2]
-end
-
 @inline function ref_get_referenced_var(ref_expr::Expr)
     return ref_expr.args[1]
 end
 
-function ref_get_root_var(ref_expr::Expr)
-    expr = ref_expr
-    while !isa(expr, Symbol)
-        @assert isa(expr, Expr)
-        expr = expr.args[1]
-    end
-    return expr
-end
-
 @inline function ref_get_subscripts(ref_expr::Expr)::Array
     return ref_expr.args[2:length(ex.args)]
+end
+
+@inline function ref_dot_get_mutated_var(ref_expr::Expr)
+    referenced_var = ref_get_referenced_var(ref_expr)
+    if isa(referenced_var, Symbol)
+        return referenced_var
+    else
+        @assert isa(referenced_var, Expr)
+        if referenced_var.head == :(.)
+            return dot_get_mutated_var(referenced_var)
+        else
+            @assert referenced_var.head == :ref
+            return nothing
+        end
+    end
+end
+
+@inline function dot_get_referenced_var(ref_expr::Expr)
+    return ref_expr.args[1]
 end
 
 @inline function assignment_get_assigned_to(expr::Expr)
@@ -63,7 +65,15 @@ end
     return expr.args[2]
 end
 
-@inline function for_get_loop_range(expr::Expr)
+@inline function for_get_iteration_var(loop_stmt::Expr)::Symbol
+    return loop_stmt.args[1].args[1]
+end
+
+@inline function for_get_iteration_space(loop_stmt::Expr)
+    return loop_stmt.args[1].args[2]
+end
+
+@inline function for_get_loop_condition(expr::Expr)
     return expr.args[1]
 end
 
@@ -77,6 +87,34 @@ end
 
 @inline function while_get_loop_body(expr::Expr)
     return expr.args[2]
+end
+
+@inline function if_get_condition(expr::Expr)
+    return expr.args[1]
+end
+
+@inline function if_get_true_branch(expr::Expr)
+    return expr.args[2]
+end
+
+@inline function if_get_false_branch(expr::Expr)
+    if length(expr.args) == 2
+        return nothing
+    else
+        return expr.args[3]
+    end
+end
+
+@inline function call_get_func_name(expr::Expr)
+    return expr.args[1]
+end
+
+@inline function call_get_arguments(expr::Expr)
+    return expr.args[2:end]
+end
+
+@inline function block_get_stmts(expr::Expr)
+    return expr.args
 end
 
 @inline function is_variable_definition(expr)::Bool

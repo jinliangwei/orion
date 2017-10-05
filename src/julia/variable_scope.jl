@@ -17,7 +17,7 @@ function add_var!(scope_context::ScopeContext,
         # it must be local
         (!is_var_defined_in_parent(scope_context, var, info) &&
          info.is_assigned_to) ||
-        (scope_context.is_hard_scope && info.is_assigned_to)
+         (scope_context.is_hard_scope && info.is_assigned_to)
         add_local_var!(scope_context, var, info)
     elseif info.is_marked_global
         add_global_var!(scope_context, var, info)

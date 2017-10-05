@@ -21,7 +21,7 @@ end
 macro parallel_for(expr::Expr)
 end
 
-macro ordered_parallel_for(epxr::Expr)
+macro ordered_parallel_for(expr::Expr)
 end
 
 macro accumulator(expr::Expr)
@@ -29,6 +29,18 @@ end
 
 function transform_loop(expr::Expr, context::ScopeContext)
     scope_context = get_scope_context!(nothing, expr)
+    print(scope_context)
+
+    flow_graph_entry, flow_graph_exits = build_flow_graph(expr)
+    compute_use_def_flow_graph(flow_graph_entry)
+    compute_dominators(flow_graph_entry)
+    compute_im_doms(flow_graph_entry)
+    construct_dominance_frontier(flow_graph_entry)
+    put_phi_here = locate_phi(flow_graph_entry)
+    insert_phi(flow_graph_entry, put_phi_here)
+    ssa_context = compute_ssa_defs(flow_graph_entry)
+    compute_ssa_reaches(flow_graph_entry, ssa_context)
+    return
 
     iterative_body = quote
     end
@@ -40,18 +52,23 @@ function transform_loop(expr::Expr, context::ScopeContext)
     accumulator_var_array = get_vars_to_broadcast(scope_context)
     println("broadcat list ", static_bc_var)
     define_static_bc_vars_stmt = :(Orion.define_vars($static_bc_var))
-    push!(ret.args, define_static_bc_vars_stmt)
+    #push!(ret.args, define_static_bc_vars_stmt)
 
+    loop_transformed = gen_transformed_loop(expr, scope_context)
+    push!(ret.args, loop_transformed)
+
+    #println(eval(current_module(), :num_iterations))
+    #ret = :(for i = 1:$(esc(:num_iterations)) println(i) end)
     # TODO: generate and insert stmts for dynamic broadcast variables
 
     # parallelization
-    par_for_index = 1
-    for curr_par_for_context in scope_context.par_for_context
-        parallelized_for_loop = static_parallelize(curr_par_for_context,
-                                                   scope_context.par_for_scope[par_for_index])
-        print(scope_context)
-        par_for_index += 1
-    end
+   # par_for_index = 1
+   # for curr_par_for_context in scope_context.par_for_context
+    #    parallelized_for_loop = static_parallelize(curr_par_for_context,
+     #                                              scope_context.par_for_scope[par_for_index])
+      #  print(scope_context)
+       # par_for_index += 1
+    #end
 
     #bc_expr_array = Array{Array{Expr, 1}, 1}()
 #    for dynamic_bc_var in dynamic_bc_var_array
@@ -69,10 +86,16 @@ function transform_loop(expr::Expr, context::ScopeContext)
  #              )
     #         )
 
-    dump(ret)
+    #dump(ret)
     return ret
 end
 
 function transform_block(expr::Expr)
     return :(assert(false))
+end
+
+macro objective(expr::Expr)
+end
+
+macro evaluate(args...)
 end

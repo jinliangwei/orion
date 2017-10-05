@@ -22,13 +22,12 @@ function get_scope_context_visit(expr::Any,
         end
 
         info = VarInfo()
-        if !read
-            info.is_mutated = true
-        end
+        info.is_mutated = !read
+        info.is_assigned_to = !read
         add_var!(scope_context, expr, info)
         return expr
     end
-    if isa(expr, Number) || isa(expr, String)
+    if isa(expr, Number) || isa(expr, String) || isa(expr, QuoteNode)
         return expr
     end
     @assert isa(expr, Expr) "must be an Expr"
@@ -42,6 +41,9 @@ function get_scope_context_visit(expr::Any,
             info = VarInfo()
             info.is_accumulator = true
             add_var!(scope_context, var, info)
+            scope_context.accumulator_info_dict[var] = AccumulatorInfo(var,
+                                                                       assignment_get_assigned_from(args[2]),
+                                                                       args[3])
             return AstWalk.AST_WALK_RECURSE
         elseif macrocall_get_symbol(expr) == Symbol("@parallel_for") ||
             macrocall_get_symbol(expr) == Symbol("@ordered_parallel_for")
@@ -64,122 +66,69 @@ function get_scope_context_visit(expr::Any,
             add_child_scope!(scope_context, par_for_scope, true)
             return expr
         else
-            error("unsupported macro call in Orion transform scope")
+            return expr
         end
     elseif head == :for
         loop_stmt = args[2]
         child_scope = get_scope_context!(scope_context, loop_stmt)
         return expr
-    elseif head == :(=) ||
-        head == :(+=) ||
-        head == :(-=) ||
-        head == :(*=) ||
-        head == :(/=) ||
-        head == :(.*=) ||
-        head == :(./=)
-        assigned_to = assignment_get_assigned_to(expr)
-        assigned_from = assignment_get_assigned_from(expr)
-       if isa(assigned_to, Symbol)
-           var = assigned_to
-           info = VarInfo()
-           info.is_assigned_to = true
-           add_var!(scope_context, var, info)
-
-           ssa_var = get_ssa_symbol(scope_context, var)
-
-           if head == :(+=)
-               def_expr = :($ssa_var + $(deepcopy(assigned_from)))
-           elseif head == :(-=)
-               def_expr = :($ssa_var - $(deepcopy(assigned_from)))
-           elseif head == :(*=)
-               def_expr = :($ssa_var * $(deepcopy(assigned_from)))
-           elseif head == :(/=)
-               def_expr = :($ssa_var / $(deepcopy(assigned_from)))
-           elseif head == :(.*=)
-               def_expr = :($ssa_var .* $(deepcopy(assigned_from)))
-           elseif head == :(./=)
-               def_expr = :($ssa_var ./ $(deepcopy(assigned_from)))
-           elseif head == :(=)
-               def_expr = deepcopy(assigned_from)
-           else
-               error("syntax not yet supported ", expr)
-           end
-           def_expr = AstWalk.ast_walk(def_expr, substitute_ssa_symbol_visit,
-                                       scope_context)
-
-           if is_symbol_defined(scope_context, var)
-               ssa_sym = gen_unique_symbol()
-               add_symbol_remap!(scope_context, var, ssa_sym)
-               add_symbol_def!(scope_context, ssa_sym, def_expr)
-           else
-               add_symbol_def!(scope_context, var, def_expr)
-           end
-       elseif is_ref(assigned_to)
-           var = ref_get_root_var(expr)
-           info = VarInfo()
-           info.is_mutated = true
-           add_var!(scope_context, var, info)
-       else
-           error("unsupported syntax", expr)
-       end
+    elseif head in Set([:(=), :(+=), :(-=), :(*=), :(/=), :(.*=), :(./=)])
         return AstWalk.AST_WALK_RECURSE
-    elseif expr.head == :call
-        #println("get :call ")
-        #dump(expr)
-        return AstWalk.AST_WALK_RECURSE
-    elseif expr.head == :ref
-        if is_par_for
-            par_for_context = scope_context_info.helper_context
-            expr_referenced = ref_get_referenced_var(expr)
-            if !isa(expr_referenced, Symbol) ||
-                !is_dist_array(expr_referenced)
-                return AstWalk.AST_WALK_RECURSE
-            end
-            da_access = DistArrayAccess()
-            da_access.dist_array = expr_referenced
-            for sub in expr.args[2:end]
-                push!(da_access.subscripts, DistArrayAccessSubscript())
-                if sub == :(:) || isa(sub, Number)
-                    da_access.subscripts[end].expr = sub
-                else
-                    sub_expr = deepcopy(sub)
-                    sub_expr = AstWalk.ast_walk(sub_expr,
-                                                substitute_ssa_symbol_visit,
-                                                scope_context)
-                    da_access.subscripts[end].expr = sub_expr
+    elseif expr.head in Set([:call, :invoke, :call1, :foreigncall])
+        if call_get_func_name(expr) in Set([:(+), :(-), :(*), :(/)])
+            return AstWalk.AST_WALK_RECURSE
+        end
+        for arg in expr.args[2:end]
+            if isa(arg, Symbol)
+                info = VarInfo()
+                info.is_mutated = true
+                add_var!(scope_context, arg, info)
+            elseif isa(arg, Expr)
+                if expr.head == :(.)
+                    root_var = ref_dot_get_mutated_var(expr)
+                    info = VarInfo()
+                    info.is_mutated = true
+                    add_var!(scope_context, root_var, info)
                 end
             end
-            da_access.is_read = read
-            dist_array_access_dict = par_for_context.dist_array_access_dict
-            if !haskey(dist_array_access_dict, expr_referenced)
-                dist_array_access_dict[expr_referenced] = Vector{DistArrayAccess}()
+        end
+        return AstWalk.AST_WALK_RECURSE
+    elseif expr.head == :(.)
+        if !read
+            mutated_var = ref_dot_get_mutated_var(expr)
+            if mutated_var != nothing
+                info = VarInfo()
+                info.is_mutated = true
+                add_var!(scope_context, mutated_var, info)
             end
-            push!(dist_array_access_dict[expr_referenced], da_access)
+        end
+        referenced_var = dot_get_referenced_var(expr)
+        if isa(referenced_var, Symbol)
+            info = VarInfo()
+            add_var!(scope_context, referenced_var, info)
+            return expr
+        else
+            return AstWalk.AST_WALK_RECURSE
+        end
+    elseif expr.head == :ref
+        if !read
+            mutated_var = ref_dot_get_mutated_var(expr)
+            if mutated_var != nothing
+                info = VarInfo()
+                info.is_mutated = true
+                add_var!(scope_context, mutated_var, info)
+            end
+        end
+        referenced_var = ref_get_referenced_var(expr)
+        if isa(referenced_var, Symbol)
+            info = VarInfo()
+            add_var!(scope_context, referenced_var, info)
         end
         return AstWalk.AST_WALK_RECURSE
     elseif head == :block
         return AstWalk.AST_WALK_RECURSE
     else
-        return expr
-    end
-end
-
-function substitute_ssa_symbol_visit(expr::Any,
-                                     scope_context::ScopeContext,
-                                     top_level::Integer,
-                                     is_top_level::Bool,
-                                     read::Bool)
-    if isa(expr, Symbol)
-        ssa_symbol = get_ssa_symbol(scope_context, expr)
-        if ssa_symbol == nothing
-            return expr
-        else
-            return ssa_symbol
-        end
-    elseif isa(expr, Expr)
         return AstWalk.AST_WALK_RECURSE
-    else
-        return expr
     end
 end
 

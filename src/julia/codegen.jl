@@ -4,6 +4,12 @@ function gen_unique_symbol()::Symbol
     return Symbol("osym_", string(symbol_counter))
 end
 
+sp_symbol_counter = 0
+function get_unique_sp_symbol()::Symbol
+    global sp_symbol_counter += 1
+    return Symbol("!osym_", string(sp_symbol_counter))
+end
+
 function gen_stmt_broadcast_var(var_set::Set{Symbol})::Array{Expr}
     var_set_sym = gen_unique_symbol()
     expr_array = Array{Expr, 1}()

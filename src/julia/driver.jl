@@ -56,8 +56,9 @@ function eval_expr_on_all(ex, eval_module::Symbol)
     end
 end
 
-function create_accumulator(var::Symbol)
-    println("created accumulator variable ", string(var))
+function create_accumulator(var::Symbol, init_val)
+    println("created accumulator variable ", string(var),
+            " init val = ", init_val)
 end
 
 function define_var(var::Symbol)

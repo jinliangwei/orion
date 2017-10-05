@@ -114,20 +114,34 @@ function from_expr_helper(ast::Expr,
                             false, false)
         args[2] = from_expr(args[2], depth, callback, cbdata, top_level_number,
                             false, read)
-    elseif head == :line
-    elseif head == :call
-        args[1] = from_expr(args[1], depth + 1, callback, cbdata, top_level_number,
-                            false, read)
-        for i = 2:length(args)
-            args[i] = from_expr(args[i], depth + 1, callback, cbdata, top_level_number,
-                                false, read)
-        end
     elseif head == :block
         args = from_exprs(args, depth + 1, callback, cbdata, top_level_number, read)
+    elseif head == :return
+        args = from_exprs(args, depth, callback, cbdata, top_level_number, read)
+    elseif head == :invoke
+        args = from_call(args, depth, callback, cbdata, top_level_number, read)
+    elseif head == :call
+        args = from_call(args, depth, callback, cbdata, top_level_number, read)
+    elseif head == :call1
+        args = from_call(args, depth, callback, cbdata, top_level_number, read)
+    elseif head == :foreigncall
+        args = from_call(args, depth, callback, cbdata, top_level_number, read)
+    elseif head == :line
+        # skip
+    elseif head == :ref
+        for i = 1:length(args)
+            args[i] = from_expr(args[i], depth, callback, cbdata, top_level_number, false, read)
+        end
+    elseif head == :(:)
+        # args are either Expr or Symbol
+        for i = 1:length(args)
+            args[i] = from_expr(args[i], depth, callback, cbdata, top_level_number, false, read)
+        end
     end
     ast.head = head
     ast.args = args
     ast.typ = typ
+    read = read_save
     return ast
 end
 
@@ -144,6 +158,25 @@ function from_exprs(ast, depth, callback, cbdata::Any, top_level_number, read)
     return body
 end
 
+function from_call(ast :: Array{Any,1}, depth, callback, cbdata :: ANY, top_level_number, read)
+  assert(length(ast) >= 1)
+  # A call is a function followed by its arguments.  Extract these parts below.
+  fun  = ast[1]
+  args = ast[2:end]
+  @dprintln(2,"from_call fun = ", fun, " typeof fun = ", typeof(fun))
+  if length(args) > 0
+    @dprintln(2,"first arg = ",args[1], " type = ", typeof(args[1]))
+  end
+  # Symbols don't need to be translated.
+  # if typeof(fun) != Symbol
+      # I suppose this "if" could be wrong.  If you wanted to replace all "x" functions with "y" then you'd need this wouldn't you?
+  #    fun = from_expr(fun, depth, callback, cbdata, top_level_number, false, read)
+  # end
+  # Process the arguments to the function recursively.
+  args = from_exprs(ast, depth+1, callback, cbdata, top_level_number, read)
+
+  return args
+end
 
 # The following are for non-Expr AST nodes are generally leaf nodes of the AST where no
 # recursive processing is possible.

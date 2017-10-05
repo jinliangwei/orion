@@ -1,4 +1,3 @@
-
 # describe the information of a variable for code within a scope
 # the only exception is is_accumulator, which is defined by the code
 # within the code and the code in its ancestors' scope before it
@@ -13,11 +12,10 @@
 # 1) :(:)
 # 2) a constant
 # 3) a Tuple, the first dim is loop index dim, the second is offset
-# 4) nothing, doesn't permit paralelization
 
-function eval_da_access_subscript(expr::Any,
-                                  par_for_scope::ScopeContext,
-                                  par_for_context::ParForContext)
+function eval_subscript(expr::Any,
+                        par_for_scope::ScopeContext,
+                        par_for_context::ParForContext)
     if expr == :(:)
         return expr
     elseif isa(expr, Number)
@@ -28,14 +26,14 @@ function eval_da_access_subscript(expr::Any,
             if isa(expr_val, Integer)
                 return expr_val
             else
-                return nothing
+                return :(:)
             end
         else
             sym_def = get_symbol_def(par_for_scope, expr)
             if sym_def == nothing
                 return nothing
             else
-                sym_val = eval_da_access_subscript(sym_def, par_for_scope, par_for_context)
+                sym_val = eval_subscript(sym_def, par_for_scope, par_for_context)
                 return sym_val
             end
         end
@@ -44,8 +42,8 @@ function eval_da_access_subscript(expr::Any,
         if expr.head == :call &&
             (expr.args[1] == :+ ||
              expr.args[1] == :-)
-            left = eval_da_access_subscript(expr.args[2], par_for_scope, par_for_context)
-            right = eval_da_access_subscript(expr.args[3], par_for_scope, par_for_context)
+            left = eval_subscript(expr.args[2], par_for_scope, par_for_context)
+            right = eval_subscript(expr.args[3], par_for_scope, par_for_context)
             operator = expr.args[1]
             if isa(left, Tuple) &&
                 isa(right, Integer)
@@ -88,13 +86,13 @@ function eval_da_access_subscript(expr::Any,
     end
 end
 
-function eval_all_da_access_subscripts(par_for_context::ParForContext,
+function eval_all_subscripts(par_for_context::ParForContext,
                                        par_for_scope::ScopeContext)::Bool
     for da_access_vec in values(par_for_context.dist_array_access_dict)
         for da_access in da_access_vec
             for subscript in da_access.subscripts
                 expr = subscript.expr
-                sub_value = eval_da_access_subscript(expr, par_for_scope, par_for_context)
+                sub_value = eval_subscript(expr, par_for_scope, par_for_context)
                 println("eval ", expr, " result = ", sub_value)
                 if sub_value == nothing
                     return false
@@ -212,8 +210,6 @@ end
 # each access's subscripts involve exactly one dimension index.
 # 4) if all DistArray accesses involve one dimension index, the loop is 1D parallelized, if 2,
 # then 2D parallelized.
-
-
 
 function simple_parallelization(par_for_context::ParForContext)
     iteration_space = par_for_context.iteration_space
@@ -384,7 +380,7 @@ function static_parallelize(par_for_context::ParForContext,
     iteration_space = par_for_context.iteration_space
     iteration_space_dist_array = eval(current_module(), iteration_space)
 
-    ret = eval_all_da_access_subscripts(par_for_context, par_for_scope)
+    ret = eval_all_subscripts(par_for_context, par_for_scope)
     if !ret
         println("no static parallelization")
         return

@@ -61,6 +61,7 @@ type ParForContext
     loop_stmt::Expr
     dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}}
     is_ordered::Bool
+    parallelized_loop
     ParForContext(iteration_var::Symbol,
                   iteration_space::Symbol,
                   loop_stmt,
@@ -68,9 +69,15 @@ type ParForContext
                                           iteration_space,
                                           loop_stmt,
                                           Dict{Symbol, Vector{DistArrayAccess}}(),
-                                          is_ordered)
+                                          is_ordered,
+                                          nothing)
 end
 
+type AccumulatorInfo
+    sym::Symbol
+    initializer
+    combiner_func::Symbol
+end
 
 type ScopeContext
     parent_scope
@@ -81,6 +88,7 @@ type ScopeContext
     child_scope::Array{ScopeContext}
     par_for_context::Array{ParForContext}
     symbol_table::SymbolTable
+    accumulator_info_dict::Dict{Symbol, AccumulatorInfo}
 
     ScopeContext() = new(nothing,
                          false,
@@ -89,7 +97,8 @@ type ScopeContext
                          Array{ScopeContext, 1}(),
                          Array{ScopeContext, 1}(),
                          Array{ParForContext, 1}(),
-                         SymbolTable())
+                         SymbolTable(),
+                         Dict{Symbol, AccumulatorInfo}())
 
     ScopeContext(parent_scope::ScopeContext) = new(parent_scope,
                                                    false,
@@ -98,7 +107,8 @@ type ScopeContext
                                                    Array{ScopeContext, 1}(),
                                                    Array{ScopeContext, 1}(),
                                                    Array{ParForContext, 1}(),
-                                                   SymbolTable())
+                                                   SymbolTable(),
+                                                   Dict{Symbol, AccumulatorInfo}())
 end
 
 function print(scope_context::ScopeContext, indent = 0)

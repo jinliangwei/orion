@@ -65,7 +65,7 @@ function dist_array_read(partition_ptr::Ptr{Void},
         if isa(dim_i, Integer)
         elseif isa(dim_i, Vector)
             push!(result_dims, length(dim_i))
-        elseif dim_i == :(:)
+        elseif dim_i == Colon()
             push!(result_dims, dims[i])
         elseif isa(dim_i, UnitRange)
             push!(result_dims, max(0, dim_i[end] - dim_i[1] + 1))
@@ -82,7 +82,8 @@ function dist_array_read(partition_ptr::Ptr{Void},
     num_dims_per_read = 0
     for i in eachindex(index)
         dim_i = index[i]
-        if dim_i == :(:)
+        if dim_i == Colon()
+            println(dim_i)
             per_read_size *= dims[i]
         else
             break
@@ -100,7 +101,7 @@ function dist_array_read(partition_ptr::Ptr{Void},
     num_reads_by_dim = Vector{Int64}()
     for i = read_dims_begin:length(dims)
         dim_i = index[i]
-        if dim_i == :(:)
+        if dim_i == Colon()
             push!(num_reads_by_dim, dims[i])
         elseif isa(dim_i, Vector)
             push!(num_reads_by_dim, length(dim_i))
@@ -124,7 +125,7 @@ function dist_array_read(partition_ptr::Ptr{Void},
         for j = read_dims_begin:length(dims)
             index_this_dim = key_begin_index[j]
             println("j = ", j, " index_this_dim = ", index_this_dim)
-            if index[j] == :(:)
+            if index[j] == Colon()
                 key_begin[j] = index_this_dim
             elseif isa(index[j], Vector)
                 key_begin[j] = index[j][index_this_dim]
@@ -185,7 +186,7 @@ function dist_array_write(partition_ptr::Ptr{Void},
         if isa(dim_i, Integer)
         elseif isa(dim_i, Vector)
             push!(result_dims, length(dim_i))
-        elseif dim_i == :(:)
+        elseif dim_i == :
             push!(result_dims, dims[i])
         elseif isa(dim_i, UnitRange)
             push!(result_dims, max(0, dim_i[end] - dim_i[1] + 1))
@@ -198,7 +199,7 @@ function dist_array_write(partition_ptr::Ptr{Void},
     num_dims_per_write = 0
     for i in eachindex(index)
         dim_i = index[i]
-        if dim_i != :(:)
+        if dim_i != :
             break
         end
         per_write_size *= dims[i]
@@ -211,7 +212,7 @@ function dist_array_write(partition_ptr::Ptr{Void},
     num_writes_by_dim = Vector{Int64}()
     for i = read_dims_begin:length(dims)
         dim_i = index[i]
-        if dim_i == :(:)
+        if dim_i == :
             push!(num_writes_by_dim, dims[i])
         elseif isa(dim_i, Vector)
             push!(num_writes_by_dim, length(dim_i))
@@ -233,7 +234,7 @@ function dist_array_write(partition_ptr::Ptr{Void},
     for i = 1:num_writes
         for j = write_dims_begin:length(dims)
             index_this_dim = key_begin_index[j]
-            if index[j] == :(:)
+            if index[j] == Colon()
                 key_begin[j] = index_this_dim
             elseif isa(index[j], Vector)
                 key_begin[j] = index[j][index_this_dim]

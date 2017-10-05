@@ -6,5 +6,5 @@ OrionWorker.load_constants()
 ret = OrionWorker.dist_array_read(Ptr{Void}(0), (1,))
 println(ret)
 
-ret = OrionWorker.dist_array_read(Ptr{Void}(0), (2:4, 2:4))
+ret = OrionWorker.dist_array_read(Ptr{Void}(0), (:, 2:4))
 println(ret)
