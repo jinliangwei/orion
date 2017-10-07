@@ -1,7 +1,7 @@
 type VarDef
     assignment
-    mutations::Vector{Expr}
-    VarDef(assigned) = new(assigned, Vector{Expr}())
+    mutation
+    VarDef(assigned) = new(assigned, nothing)
 end
 
 type BasicBlock
@@ -13,12 +13,12 @@ type BasicBlock
     uses::Set{Symbol}
     defsout::Dict{Symbol, VarDef}
     killed::Set{Symbol}
-    mutates::Dict{Symbol, Vector{Expr}}
     dominators::Set{BasicBlock}
     im_doms::Set{BasicBlock}
     dominatees::Set{BasicBlock}
     df::Set{BasicBlock}
     ssa_defsout::Set{Symbol}
+    ssa_defs::Set{Symbol}
     sym_to_ssa_var_map::Dict{Symbol, Symbol}
     reaches::Set{Symbol}
     ssa_reaches::Set{Symbol}
@@ -32,11 +32,11 @@ type BasicBlock
                          Set{Symbol}(),
                          Dict{Symbol, VarDef}(),
                          Set{Symbol}(),
-                         Dict{Symbol, Vector{Expr}}(),
                          Set{BasicBlock}(),
                          Set{BasicBlock}(),
                          Set{BasicBlock}(),
                          Set{BasicBlock}(),
+                         Set{Symbol}(),
                          Set{Symbol}(),
                          Dict{Symbol, Symbol}(),
                          Set{Symbol}(),
@@ -45,21 +45,19 @@ type BasicBlock
                          Dict{Symbol, Vector{Symbol}}())
 end
 
-type FlowGraphBuildContext
+type FlowGraphContext
     bb_counter::Int64
-    par_for_bbs::Vector{BasicBlock}
-    FlowGraphBuildContext() = new(0,
-                                  Vector{BasicBlock}())
+    FlowGraphContext() = new(0)
 end
 
-function create_basic_block(build_context::FlowGraphBuildContext)::BasicBlock
+function create_basic_block(build_context::FlowGraphContext)::BasicBlock
     bb = BasicBlock(build_context.bb_counter)
     build_context.bb_counter += 1
     return bb
 end
 
 function build_flow_graph(expr::Expr)
-    build_context = FlowGraphBuildContext()
+    build_context = FlowGraphContext()
     graph_entry = create_basic_block(build_context)
     push!(graph_entry.predecessors, nothing)
     graph_exits = build_flow_graph(expr, graph_entry, build_context)
@@ -125,7 +123,7 @@ function compute_use_def(bb_list::Vector{BasicBlock})
 end
 
 function build_flow_graph(expr::Expr, bb::BasicBlock,
-                          build_context::FlowGraphBuildContext)::Vector{BasicBlock}
+                          build_context::FlowGraphContext)::Vector{BasicBlock}
     exit_bbs = Vector{BasicBlock}()
     if !isa(expr, Expr)
         push!(bb.stmts, expr)
@@ -216,12 +214,6 @@ function build_flow_graph(expr::Expr, bb::BasicBlock,
                 end
             end
         end
-    elseif expr.head == :macrocall &&
-        (macrocall_get_symbol(expr) == Symbol("@parallel_for") ||
-         macrocall_get_symbol(expr) == Symbol("@ordered_parallel_for"))
-        exit_bbs = build_flow_graph(expr.args[2], bb, build_context)
-        bb.control_flow == macrocall_get_symbol(expr)
-        push!(build_context.par_for_bbs, bb)
     else
         push!(bb.stmts, expr)
         push!(exit_bbs, bb)
@@ -233,7 +225,6 @@ function compute_use_def_expr(stmt, bb::BasicBlock)
     uses = bb.uses
     defsout = bb.defsout
     killed = bb.killed
-    mutates = bb.mutates
 
     if isa(stmt, Symbol)
         if !(stmt in keys(defsout))
@@ -270,12 +261,11 @@ function compute_use_def_expr(stmt, bb::BasicBlock)
                 var_mutated = ref_dot_get_mutated_var(assigned_to)
                 if var_mutated != nothing
                     if var_mutated in keys(defsout)
-                        push!(defsout[var_mutated].mutations, stmt)
+                        defsout[var_mutated] = VarDef(defsout[var_mutated])
+                        defsout[var_mutated].mutation = stmt
                     else
-                        if !(var_mutated in keys(mutates))
-                            mutates[var_mutated] = Vector{Expr}()
-                        end
-                        push!(mutates[var_mutated], stmt)
+                        defsout[var_mutated] = VarDef(nothing)
+                        defsout[var_mutated].mutation = stmt
                         push!(uses, var_mutated)
                         push!(killed, var_mutated)
                     end
@@ -299,12 +289,12 @@ function compute_use_def_expr(stmt, bb::BasicBlock)
                     end
                     if var_mutated != nothing
                         if var_mutated in keys(defsout)
-                            push!(defsout[var_mutated].mutations, stmt)
+                            defsout[var_mutated] = VarDef(defsout[var_mutated])
+                            defsout[var_mutated].mutation = stmt
                         else
-                            if !(var_mutated in keys(mutates))
-                                mutates[var_mutated] = Vector{Expr}()
-                            end
-                            push!(mutates[var_mutated], stmt)
+                            defsout[var_mutated] = VarDef(nothing)
+                            defsout[var_mutated].mutation = stmt
+                            push!(uses, var_mutated)
                             push!(killed, var_mutated)
                         end
                     end
@@ -620,13 +610,12 @@ type SsaContext
         Dict{Symbol, Tuple{Symbol, VarDef}}())
 end
 
-function print_ssa_defs(ssa_context::SsaContext)
-    ssa_defs = ssa_context.ssa_defs
+function print_ssa_defs(ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
     for (key, def) in ssa_defs
         println("ssa_var = ", string(key),
                 " def = [", string(def[1]),
                 " ", def[2].assignment, " ",
-                def[2].mutations)
+                def[2].mutation, "]")
     end
 end
 
@@ -640,12 +629,14 @@ end
 
 function compute_ssa_defs_stmt(stmt,
                                context::SsaContext,
-                               sym_to_ssa_var_map::Dict{Symbol, Symbol})
+                               sym_to_ssa_var_map::Dict{Symbol, Symbol},
+                               bb_ssa_defs::Set{Symbol})
     if isa(stmt, Tuple)
         sym = stmt[1]
         def = stmt[2]
-        ssa_var = get_unique_sp_symbol()
+        ssa_var = gen_unique_sp_symbol()
         context.ssa_defs[ssa_var] = (sym, VarDef(def))
+        push!(bb_ssa_defs, ssa_var)
         sym_to_ssa_var_map[sym] = ssa_var
         return stmt
     elseif isa(stmt, Symbol)
@@ -658,9 +649,9 @@ function compute_ssa_defs_stmt(stmt,
     elseif isa(stmt, Expr)
         if stmt.head in Set([:(=), :(+=), :(-=), :(*=), :(/=), :(.*=), :(./=)])
             old_assigned_expr = compute_ssa_defs_stmt(assignment_get_assigned_from(stmt),
-                                                      context, sym_to_ssa_var_map)
+                                                      context, sym_to_ssa_var_map, bb_ssa_defs)
             assigned_to = assignment_get_assigned_to(stmt)
-            ssa_var = get_unique_sp_symbol()
+            ssa_var = gen_unique_sp_symbol()
             assigned_expr = old_assigned_expr
             if isa(assigned_to, Symbol)
                 if stmt.head == :(+=)
@@ -677,6 +668,7 @@ function compute_ssa_defs_stmt(stmt,
                     assigned_expr = Expr(:call, :(./), assigned_to, assigned_expr)
                 end
                 context.ssa_defs[ssa_var] = (assigned_to, VarDef(assigned_expr))
+                push!(bb_ssa_defs, ssa_var)
                 sym_to_ssa_var_map[assigned_to] = ssa_var
                 return Expr(stmt.head, ssa_var, assigned_expr)
             else
@@ -685,19 +677,22 @@ function compute_ssa_defs_stmt(stmt,
                 var_mutated = ref_dot_get_mutated_var(assigned_to)
 
                 if var_mutated != nothing
-                    new_ssa_var = get_unique_sp_symbol()
+                    new_ssa_var = gen_unique_sp_symbol()
                     if var_mutated in keys(sym_to_ssa_var_map)
                         mutated_ssa_var = sym_to_ssa_var_map[var_mutated]
                         @assert mutated_ssa_var in keys(context.ssa_defs)
-                        context.ssa_defs[new_ssa_var] = context.ssa_defs[mutated_ssa_var]
-                        context.ssa_defs[new_ssa_var][2].mutations = copy(context.ssa_defs[mutated_ssa_var][2].mutations)
-                        push!(context.ssa_defs[new_ssa_var][2].mutations, stmt)
+                        context.ssa_defs[new_ssa_var] = (context.ssa_defs[mutated_ssa_var][1],
+                                                         VarDef(context.ssa_defs[mutated_ssa_var][2]))
+                        context.ssa_defs[new_ssa_var][2].mutation = stmt
+                        push!(bb_ssa_defs, new_ssa_var)
                     else
                         context.ssa_defs[new_ssa_var] = (var_mutated, VarDef(nothing))
-                        push!(context.ssa_defs[new_ssa_var][2].mutations, stmt)
+                        context.ssa_defs[new_ssa_var][2].mutation = stmt
+                        push!(bb_ssa_defs, new_ssa_var)
                     end
                 end
-                assigned_to = compute_ssa_defs_stmt(assigned_to, context, sym_to_ssa_var_map)
+                assigned_to = compute_ssa_defs_stmt(assigned_to, context, sym_to_ssa_var_map,
+                                                    bb_ssa_defs)
 
                 if var_mutated != nothing
                     sym_to_ssa_var_map[var_mutated] = new_ssa_var
@@ -710,7 +705,8 @@ function compute_ssa_defs_stmt(stmt,
                 for idx in eachindex(arguments)
                     arg = arguments[idx]
                     stmt.args[idx + 1] = compute_ssa_defs_stmt(arg, context,
-                                                               sym_to_ssa_var_map)
+                                                               sym_to_ssa_var_map,
+                                                               bb_ssa_defs)
                 end
             else
                 for idx in eachindex(arguments)
@@ -723,19 +719,22 @@ function compute_ssa_defs_stmt(stmt,
                         var_mutated = ref_dot_get_mutated_var(arg)
                     end
                     stmt.args[idx + 1] = compute_ssa_defs_stmt(arg, context,
-                                                               sym_to_ssa_var_map)
+                                                               sym_to_ssa_var_map,
+                                                               bb_ssa_defs)
                     if var_mutated != nothing
-                        new_ssa_var = get_unique_sp_symbol()
+                        new_ssa_var = gen_unique_sp_symbol()
                         if var_mutated in keys(sym_to_ssa_var_map)
                             mutated_ssa_var = sym_to_ssa_var_map[var_mutated]
                             @assert mutated_ssa_var in keys(context.ssa_defs)
                             mutated_ssa_var = sym_to_ssa_var_map[var_mutated]
-                            context.ssa_defs[new_ssa_var] = context.ssa_defs[mutated_ssa_var]
-                            context.ssa_defs[new_ssa_var][2].mutations = copy(context.ssa_defs[mutated_ssa_var][2].mutations)
-                            push!(context.ssa_defs[new_ssa_var][2].mutations, stmt)
+                            context.ssa_defs[new_ssa_var] = (context.ssa_defs[mutated_ssa_var][1],
+                                                             VarDef(context.ssa_defs[mutated_ssa_var][2]))
+                            context.ssa_defs[new_ssa_var][2].mutation = stmt
+                            push!(bb_ssa_defs, new_ssa_var)
                         else
                             context.ssa_defs[new_ssa_var] = (var_mutated, VarDef(nothing))
-                            push!(context.ssa_defs[new_ssa_var][2].mutations, stmt)
+                            context.ssa_defs[new_ssa_var][2].mutation = stmt
+                            push!(bb_ssa_defs, new_ssa_var)
                         end
                         sym_to_ssa_var_map[var_mutated] = new_ssa_var
                     end
@@ -774,7 +773,8 @@ function compute_ssa_defs_basic_block(bb::BasicBlock,
     for idx in eachindex(bb.stmts)
         stmt = bb.stmts[idx]
         bb.stmts[idx] = compute_ssa_defs_stmt(stmt, context,
-                                              sym_to_ssa_var_map)
+                                              sym_to_ssa_var_map,
+                                              bb.ssa_defs)
     end
     for (sym, def) in bb.defsout
         @assert sym in keys(sym_to_ssa_var_map)
@@ -819,7 +819,6 @@ function compute_ssa_reaches(bb_list::Vector{BasicBlock},
         end
     end
 
-    #print_ssa_defs(context)
     for bb in bb_list
         propagate_ssa_reaches(bb, context)
     end
@@ -869,6 +868,14 @@ function propagate_ssa_reaches(bb::BasicBlock,
             stmt = bb.stmts[idx]
             bb.stmts[idx] = propagate_ssa_reaches_stmt(stmt, sym, ssa_syms)
         end
+        for ssa_var in bb.ssa_defs
+            ssa_def = ssa_defs[ssa_var]
+            if ssa_def[1] == sym &&
+                ssa_def[2].assignment == nothing
+                println("add assignment for ", sym, " ", ssa_syms)
+                ssa_def[2].assignment = ssa_syms[1]
+            end
+        end
     end
 end
 
@@ -886,6 +893,7 @@ function flow_analysis(expr::Expr)
     insert_phi(bb_list, put_phi_here)
     ssa_context = compute_ssa_defs(bb_list)
     compute_ssa_reaches(bb_list, ssa_context)
+    return flow_graph_entry, context, ssa_context
 end
 
 function traverse_for_loop(loop_entry::BasicBlock,
@@ -912,19 +920,146 @@ function traverse_for_loop(loop_entry::BasicBlock,
     end
 end
 
-function get_dist_array_access_stmt(stmt,
-                                    access_dict::Dict{Symbol, Vector{DistArrayAccess}})
+type GetDistArrayAccessContext
+    iteration_var::Symbol
+    ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}}
+    access_dict::Dict{Symbol, Vector{DistArrayAccess}}
+
+    GetDistArrayAccessContext(iteration_var,
+                              ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}}) =
+                                  new(iteration_var,
+                                      ssa_defs,
+                                      Dict{Symbol, Vector{DistArrayAccess}}())
 end
 
-function get_dist_array_access_visit(bb::BasicBlock,
-                                     access_dict::Dict{Symbol, Vector{DistArrayAccess}})
-    for stmt in bb.stmts
-        get_dist_array_access_stmt(stmt, access_dict)
+# returns a tuple (sub_value, loop_index_dim, offset)
+function eval_subscript_expr(expr,
+                             iteration_var::Symbol,
+                             ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
+    if isa(expr, Symbol)
+        if expr == :(:)
+            return (DistArrayAccessSubscript_value_any, nothing, nothing)
+        elseif expr == iteration_var
+            return (expr, nothing, nothing)
+        elseif expr in keys(ssa_defs)
+            def = ssa_defs[expr][2]
+            if ssa_defs[expr][1] == iteration_var
+                return (iteration_var, nothing, nothing)
+            end
+            println("sym = ", expr, " def = ", def.assignment, " ", def.mutation)
+            if def.assignment != nothing &&
+                def.mutation == nothing
+                return eval_subscript_expr(def.assignment, iteration_var, ssa_defs)
+            else
+                return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
+            end
+        elseif isdefined(current_module(), expr)
+            return eval_subscript_expr(eval(current_module(), expr),
+                                       iteration_var, ssa_defs)
+        else
+            error("accessing undefined var ", expr)
+        end
+    elseif isa(expr, Number)
+        return (DistArrayAccessSubscript_value_static, nothing, expr)
+    elseif isa(expr, Expr)
+        head = expr.head
+        if head == :ref
+            referenced_var = ref_get_referenced_var(expr)
+            subscripts = ref_get_subscripts(expr)
+            evaled_referenced_var = eval_subscript_expr(referenced_var,
+                                                        iteration_var,
+                                                        ssa_defs)
+            if length(subscripts) == 1 &&
+                isa(subscripts[1], Number)
+                sub_val = subscripts[1]
+            else
+                return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
+            end
+
+            if evaled_referenced_var[1] == iteration_var
+                if sub_val == 1
+                    return (:($iteration_var[1]), nothing, nothing)
+                else
+                    return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
+                end
+            elseif isa(evaled_referenced_var[1], Expr) &&
+                evaled_referenced_var[1] == :($iteration_var[1])
+                return (DistArrayAccessSubscript_value_static, sub_val, 0)
+            else
+                return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
+            end
+        elseif head == :call
+            func_name = call_get_func_name(expr)
+            if func_name in Set([:+, :-, :*, :/])
+                arg1 = call_get_arguments(expr)[1]
+                arg2 = call_get_arguments(expr)[2]
+                arg1 = eval_subscript_expr(arg1, iteration_var, ssa_defs)
+                arg2 = eval_subscript_expr(arg2, iteration_var, ssa_defs)
+                if arg1[1] == DistArrayAccessSubscript_value_static &&
+                    arg2[1] == DistArrayAccessSubscript_value_static
+                    if arg1[2] == nothing && arg2[2] == nothing
+                        return (DistArrayAccessSubscript_value_static, nothing,
+                                eval(Expr(:call,
+                                          func_name,
+                                          arg1[3],
+                                          arg2[3])))
+                    else
+                        if func_name in Set([:*, :/])
+                            return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
+                        end
+
+                        if arg1[2] == nothing
+                            return (DistArrayAccessSubscript_value_static, arg2[2],
+                                    eval(Expr(:call,
+                                              func_name,
+                                              arg1[3],
+                                              arg2[3])))
+                        elseif arg2[2] == nothing
+                            return (DistArrayAccessSubscript_value_static, arg1[2],
+                                    eval(Expr(:call,
+                                              func_name,
+                                              arg1[3],
+                                              arg2[3])))
+                        else
+                            return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
+                        end
+                    end
+                elseif arg1[1] == DistArrayAccessSubscript_value_any &&
+                    arg2[1] == DistArrayAccessSubscript_value_any
+                    return (DistArrayAccessSubscript_value_any, nothing, nothing)
+                else
+                    return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
+                end
+            else
+                return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
+            end
+        else
+            return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
+        end
+    elseif isa(expr, Tuple)
+        return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
+    else
+        return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
     end
 end
 
-function get_dist_array_access(par_for_loop_entry::BasicBlock)
-    access_dict = Dict{Symbol, Vector{DistArrayAccess}}()
-    traverse_for_loop(par_for_loop_entry, get_dist_array_access_visit,
-                      access_dict)
+function remap_ssa_vars_visit(expr::Any,
+                              ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
+                              top_level::Integer,
+                              is_top_level::Bool,
+                              read::Bool)
+    if isa(expr, Symbol) &&
+        expr in keys(ssa_defs)
+        return ssa_defs[expr][1]
+    elseif isa(expr, Expr)
+        if expr.head == :line
+            return expr
+        end
+        return AstWalk.AST_WALK_RECURSE
+    end
+    return expr
+end
+
+function remap_ssa_vars(expr, ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
+    AstWalk.ast_walk(expr, remap_ssa_vars_visit, ssa_defs)
 end

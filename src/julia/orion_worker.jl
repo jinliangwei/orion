@@ -1,7 +1,7 @@
 module OrionWorker
 
-include("dist_array.jl")
-include("constants.jl")
+include("src/julia/dist_array.jl")
+include("src/julia/constants.jl")
 
 function helloworld()
     ccall((:orion_helloworld, lib_path), Void, ())
@@ -28,6 +28,9 @@ function from_keys_to_int64(key::Tuple, dims::Vector{Int64})
 end
 
 # DistArray accesses
+function dist_array_get_dims(dist_array_id::Int64)
+end
+
 function dist_array_get_dims(partition_ptr::Ptr{Void})
     dim_array = ccall((:orion_dist_array_get_dims, lib_path),
                       Any, (Ptr{Void},), partition_ptr)
@@ -35,10 +38,17 @@ function dist_array_get_dims(partition_ptr::Ptr{Void})
     return dim_array
 end
 
+function dist_array_get_value_type(dist_array_id::Int64)
+end
+
 function dist_array_get_value_type(partition_ptr::Ptr{Void})::DataType
     value_type_int32 = ccall((:orion_dist_array_get_value_type, lib_path),
                              Int32, (Ptr{Void},), partition_ptr)
     return int32_to_data_type(value_type_int32)
+end
+
+function dist_array_read(dist_array_id::Int64,
+                         index::Tuple)
 end
 
 # TODO: currently doesn't allow any other Array except vectors to appear
@@ -161,6 +171,11 @@ function dist_array_read(partition_ptr::Ptr{Void},
     end
     result_array = reshape(result_array, tuple(result_dims...))
     return result_array
+end
+
+function dist_array_write(dist_array_id::Int64,
+                          index::Tuple,
+                          values::Array)
 end
 
 function dist_array_write(partition_ptr::Ptr{Void},

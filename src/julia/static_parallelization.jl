@@ -1,150 +1,43 @@
 # describe the information of a variable for code within a scope
 # the only exception is is_accumulator, which is defined by the code
 # within the code and the code in its ancestors' scope before it
-@enum ParallelSchemeType ParallelSchemeType_naive =
-    1 ParallelSchemeType_1d =
-    2 ParallelSchemeType_2d =
-    3 ParallelSchemeType_unimodular =
-    4 ParallelSchemeType_none =
-    5
-
-# could return one of the following:
-# 1) :(:)
-# 2) a constant
-# 3) a Tuple, the first dim is loop index dim, the second is offset
-
-function eval_subscript(expr::Any,
-                        par_for_scope::ScopeContext,
-                        par_for_context::ParForContext)
-    if expr == :(:)
-        return expr
-    elseif isa(expr, Number)
-        return expr
-    elseif isa(expr, Symbol)
-        if isconst(current_module(), expr)
-            expr_val = eval(expr)
-            if isa(expr_val, Integer)
-                return expr_val
-            else
-                return :(:)
-            end
-        else
-            sym_def = get_symbol_def(par_for_scope, expr)
-            if sym_def == nothing
-                return nothing
-            else
-                sym_val = eval_subscript(sym_def, par_for_scope, par_for_context)
-                return sym_val
-            end
-        end
-    else
-        @assert isa(expr, Expr)
-        if expr.head == :call &&
-            (expr.args[1] == :+ ||
-             expr.args[1] == :-)
-            left = eval_subscript(expr.args[2], par_for_scope, par_for_context)
-            right = eval_subscript(expr.args[3], par_for_scope, par_for_context)
-            operator = expr.args[1]
-            if isa(left, Tuple) &&
-                isa(right, Integer)
-                if operator == :+
-                    return (left[1], left[2] + right)
-                else
-                    return (left[1], left[2] - right)
-                end
-            elseif isa(left, Integer) &&
-                isa(right, Tuple)
-                if operator == :+
-                    return (right[1], left + right[2])
-                else
-                    return (right[1], left - right[2])
-                end
-            elseif isa(left, Integer) &&
-                isa(right, Integer)
-                if operator == :+
-                    return left + right
-                else
-                    return left - right
-                end
-            else
-                return nothing
-            end
-        elseif expr.head == :ref
-            if isa(expr.args[1], Expr) &&
-            isa(expr.args[2], Integer) &&
-            expr.args[1].head == :(.) &&
-            length(expr.args[1].args) == 2 &&
-            expr.args[1].args[1] == par_for_context.iteration_var &&
-            isa(expr.args[1].args[2], Expr) &&
-            expr.args[1].args[2].head == :quote &&
-            expr.args[1].args[2].args[1] == :key
-                return (expr.args[2], 0)
-            else
-                return nothing
-            end
-        end
-    end
-end
-
-function eval_all_subscripts(par_for_context::ParForContext,
-                                       par_for_scope::ScopeContext)::Bool
-    for da_access_vec in values(par_for_context.dist_array_access_dict)
-        for da_access in da_access_vec
-            for subscript in da_access.subscripts
-                expr = subscript.expr
-                sub_value = eval_subscript(expr, par_for_scope, par_for_context)
-                println("eval ", expr, " result = ", sub_value)
-                if sub_value == nothing
-                    return false
-                elseif sub_value == :(:)
-                    subscript.expr = :(:)
-                    subscript.offset = 0
-                    subscript.loop_index_dim = nothing
-                elseif isa(sub_value, Number)
-                    subscript.offset = sub_value
-                    subscript.loop_index_dim = nothing
-                elseif isa(sub_value, Tuple)
-                    subscript.offset = sub_value[2]
-                    subscript.loop_index_dim = sub_value[1]
-                else
-                    return false
-                end
-            end
-        end
-    end
-    return true
-end
-
 @enum DepVecValue DepVecValue_any =
     1 DepVecValue_nonneg =
     2 DepVecValue_none =
     3
 
+const default_tile_size = 100
+
 function compute_dependence_vectors(par_for_context::ParForContext)
     dep_vecs = Set{Tuple}()
-    for da_access_pair in par_for_context.dist_array_access_dict
-        dist_array_sym = da_access_pair.first
+    for (dist_array_sym, da_access_vec) in par_for_context.dist_array_access_dict
         dist_array = eval(current_module(), dist_array_sym)
         num_dims = dist_array.num_dims
-        da_access_vec = da_access_pair.second
-        for da_access_a in da_access_vec
-            for da_access_b in da_access_vec
-                if da_access_a.is_read && da_access_b.is_read
+
+        for index_a in eachindex(da_access_vec)
+            for index_b = index_a:length(da_access_vec)
+                da_access_a = da_access_vec[index_a]
+                da_access_b = da_access_vec[index_b]
+                if da_access_a.is_read && da_access_b.is_read ||
+                    (!(par_for_context.is_ordered) &&
+                     !da_access_a.is_read && !da_access_b.is_read)
                     continue
                 end
                 subscripts_a = da_access_a.subscripts
                 subscripts_b = da_access_b.subscripts
                 dep_vec = Vector{Any}(num_dims)
+                @assert length(subscripts_a) == length(subscripts_b)
 
                 fill!(dep_vec, DepVecValue_any)
-                if length(subscripts_a) != length(subscripts_b)
-                    return nothing
-                end
+
                 no_dep = false
-                for i = 1:length(subscripts_a)
+                for i in eachindex(subscripts_a)
                     sub_a = subscripts_a[i]
                     sub_b = subscripts_b[i]
-                    if sub_a.expr == :(:)
+                    if sub_a.value_type == DistArrayAccessSubscript_value_any ||
+                        sub_b.value_type == DistArrayAccessSubscript_value_any ||
+                        sub_a.value_type == DistArrayAccessSubscript_value_unknown ||
+                        sub_b.value_type == DistArrayAccessSubscript_value_unknown
                         continue
                     elseif sub_a.loop_index_dim == nothing
                         if sub_b.loop_index_dim == nothing
@@ -155,262 +48,275 @@ function compute_dependence_vectors(par_for_context::ParForContext)
                                 break
                             end
                         else
-                            return nothing
+                            continue
                         end
-                    elseif sub_b.expr == :(:)
-                        continue
                     elseif sub_b.loop_index_dim == nothing
-                        return nothing
+                        continue
                     elseif sub_b.loop_index_dim != sub_a.loop_index_dim
-                        return nothing
+                        continue
                     else
-                        dep_vec[sub_a.loop_index_dim] = sub_a.offset - sub_b.offset
+                        dep_val = sub_a.offset - sub_b.offset
+                        println(dep_val)
+                        if dep_vec[sub_a.loop_index_dim] == dep_val ||
+                            dep_vec[sub_a.loop_index_dim] == DepVecValue_any
+                            dep_vec[sub_a.loop_index_dim] = dep_val
+                        else
+                            no_dep = true
+                            break
+                        end
                     end
                 end
+                println(no_dep)
                 if no_dep
                     continue
                 end
-                for i = 1:length(dep_vec)
+                for i in eachindex(dep_vec)
                     dep_val = dep_vec[i]
                     if isa(dep_val, Number)
                         if dep_val > 0
                             break
                         elseif dep_val < 0
-                            no_dep = true
+                            for j in eachindex(dep_vec)
+                                if isa(dep_vec[j], Number)
+                                    dep_vec[j] = -dep_vec[j]
+                                end
+                            end
                             break
                         end
                     else
                         if dep_val == DepVecValue_any
                             dep_vec[i] = DepVecValue_nonneg
+                            break
                         end
                     end
                 end
-                if !no_dep
-                    push!(dep_vecs, tuple(dep_vec...))
-                end
+                push!(dep_vecs, tuple(dep_vec...))
             end
         end
     end
     return dep_vecs
 end
 
-# Prerequisite: each DistArray access subscript is either a constant, :(:) or a linear
-# function of one dimension index.
-
-# The for loop can be n-D parallelized if there exists n dimensions in the iteration
-# space such that for any DistArray, two iterations doesn't depend on each other
-# if all n dimensions differ.
-
-# Currently we support embarrassingly parallel, 1D and 2D parallelization.
-# We perform the following checks:
-# 1) if all DistArray accesses are reads, the loop is embarrassingly parallel;
-# 2) otherwise, we first exculde the DistArrays that are read-only;
-# 3) for each DistArray accessed, there exists 1 dimension such that for different dimension
-# indices, those accesses are independent. That is, all accesses share the same subscripts,
-# each access's subscripts involve exactly one dimension index.
-# 4) if all DistArray accesses involve one dimension index, the loop is 1D parallelized, if 2,
-# then 2D parallelized.
-
-function simple_parallelization(par_for_context::ParForContext)
-    iteration_space = par_for_context.iteration_space
-    iteration_space_dist_array = eval(current_module(), iteration_space)
-
-    all_read_dist_arrays = Set{Symbol}()
-
-    for da_access_vec_pair in par_for_context.dist_array_access_dict
-        all_read = true
-        da_sym = da_access_vec_pair.first
-        da_access_vec = da_access_vec_pair.second
-        for da_access in da_access_vec
-            if !da_access.is_read
-                all_read = false
+function check_for_1d_parallelization(dep_vecs::Set{Tuple}, num_dims)
+    par_dims = Vector{Int64}()
+    for i = 1:num_dims
+        is_parallelizable = true
+        for dep_vec in dep_vecs
+            if dep_vec[i] != 0
+                is_parallelizable = false
                 break
             end
         end
-        if all_read
-            push!(all_read_dist_arrays, da_sym)
+        if is_parallelizable
+            push!(par_dims, i)
         end
     end
-    if length(all_read_dist_arrays) == length(par_for_context.dist_array_access_dict)
-        return ParallelSchemeType_naive
-    end
-
-    dimension_set = Set{Int64}()
-    dist_array_access_dict = Dict{Symbol, Tuple{Vector{DistArrayAccessSubscript}, Int64}}()
-    for da_access_vec_pair in par_for_context.dist_array_access_dict
-        dist_array_dimension_set = Set{Int64}()
-        da_sym = da_access_vec_pair.first
-        da_access_vec = da_access_vec_pair.second
-        prev_subscripts = nothing
-        for da_access in da_access_vec
-            subscripts = da_access.subscripts
-            if prev_subscripts != nothing
-                if length(subscripts) != length(prev_subscripts)
-                    return ParallelScheme_none
-                end
-                for i = 1:length(subscripts)
-                    sub_a = subscripts[i]
-                    sub_b = prev_subscripts[i]
-                    if sub_a.expr != sub_b.expr ||
-                        sub_a.offset != sub_b.offset ||
-                        sub_a.loop_index_dim != sub_b.loop_index_dim
-                        return ParallelSchemeType_none
-                    end
-                end
-            else
-                one_dim_index = false
-                for sub in subscripts
-                    if sub.loop_index_dim != nothing
-                        one_dim_index = true
-                        break
-                    end
-                end
-                if !one_dim_index
-                    return ParallelSchemeType_none
-                end
-            end
-            prev_subscripts = subscripts
-            for sub in subscripts
-                if sub.loop_index_dim != nothing
-                    push!(dist_array_dimension_set, sub.loop_index_dim)
-                end
-            end
-        end
-        if length(dist_array_dimension_set) != 1
-            return ParallelSchemeType_none
-        end
-        dist_array_access_dict[da_sym] = (prev_subscripts, collect(dist_array_dimension_set)[1])
-        union!(dimension_set, dist_array_dimension_set)
-    end
-    if length(dimension_set) == 1
-        return (ParallelSchemeType_1d, dist_array_access_dict, dimension_set)
-    elseif length(dimension_set) == 2
-        return (ParallelSchemeType_2d, dist_array_access_dict, dimension_set)
-    else
-        return -1
-    end
+    return par_dims
 end
 
-function parallelize_1d()
+function check_for_2d_parallelization(dep_vecs::Set{Tuple}, num_dims)
+    par_dims = Vector{Tuple{Int64, Int64}}()
+    for i = 1:num_dims
+        for j = (i + 1):num_dims
+            is_parallelizable = true
+            for dep_vec in dep_vecs
+                if dep_vec[i] != 0 &&
+                    dep_vec[j] != 0
+                    is_parallelizable = false
+                    break
+                end
+            end
+            if is_parallelizable
+                push!(par_dims, (i, j))
+            end
+        end
+    end
+    return par_dims
 end
 
+function check_for_unimodular_parallelization(dep_vecs::Set{Tuple}, num_dims)
+    par_dims = Vector{Int64}()
+    for i = 1:num_dims
+        is_parallelizable = true
+        for dep_vec in dep_vecs
+            if dep_vec[i] == DepVecValue_any
+                is_parallelizable = false
+                break
+            end
+        end
+        if is_parallelizable
+            push!(par_dims, i)
+        end
+    end
+    return par_dims
+end
+
+function determine_parallelization_scheme(dep_vecs::Set{Tuple}, num_dims)
+    if isempty(dep_vecs)
+        return ParallelSchemeType_naive, nothing
+    end
+
+    par_dims = check_for_1d_parallelization(dep_vecs, num_dims)
+    if !isempty(par_dims)
+        return ParallelSchemeType_1d, par_dims
+    end
+
+    par_dims = check_for_2d_parallelization(dep_vecs, num_dims)
+    if !isempty(par_dims)
+        return ParallelSchemeType_2d, par_dims
+    end
+
+    par_dims = check_for_unimodular_parallelization(dep_vecs, num_dims)
+    if !isempty(par_dims)
+        return ParallelSchemeType_unimodular, par_dims
+    end
+    return ParallelSchemeType_none, par_dims
+end
 
 function parallelize_2d(par_for_context::ParForContext,
                         par_for_scope::ScopeContext,
-                        parallel_scheme)
-    da_access_sizes = Dict{Symbol, Int64}()
-    da_access_dict = parallel_scheme[2]
-    dimension_set = parallel_scheme[3]
-    comm_size_dict = Dict{Int64, Int64}()
+                        par_dims,
+                        ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
+    num_work_units = 0
+    par_dim = par_dims[1]
+    space_partition_dim = par_dim[1]
+    time_partition_dim = par_dim[2]
 
-    for da_access_pair in da_access_dict
-        da_sym = da_access_pair.first
-        da_access_subscripts = da_access_pair.second[1]
-        da_access_partition_dim = da_access_pair.second[2]
-        dist_array = eval(current_module(), da_sym)
-        dims = dist_array.dims
-        access_size = 1
-        for i = 1:length(da_access_subscripts)
-            sub = da_access_subscripts[i]
-            if sub.expr == :(:)
-                access_size *= dims[i]
-            end
-        end
-        partition_dim_size = dims[da_access_partition_dim]
-        if !(da_access_partition_dim in keys(comm_size_dict))
-            comm_size_dict[da_access_partition_dim] = 0
-        end
-        comm_size_dict[da_access_partition_dim] += access_size
-    end
+    iteration_space = par_for_context.iteration_space
+    iteration_space_dist_array = eval(current_module(), iteration_space)
+    num_dims = iteration_space_dist_array.num_dims
+    iteration_space_dims = iteration_space_dist_array.dims
+    da_access_dict = par_for_context.dist_array_access_dict
+    space_partitioned_dist_array_ids = Vector{Int32}()
+    time_partitioned_dist_array_ids = Vector{Int32}()
+    global_indexed_dist_array_ids = Vector{Int32}()
 
-    time_partition_dim = nothing
-    comm_size = nothing
-    for comm_size_pair in comm_size_dict
-        dim = comm_size_pair.first
-        size = comm_size_pair.second
-        if comm_size == nothing ||
-            comm_size > size
-            comm_size = size
-            time_partition_dim = dim
-        end
-    end
+    loop_partition_func_name = gen_unique_symbol()
+    loop_partition_func = gen_2d_partition_function(loop_partition_func_name,
+                                                    space_partition_dim,
+                                                    time_partition_dim,
+                                                    default_tile_size,
+                                                    default_tile_size)
 
-    space_partition_dim = nothing
-    for dim in dimension_set
-        if dim != time_partition_dim
-            space_partition_dim = dim
-        end
-    end
-    println("time partiton dim = ", time_partition_dim,
-            " space_partition_dim = ", space_partition_dim)
-    space_dim_tile_size = 100
-    time_dim_tile_size = 100
-    random_access_dist_array_set = Set{Symbol}()
-
-    for da_access_pair in da_access_dict
-        da_sym = da_access_pair.first
-        da_access_partition_dim = da_access_pair.second[2]
-        dist_array = eval(current_module(), da_sym)
-        da_access_subscripts = da_access_pair.second[1]
-        if da_access_subscripts[1].loop_index_dim != da_access_partition_dim ||
-            da_access_subscripts[1].offset != 0
-            push!(random_access_dist_array_set, da_sym)
+    space_partition_func_name = gen_unique_symbol()
+    space_partition_func = gen_1d_partition_function(space_partition_func_name,
+                                                     space_partition_dim,
+                                                     default_tile_size)
+    time_partition_func_name = gen_unique_symbol()
+    time_partition_func = gen_1d_partition_function(time_partition_func_name,
+                                                     time_partition_dim,
+                                                     default_tile_size)
+    parallelized_loop = quote end
+    for (da_sym, da_access_vec) in da_access_dict
+        partition_dims = compute_dist_array_partition_dims(da_sym, da_access_vec, num_dims,
+                                                           iteration_space_dims)
+        println(da_sym, " ", partition_dims)
+        if space_partition_dim in partition_dims
+            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                               space_partition_func_name,
+                                                               [space_partition_dim])
+            push!(space_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
+            repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
+            push!(parallelized_loop.args, repartition_stmt)
+        elseif time_partition_dim in partition_dims
+            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                               time_partition_func_name,
+                                                               [time_partition_dim])
+            push!(time_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
+            repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
+            push!(parallelized_loop.args, repartition_stmt)
         else
-            if length(da_access_subscripts) > 1
-                for sub in da_access_subscripts[2:end]
-                    if sub.expr != :(:)
-                        push!(random_access_dist_array_set, da_sym)
-                        break
-                    end
-                end
-            end
+            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash, nothing, nothing)
+            repartition_stmt = :(Orion.build_global_index($(esc(da_sym))))
+            push!(global_indexed_dist_array_ids, eval(current_module(), da_sym).id)
+            push!(parallelized_loop.args, repartition_stmt)
         end
     end
-    dump(par_for_context.loop_stmt)
-    loop_func_name = gen_unique_symbol()
-    gen_loop_body_function(loop_func_name,
-                           par_for_context.loop_stmt.args[2],
-                           par_for_context,
-                           par_for_scope)
-    #println(par_for_context
+
+    loop_body_func_name = gen_unique_symbol()
+    loop_batch_func_name = gen_unique_symbol()
+    loop_body_func, loop_batch_func = gen_loop_body_function(loop_body_func_name,
+                                                             loop_batch_func_name,
+                                                             par_for_context.loop_stmt.args[2],
+                                                             par_for_context,
+                                                             par_for_scope,
+                                                             ssa_defs)
+    eval_expr_on_all(loop_partition_func, :Main)
+    eval_expr_on_all(space_partition_func, :Main)
+    eval_expr_on_all(time_partition_func, :Main)
+    eval_expr_on_all(loop_body_func, :Main)
+    eval_expr_on_all(loop_batch_func, :Main)
+
+    loop_batch_func_name_str = string(loop_batch_func_name)
+
+    exec_loop_stmt = :(Orion.exec_for_loop($(iteration_space_dist_array.id),
+                                           Orion.ParallelSchemeType_2d,
+                                           $(space_partitioned_dist_array_ids),
+                                           $(time_partitioned_dist_array_ids),
+                                           $(global_indexed_dist_array_ids),
+                                           $loop_batch_func_name_str))
+    push!(parallelized_loop.args, exec_loop_stmt)
+    return parallelized_loop
+end
+
+function compute_dist_array_partition_dims(da_sym::Symbol,
+                                           da_access_vec::Vector{DistArrayAccess},
+                                           num_dims,
+                                           iteration_space_dims::Vector{Int64})
+    partition_dims = Set{Int64}([i for i in 1:num_dims])
+    dist_array = eval(current_module(), da_sym)
+    sub_dims = Set{Tuple}()
+    for i = 1:dist_array.num_dims
+        loop_index_dim = nothing
+        for da_access in da_access_vec
+            subscript = da_access.subscripts[i]
+            println(subscript)
+            if subscript.value_type == DistArrayAccessSubscript_value_static &&
+                subscript.loop_index_dim != nothing &&
+                subscript.offset == 0
+                if loop_index_dim == nothing
+                    loop_index_dim = subscript.loop_index_dim
+                elseif loop_index_dim != subscript.loop_index_dim
+                    loop_index_dim = nothing
+                    break
+                end
+            else
+                loop_index_dim = nothing
+                break
+            end
+        end
+        if loop_index_dim != nothing
+            push!(sub_dims, (i, loop_index_dim))
+        end
+    end
+
+    partition_dims = Set{Int64}()
+    da_dims = dist_array.dims
+    for (sub_dim, loop_index_dim) in sub_dims
+        if da_dims[sub_dim] == iteration_space_dims[loop_index_dim]
+            push!(partition_dims, sub_dim)
+        end
+    end
+    println(partition_dims)
+    return partition_dims
 end
 
 function static_parallelize(par_for_context::ParForContext,
-                            par_for_scope::ScopeContext)
+                            par_for_scope::ScopeContext,
+                            ssa_context::SsaContext)
     iteration_space = par_for_context.iteration_space
     iteration_space_dist_array = eval(current_module(), iteration_space)
-
-    ret = eval_all_subscripts(par_for_context, par_for_scope)
-    if !ret
-        println("no static parallelization")
-        return
-    end
-    parallel_scheme = simple_parallelization(par_for_context)
-    println("parallel scheme = ", parallel_scheme)
-    if parallel_scheme == ParallelSchemeType_naive
-        println("embarassingly parallel")
-    elseif parallel_scheme == ParallelSchemeType_none
-        println("try to apply unimodular transformation")
-        dep_vecs = compute_dependence_vectors(par_for_context)
-        println(dep_vecs)
+    num_dims = iteration_space_dist_array.num_dims
+    dep_vecs = compute_dependence_vectors(par_for_context)
+    println(dep_vecs)
+    par_scheme = determine_parallelization_scheme(dep_vecs, num_dims)
+    println(par_scheme)
+    if par_scheme[1] == ParallelSchemeType_2d
+        return parallelize_2d(par_for_context,
+                       par_for_scope,
+                       par_scheme[2],
+                       ssa_context.ssa_defs)
     else
-        @assert isa(parallel_scheme, Tuple)
-        if parallel_scheme[1] == ParallelSchemeType_1d
-            parallelize_1d()
-        elseif parallel_scheme[1] == ParallelSchemeType_2d
-            parallelize_2d(par_for_context, par_for_scope, parallel_scheme)
-        else
-            @assert false
-        end
     end
-
-    iteration_var = par_for_context.iteration_var
-    partition_func_name = gen_unique_symbol()
-#    partition_func = gen_space_time_partition_function(
-#        partition_func_name,
-#        [(1,), (1,)], [(1,), (2,)],
-#        100, 100)
-    #eval_expr_on_all(partition_func, :OrionGen)
-    #space_time_repartition(iteration_space_dist_array,
-    #                       string(partition_func_name))
+    return nothing
 end

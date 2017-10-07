@@ -14,12 +14,10 @@ end
 function load_module_int32()
     ptr_val = cglobal((:ORION_JULIA_MODULE_CORE, lib_path), Int32)
     global const module_core_int32 = unsafe_load(ptr_val)
-    #ptr_val = cglobal((:ORION_JULIA_MODULE_BASE, lib_path), Int32)
-    #global const module_base_int32 = unsafe_load(ptr_val)
-    #ptr_val = cglobal((:ORION_JULIA_MODULE_MAIN, lib_path), Int32)
-    #global const module_main_int32 = unsafe_load(ptr_val)
-    #ptr_val = cglobal((:ORION_JULIA_MODULE_ORION_GEN, lib_path), Int32)
-    #global const module_orion_gen_int32 = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_JULIA_MODULE_BASE, lib_path), Int32)
+    global const module_base_int32 = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_JULIA_MODULE_MAIN, lib_path), Int32)
+    global const module_main_int32 = unsafe_load(ptr_val)
 end
 
 function load_type_int32()
@@ -131,8 +129,6 @@ function module_to_int32(m::Symbol)::Int32
         return module_base_int32
     elseif m == :Main
         return module_main_int32
-    elseif m == :OrionGen
-        return module_orion_gen_int32
     end
     return -1
 end

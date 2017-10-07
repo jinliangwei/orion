@@ -49,17 +49,6 @@ enum BaseTableType {
   CONCRETE = 2;
 }
 
-message CallFunc {
-  required string function_name = 1;
-  required BaseTableType base_table_type = 2;
-  optional VirtualBaseTable virtual_base_table = 3;
-  optional ConcreteBaseTable concrete_base_table = 4;
-  repeated TableDep deps = 5;
-  required Repetition repetition = 6;
-  required uint64 num_iterations = 7;
-  required int32 result_type = 8;
-}
-
 enum DistArrayParentType {
   TEXT_FILE = 1;
   DIST_ARRAY = 2;
@@ -109,6 +98,17 @@ message DefineVar {
 message SpaceTimeRepartitionDistArray {
   required int32 id = 1;
   required string partition_func_name = 2;
+}
+
+message ExecForLoop {
+  required int32 iteration_space_id = 1;
+  required BaseTableType base_table_type = 2;
+  optional VirtualBaseTable virtual_base_table = 3;
+  optional ConcreteBaseTable concrete_base_table = 4;
+  repeated TableDep deps = 5;
+  required Repetition repetition = 6;
+  required uint64 num_iterations = 7;
+  required int32 result_type = 8;
 }
 
 //message Map {

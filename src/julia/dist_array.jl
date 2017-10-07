@@ -18,6 +18,20 @@ import Base.copy
     4 DistArrayMapType_map_values_new_keys =
     5
 
+@enum DistArrayPartitionType DistArrayPartitionType_naive =
+    1 DistArrayPartitionType_1d =
+    2 DistArrayPartitionType_2d =
+    3 DistArrayPartitionType_range =
+    4 DistArrayPartitionType_hash =
+    5
+
+
+type DistArrayPartitionInfo
+    partition_type::DistArrayPartitionType
+    partition_func_name
+    partition_dims::Vector{Int32}
+end
+
 type DistArray{T} <: AbstractArray{T}
     id::Int32
     parent_type::DistArrayParentType
@@ -34,6 +48,7 @@ type DistArray{T} <: AbstractArray{T}
     dims::Array{Int64, 1}
     random_init_type::DataType
     is_dense::Bool
+    partition_info::DistArrayPartitionInfo
 
     DistArray(id::Integer,
               parent_type::DistArrayParentType,
@@ -48,7 +63,8 @@ type DistArray{T} <: AbstractArray{T}
               mapper_func_name::String,
               is_materialized::Bool,
               random_init_type::DataType,
-              is_dense::Bool) = new(id,
+              is_dense::Bool,
+              partition_info::DistArrayPartitionInfo) = new(id,
                                     parent_type,
                                     flatten_results,
                                     map_type,
@@ -62,7 +78,8 @@ type DistArray{T} <: AbstractArray{T}
                                     is_materialized,
                                     zeros(Int64, num_dims),
                                     random_init_type,
-                                    is_dense)
+                                    is_dense,
+                                    partition_info)
 
     DistArray() = new(-1,
                       DistArrayParentType_init,
@@ -78,7 +95,8 @@ type DistArray{T} <: AbstractArray{T}
                       false,
                       zeros(Int64, 0),
                       Void,
-                      false)
+                      false,
+                      DistArrayPartitionInfo(DistArrayPartitionType_naive))
 end
 
 const dist_arrays = Dict{Int32, DistArray}()
@@ -117,7 +135,8 @@ function text_file(
         parser_func_name,
         false,
         Void,
-        is_dense)
+        is_dense,
+        DistArrayPartitionInfo(DistArrayPartitionType_naive))
     dist_arrays[id] = dist_array
     return dist_array
 end
@@ -141,7 +160,8 @@ function rand(ValueType::DataType, dims...)::DistArray
         "",
         false,
         ValueType,
-        true)
+        true,
+        DistArrayPartitionInfo(DistArrayPartitionType_range))
     dist_array.dims = [dims...]
     dist_arrays[id] = dist_array
     return dist_array
@@ -170,7 +190,8 @@ function randn(ValueType::DataType, dims...)::DistArray
         "",
         false,
         ValueType,
-        true)
+        true,
+        DistArrayPartitionInfo(DistArrayPartitionType_range))
     dist_array.dims = [dims...]
     dist_arrays[id] = dist_array
     return dist_array
@@ -228,6 +249,7 @@ function copy(dist_array::DistArray)::DistArray
     new_dist_array.is_materialized = dist_array.is_materialized
     new_dist_array.dims = copy(dist_array.dims)
     new_dist_array.random_init_type = dist_array.random_init_type
+    new_dist_array.partition_info = dist_array.partition_info
     return new_dist_array
 end
 
@@ -254,7 +276,7 @@ function process_dist_array_map(dist_array::DistArray)::DistArray
 
     map_func_name_sym = gen_unique_symbol()
     processed_dist_array.mapper_func_name = string(map_func_name_sym)
-    processed_dist_array.mapper_func_module = Module(:OrionGen)
+    processed_dist_array.mapper_func_module = Module(:Main)
     processed_dist_array.parent_type = origin_dist_array.parent_type
 
     if origin_dist_array.parent_type == DistArrayParentType_init
@@ -298,13 +320,13 @@ function process_dist_array_map(dist_array::DistArray)::DistArray
                                                   map_types,
                                                   map_flattens)
         end
-        eval_expr_on_all(generated_map_func, :OrionGen)
+        eval_expr_on_all(generated_map_func, :Main)
     end
     return processed_dist_array
 end
 
 function space_time_repartition(dist_array::DistArray,
-                     partition_func_name::AbstractString)
+                                partition_func_name::AbstractString)
     ccall((:orion_space_time_repartition_dist_array, lib_path),
           Void, (Int32, Cstring),
           dist_array.id,
@@ -349,7 +371,8 @@ function map_generic(parent_dist_array::DistArray,
         map_func_name,
         false,
         parent_dist_array.random_init_type,
-        parent_dist_array.is_dense)
+        parent_dist_array.is_dense,
+        DistArrayPartitionInfo(DistArrayPartitionType_naive))
     dist_array.dims = parent_dist_array.dims
     dist_arrays[id] = dist_array
     return dist_array
@@ -361,4 +384,14 @@ end
 
 function map_value(parent_dist_array::DistArray, map_func::Function)::DistArray
     return map_generic(parent_dist_array, map_func, true)
+end
+
+function check_and_repartition(dist_array::DistArray,
+                               partition_info::DistArrayPartitionInfo)
+end
+
+function build_global_index(dist_array::DistArray)
+end
+
+function build_local_index(dist_array::DistArray)
 end

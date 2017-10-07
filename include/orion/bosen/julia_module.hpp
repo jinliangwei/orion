@@ -11,13 +11,9 @@ enum class JuliaModule {
     kBase = 2,
     kMain = 3,
     kTop = 4,
-    kOrionGen = 5,
-    kOrionWorker = 6
-    };
+    kOrionWorker = 5
+          };
 
-
-void SetOrionGenModule(jl_module_t* module);
-jl_module_t* GetOrionGenModule();
 void SetOrionWorkerModule(jl_module_t* module);
 jl_module_t* GetOrionWorkerModule();
 
@@ -31,8 +27,6 @@ inline jl_module_t* GetJlModule(JuliaModule module) {
       return jl_main_module;
     case JuliaModule::kTop:
       return jl_top_module;
-    case JuliaModule::kOrionGen:
-      return GetOrionGenModule();
     case JuliaModule::kOrionWorker:
       return GetOrionWorkerModule();
     default:

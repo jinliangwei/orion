@@ -16,12 +16,6 @@ JuliaEvaluator::Init(const std::string &orion_home) {
   CHECK(orion_worker_module_ != nullptr);
   SetOrionWorkerModule(orion_worker_module_);
 
-  jl_load((orion_home + "/src/julia/orion_gen.jl").c_str());
-  orion_gen_module_ = reinterpret_cast<jl_module_t*>(
-      jl_eval_string("OrionGen"));
-  CHECK(orion_gen_module_ != nullptr);
-  SetOrionGenModule(orion_gen_module_);
-
   jl_value_t *lib_path_str = nullptr;
   JL_GC_PUSH1(&lib_path_str);
   lib_path_str = jl_cstr_to_string(lib_path_.c_str());
@@ -340,16 +334,6 @@ JuliaEvaluator::ParseStringValueOnly(
 }
 
 void
-JuliaEvaluator::ReloadOrionGenModule() {
-  lib_path_ = orion_home_ + "/lib/liborion.so";
-  jl_load((orion_home_ + "/src/julia/orion_gen.jl").c_str());
-  orion_gen_module_ = reinterpret_cast<jl_module_t*>(
-      jl_eval_string("OrionGen"));
-  CHECK(orion_gen_module_ != nullptr);
-  SetOrionGenModule(orion_gen_module_);
-}
-
-void
 JuliaEvaluator::DefineVar(std::string var_name,
                           std::string var_value) {
   LOG(INFO) << __func__ << " var_name = " << var_name
@@ -364,7 +348,7 @@ JuliaEvaluator::DefineVar(std::string var_name,
               &var_value_jl, &serialized_value_array);
 
   jl_function_t *define_setter_func
-      = GetFunction(orion_gen_module_, "define_setter");
+      = GetFunction(jl_main_module, "orion_define_setter");
   var_name_jl = jl_cstr_to_string(var_name.c_str());
   jl_call1(define_setter_func, var_name_jl);
 
@@ -385,7 +369,7 @@ JuliaEvaluator::DefineVar(std::string var_name,
   var_value_jl = jl_call1(deserialize_func, serialized_value_buff);
 
   jl_function_t *setter_func
-      = GetFunction(orion_gen_module_, (std::string("set_") + var_name).c_str());
+      = GetFunction(jl_main_module, (std::string("orion_set_") + var_name).c_str());
   jl_call1(setter_func, var_value_jl);
   JL_GC_POP();
 }
@@ -431,7 +415,7 @@ JuliaEvaluator::ComputeSpaceTimeRepartition(
             repartition_ids.data(),
             repartition_ids.size(),
             0));
-    jl_function_t *repartition_func = GetFunction(orion_gen_module_, repartition_func_name.c_str());
+    jl_function_t *repartition_func = GetFunction(jl_main_module, repartition_func_name.c_str());
     jl_call3(repartition_func, keys_vec_jl, dims_vec_jl, result_vec_jl);
     if (jl_exception_occurred())
       LOG(INFO) << "julia exception occurs: " << jl_typeof_str(jl_exception_occurred());

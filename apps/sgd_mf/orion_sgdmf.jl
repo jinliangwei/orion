@@ -49,11 +49,11 @@ H = Orion.randn(dim_y, K)
 H = Orion.map_value(H, map_init_param)
 Orion.materialize(H)
 
-Orion.@transform for i = 1:num_iterations
+for i = 1:num_iterations
     Orion.@parallel_for for rating in ratings
-	x_idx = rating.key[1]
-	y_idx = rating.key[2]
-	rv = rating.value
+	x_idx = rating[1][1]
+	y_idx = rating[1][2]
+	rv = rating[2]
 
         W_row = W[x_idx, :]
 	H_row = H[y_idx, :]

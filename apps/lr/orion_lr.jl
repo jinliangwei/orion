@@ -10,7 +10,7 @@ Orion.load_constants()
 # test library path
 Orion.helloworld()
 
-ratings = Orion.DistArray{Float32}()
+ = Orion.DistArray{Float32}()
 W = Orion.DistArray{Float32}()
 H = Orion.DistArray{Float32}()
 ratings.num_dims = 2
@@ -22,11 +22,15 @@ ratings.dims = [6000, 4000]
 W.dims = [6000, 100]
 H.dims = [4000, 100]
 
-for i = 1:num_iterations
-    Orion.@parallel_for for rating in rating
-s	x_idx = rating[1][1]
+Orion.@transform for i = 1:num_iterations
+    Orion.@parallel_for for rating in ratings
+	x_idx = rating[1][1]
 	y_idx = rating[1][2]
 	rv = rating[2]
+
+        if rv > 0
+            x_idx += 1
+        end
 
         W_row = W[x_idx, :]
 	H_row = H[y_idx, :]

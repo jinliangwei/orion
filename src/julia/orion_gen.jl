@@ -2,9 +2,9 @@
 
 module OrionGen
 using OrionWorker
-function define_setter(var::AbstractString)
+function orion_define_setter(var::AbstractString)
     var_sym = Symbol(var)
-    set_func_name = Symbol("set_", var)
+    set_func_name = Symbol("orion_set_", var)
     set_func = :(function $set_func_name(val)
                    global $(var_sym) = val
                  end)

@@ -1,26 +1,12 @@
 import Base.print, Base.string
 
-# The transform scope itself contains no hard scope.
-# The SymbolTable.sym_def contains symbols that appear in the transform scope.
-# The symbols that are defined or redefined have exactly one definition (SSA) otherwise it
-# has no definition (mapping to nothing). The definition contains only SSA variables.
-
-type SymbolTable
-    sym_def::Dict{Symbol, Any}
-    sym_remap::Dict{Symbol, Symbol}
-    SymbolTable() = new(Dict{Symbol, Any}(),
-                        Dict{Symbol, Any}())
-end
-
 type VarInfo
     is_assigned_to::Bool
     is_mutated::Bool
-    is_accumulator::Bool
     is_marked_local::Bool
     is_marked_global::Bool
 
     VarInfo() = new(false,
-                    false,
                     false,
                     false,
                     false)
@@ -30,29 +16,31 @@ function string(info::VarInfo)
     str = "VarInfo{"
     str *= "[is_assigned_to=" * string(info.is_assigned_to) * "], "
     str *= "[is_mutated=" * string(info.is_mutated) * "], "
-    str *= "[is_accumulator=" * string(info.is_accumulator) * "],"
     str *= "[is_marked_local=" * string(info.is_marked_local) * "]}"
     str *= "[is_marked_global=" * string(info.is_marked_global) * "]}"
 #    println(str)
 end
 
+@enum DistArrayAccessSubscript_value DistArrayAccessSubscript_value_any =
+    1 DistArrayAccessSubscript_value_static =
+    2 DistArrayAccessSubscript_value_unknown =
+    3
+
 type DistArrayAccessSubscript
     expr
-    offset::Int64
+    value_type
     loop_index_dim
-    DistArrayAccessSubscript() = new(nothing,
-                                     0,
-                                     nothing)
+    offset
 end
 
 type DistArrayAccess
     dist_array::Symbol
     subscripts::Vector{DistArrayAccessSubscript}
     is_read::Bool
-    DistArrayAccess() = new(Symbol(""),
-                            Vector{DistArrayAccessSubscript}(),
-                            false)
-
+    DistArrayAccess(dist_array, is_read) =
+        new(dist_array,
+            Vector{DistArrayAccessSubscript}(),
+            is_read)
 end
 
 type ParForContext
@@ -61,7 +49,6 @@ type ParForContext
     loop_stmt::Expr
     dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}}
     is_ordered::Bool
-    parallelized_loop
     ParForContext(iteration_var::Symbol,
                   iteration_space::Symbol,
                   loop_stmt,
@@ -69,8 +56,7 @@ type ParForContext
                                           iteration_space,
                                           loop_stmt,
                                           Dict{Symbol, Vector{DistArrayAccess}}(),
-                                          is_ordered,
-                                          nothing)
+                                          is_ordered)
 end
 
 type AccumulatorInfo
@@ -79,36 +65,26 @@ type AccumulatorInfo
     combiner_func::Symbol
 end
 
+accumulator_info_dict = Dict{Symbol, AccumulatorInfo}()
+
 type ScopeContext
     parent_scope
     is_hard_scope::Bool
     inherited_var::Dict{Symbol, VarInfo}
     local_var::Dict{Symbol, VarInfo}
-    par_for_scope::Array{ScopeContext}
-    child_scope::Array{ScopeContext}
-    par_for_context::Array{ParForContext}
-    symbol_table::SymbolTable
-    accumulator_info_dict::Dict{Symbol, AccumulatorInfo}
+    child_scope::Vector{ScopeContext}
 
     ScopeContext() = new(nothing,
                          false,
                          Dict{Symbol, VarInfo}(),
                          Dict{Symbol, VarInfo}(),
-                         Array{ScopeContext, 1}(),
-                         Array{ScopeContext, 1}(),
-                         Array{ParForContext, 1}(),
-                         SymbolTable(),
-                         Dict{Symbol, AccumulatorInfo}())
+                         Vector{ScopeContext}())
 
     ScopeContext(parent_scope::ScopeContext) = new(parent_scope,
                                                    false,
                                                    Dict{Symbol, VarInfo}(),
                                                    Dict{Symbol, VarInfo}(),
-                                                   Array{ScopeContext, 1}(),
-                                                   Array{ScopeContext, 1}(),
-                                                   Array{ParForContext, 1}(),
-                                                   SymbolTable(),
-                                                   Dict{Symbol, AccumulatorInfo}())
+                                                   Vector{ScopeContext}())
 end
 
 function print(scope_context::ScopeContext, indent = 0)
@@ -126,22 +102,6 @@ function print(scope_context::ScopeContext, indent = 0)
     for scope in scope_context.child_scope
        print(scope, indent + 2)
     end
-
-    println(indent_str * "par_for scope:")
-    for scope in scope_context.par_for_scope
-        print(scope, indent + 2)
-    end
-
-    println(indent_str * "par_for context:")
-    for context in scope_context.par_for_context
-        print(context, indent + 2)
-    end
-
-    println(indent_str * "symbol defs:")
-    println(indent_str, scope_context.symbol_table.sym_def)
-
-    println(indent_str * "symbol remaps:")
-    println(indent_str, scope_context.symbol_table.sym_remap)
 end
 
 function print(par_for_context::ParForContext, indent = 0)

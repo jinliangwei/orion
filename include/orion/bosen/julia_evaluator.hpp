@@ -28,7 +28,6 @@ class JuliaEvaluator {
   void EvalExpr(const std::string &serialized_expr,
                 JuliaModule module,
                 Blob *result_buff);
-  jl_module_t* orion_gen_module_;
   jl_module_t* orion_worker_module_;
   std::string lib_path_;
   std::string orion_home_;
@@ -55,8 +54,6 @@ class JuliaEvaluator {
       jl_function_t *parser_func,
       type::PrimitiveType result_type,
       Blob *value);
-
-  void ReloadOrionGenModule();
 
   void DefineVar(std::string var_name,
                  std::string var_value);

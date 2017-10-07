@@ -58,14 +58,11 @@ end
 
 function is_var_accumulator(scope_context::ScopeContext,
                             var::Symbol)::Bool
-    if var in keys(scope_context.inherited_var)
-        return scope_context.inherited_var[var].is_accumulator
-    elseif var in keys(scope_context.local_var)
-        return scope_context.local_var[var].is_accumulator
-    elseif scope_context.parent_scope == nothing
-        return false
+    if var in keys(scope_context.inherited_var) &&
+        var in keys(accumulator_info_dict)
+        return true
     else
-        return is_var_accumulator(scope_context.parent_scope, var)
+        return false
     end
 end
 
@@ -77,7 +74,6 @@ function add_global_var!(scope_context::ScopeContext,
     else
         scope_context.inherited_var[var].is_assigned_to |= info.is_assigned_to
         scope_context.inherited_var[var].is_mutated |= info.is_mutated
-        scope_context.inherited_var[var].is_accumulator |= info.is_accumulator
         scope_context.inherited_var[var].is_marked_global |= info.is_marked_global
     end
 end
@@ -89,11 +85,9 @@ function add_uncertain_var!(scope_context::ScopeContext,
         scope_context.local_var[var].is_assigned_to |= info.is_assigned_to
         scope_context.local_var[var].is_mutated |= info.is_mutated
         scope_context.local_var[var].is_marked_local |= info.is_marked_local
-        scope_context.local_var[var].is_accumulator |= info.is_accumulator
     elseif var in keys(scope_context.inherited_var)
         scope_context.inherited_var[var].is_assigned_to |= info.is_assigned_to
         scope_context.inherited_var[var].is_mutated |= info.is_mutated
-        scope_context.inherited_var[var].is_accumulator |= info.is_accumulator
     else
         scope_context.inherited_var[var] = info
     end
@@ -109,7 +103,6 @@ function add_local_var!(scope_context::ScopeContext,
         info.is_assigned_to |= scope_context.inherited_var[var].is_assigned_to
         info.is_mutated |= scope_context.inherited_var[var].is_mutated
         info.is_marked_local |= scope_context.inherited_var[var].is_marked_local
-        info.is_accumulator |= scope_context.inherited_var[var].is_accumulator
         delete!(scope_context.inherited_var, var)
         scope_context.local_var[var] = info
     elseif var in keys(scope_context.local_var)
@@ -117,7 +110,6 @@ function add_local_var!(scope_context::ScopeContext,
             !info.is_marked_global
         scope_context.local_var[var].is_assigned_to |= info.is_assigned_to
         scope_context.local_var[var].is_mutated |= info.is_mutated
-        scope_context.local_var[var].is_accumulator |= info.is_accumulator
         scope_context.local_var[var].is_marked_local |= info.is_marked_local
     else
         scope_context.local_var[var] = info
@@ -125,46 +117,24 @@ function add_local_var!(scope_context::ScopeContext,
 end
 
 function get_vars_to_broadcast(scope_context::ScopeContext)
-    static_broadcast_var = Set{Symbol}()
-    dynamic_broadcast_var_array = Vector{Set{Symbol}}()
-    accumulator_var_array = Vector{Set{Symbol}}()
-    for par_for_scope in scope_context.par_for_scope
-        dynamic_broadcast_var = Set{Symbol}()
-        accumulator_var = Set{Symbol}()
-        for (var, info) in par_for_scope.inherited_var
-            if isa(eval(current_module(), var), DistArray)
-                continue
-            end
-            # we do not broadcast variables that are defined in other modules
-            if var in keys(scope_context.inherited_var) &&
-                which(var) != current_module()
-                println(var, " not in current module")
-                continue
-            elseif var in keys(scope_context.inherited_var) &&
-                !scope_context.inherited_var[var].is_mutated &&
-                !scope_context.inherited_var[var].is_assigned_to
-                println("static broadcast ", var)
-                push!(static_broadcast_var, var)
-            elseif var in keys(scope_context.local_var) &&
-                info.is_accumulator
-                println("create accumulator ", var)
-                push!(accumulator_var,var)
-            else
-                println("dynamic broadcast ", var)
-                push!(dynamic_broadcast_var, var)
-            end
+    bc_vars = Set{Symbol}()
+    accumulator_vars = Set{Symbol}()
+    for (var, info) in scope_context.inherited_var
+        if !isdefined(current_module(), var) ||
+            isa(eval(current_module(), var), DistArray) ||
+            is_var_accumulator(scope_context, var)
+            continue
         end
-        push!(dynamic_broadcast_var_array, dynamic_broadcast_var)
-        push!(accumulator_var_array, accumulator_var)
+
+        if var in keys(scope_context.inherited_var)
+            push!(bc_vars, var)
+        end
     end
-    return (static_broadcast_var,
-            dynamic_broadcast_var_array,
-            accumulator_var_array)
+    return bc_vars
 end
 
 function add_child_scope!(parent::ScopeContext,
-                          child::ScopeContext,
-                          par_for::Bool = false)
+                          child::ScopeContext)
     for (var, info) in child.inherited_var
         if info.is_marked_global
             add_global_var!(parent, var, info)
@@ -174,11 +144,6 @@ function add_child_scope!(parent::ScopeContext,
         else
             add_uncertain_var!(parent, var, info)
         end
-        info.is_accumulator |= is_var_accumulator(parent, var)
     end
-    if par_for
-        push!(parent.par_for_scope, child)
-    else
-        push!(parent.child_scope, child)
-    end
+    push!(parent.child_scope, child)
 end

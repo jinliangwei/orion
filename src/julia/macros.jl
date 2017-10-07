@@ -7,46 +7,58 @@ macro share(ex::Expr)
     esc(ex)
 end
 
-macro transform(expr::Expr)
-    if expr.head == :for
-        context = ScopeContext()
-        transform_loop(expr, context)
-    elseif expr.head == :block
-        transform_block(expr)
-    else
-        error("Expression ", expr.head, " cannot be parallelized (yet)")
-    end
-end
-
 macro parallel_for(expr::Expr)
+    return parallelize_for_loop(expr, false)
 end
 
 macro ordered_parallel_for(expr::Expr)
+    return parallelize_for_loop(expr, true)
 end
 
-macro accumulator(expr::Expr)
+macro accumulator(expr::Expr, combiner::Symbol)
+    @assert is_variable_definition(expr)
+    var = assignment_get_assigned_to(expr)
+    @assert isa(var, Symbol)
+    accumulator_info_dict[var] = AccumulatorInfo(var,
+                                                 eval(assignment_get_assignment_from(expr)),
+                                                 combiner)
+end
+
+function parallelize_for_loop(loop_stmt, is_ordered::Bool)
+    @assert is_for_loop(loop_stmt)
+    iteration_var = for_get_iteration_var(loop_stmt)
+    iteration_space = for_get_iteration_space(loop_stmt)
+
+    @assert isa(iteration_space, Symbol)
+    @assert isdefined(iteration_space)
+    @assert isa(eval(current_module(), iteration_space), DistArray)
+
+    par_for_context = ParForContext(iteration_var,
+                                    iteration_space,
+                                    loop_stmt,
+                                    is_ordered)
+
+    @time scope_context = get_scope_context!(nothing, loop_stmt)
+
+    @time (flow_graph, flow_graph_context, ssa_context) = flow_analysis(loop_stmt)
+    parallelized_loop = gen_parallelized_loop(loop_stmt, scope_context, par_for_context,
+                                             flow_graph,
+                                             flow_graph_context, ssa_context)
+    println(parallelized_loop)
+    return parallelized_loop
 end
 
 function transform_loop(expr::Expr, context::ScopeContext)
-    @time scope_context = get_scope_context!(nothing, expr)
+
 #    print(scope_context)
-    @time flow_analysis(expr)
-    return
 
-    iterative_body = quote
-    end
-    push!(iterative_body.args, Expr(:call, :println, "ran one iteration"))
-    ret = quote
-    end
 
-    static_bc_var, dynamic_bc_var_array,
-    accumulator_var_array = get_vars_to_broadcast(scope_context)
-    println("broadcat list ", static_bc_var)
-    define_static_bc_vars_stmt = :(Orion.define_vars($static_bc_var))
     #push!(ret.args, define_static_bc_vars_stmt)
 
-    loop_transformed = gen_transformed_loop(expr, scope_context)
+
+    return
     push!(ret.args, loop_transformed)
+
 
     #println(eval(current_module(), :num_iterations))
     #ret = :(for i = 1:$(esc(:num_iterations)) println(i) end)
@@ -79,10 +91,6 @@ function transform_loop(expr::Expr, context::ScopeContext)
 
     #dump(ret)
     return ret
-end
-
-function transform_block(expr::Expr)
-    return :(assert(false))
 end
 
 macro objective(expr::Expr)

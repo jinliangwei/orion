@@ -35,7 +35,7 @@ end
 end
 
 @inline function ref_get_subscripts(ref_expr::Expr)::Array
-    return ref_expr.args[2:length(ex.args)]
+    return ref_expr.args[2:length(ref_expr.args)]
 end
 
 @inline function ref_dot_get_mutated_var(ref_expr::Expr)
