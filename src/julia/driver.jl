@@ -84,18 +84,12 @@ function define_vars(var_set::Set{Symbol})
     end
 end
 
-@enum ParallelSchemeType ParallelSchemeType_naive =
-    1 ParallelSchemeType_1d =
-    2 ParallelSchemeType_2d =
-    3 ParallelSchemeType_unimodular =
-    4 ParallelSchemeType_none =
-    5
-
 function exec_for_loop(iteration_space_id::Integer,
-                       parallel_scheme_type::ParallelSchemeType,
+                       parallel_scheme::ForLoopParallelScheme,
                        space_partitioned_dist_array_ids::Vector{Int32},
                        time_partitioned_dist_array_ids::Vector{Int32},
                        global_indexed_dist_array_ids::Vector{Int32},
-                       loop_batch_func_name::AbstractString)
+                       loop_batch_func_name::AbstractString,
+                       is_orderd::Bool)
 
 end

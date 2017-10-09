@@ -35,6 +35,12 @@ enum class DistArrayIndexType {
     kLocal = 2
 };
 
+enum class ForLoopParallelScheme {
+  kNaive = 0,
+    k1D = 1,
+    kSpaceTime = 2
+};
+
 class DistArrayMeta {
  private:
   const size_t kNumDims;

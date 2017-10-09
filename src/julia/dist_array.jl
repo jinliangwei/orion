@@ -31,6 +31,13 @@ import Base.copy
     2 DistArrayIndexType_local =
     3
 
+@enum ForLoopParallelScheme ForLoopParallelScheme_naive =
+    1 ForLoopParallelScheme_1d =
+    2 ForLoopParallelScheme_2d =
+    3 ForLoopParallelScheme_unimodular =
+    4 ForLoopParallelScheme_none =
+    5
+
 type DistArrayPartitionInfo
     partition_type::DistArrayPartitionType
     partition_func_name

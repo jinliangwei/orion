@@ -151,24 +151,24 @@ end
 
 function determine_parallelization_scheme(dep_vecs::Set{Tuple}, num_dims)
     if isempty(dep_vecs)
-        return ParallelSchemeType_naive, nothing
+        return ForLoopParallelScheme_naive, nothing
     end
 
     par_dims = check_for_1d_parallelization(dep_vecs, num_dims)
     if !isempty(par_dims)
-        return ParallelSchemeType_1d, par_dims
+        return ForLoopParallelScheme_1d, par_dims
     end
 
     par_dims = check_for_2d_parallelization(dep_vecs, num_dims)
     if !isempty(par_dims)
-        return ParallelSchemeType_2d, par_dims
+        return ForLoopParallelScheme_2d, par_dims
     end
 
     par_dims = check_for_unimodular_parallelization(dep_vecs, num_dims)
     if !isempty(par_dims)
-        return ParallelSchemeType_unimodular, par_dims
+        return ForLoopParallelScheme_unimodular, par_dims
     end
-    return ParallelSchemeType_none, par_dims
+    return ForLoopParallelScheme_none, par_dims
 end
 
 function parallelize_2d(par_for_context::ParForContext,
@@ -202,7 +202,7 @@ function parallelize_2d(par_for_context::ParForContext,
                                                      default_tile_size)
     time_partition_func_name = gen_unique_symbol()
     time_partition_func = gen_1d_partition_function(time_partition_func_name,
-                                                     time_partition_dim,
+                                                    time_partition_dim,
                                                     default_tile_size)
 
     dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_2d,
@@ -258,11 +258,12 @@ function parallelize_2d(par_for_context::ParForContext,
     loop_batch_func_name_str = string(loop_batch_func_name)
 
     exec_loop_stmt = :(Orion.exec_for_loop($(iteration_space_dist_array.id),
-                                           Orion.ParallelSchemeType_2d,
+                                           Orion.ForLoopParallelScheme_2d,
                                            $(space_partitioned_dist_array_ids),
                                            $(time_partitioned_dist_array_ids),
                                            $(global_indexed_dist_array_ids),
-                                           $loop_batch_func_name_str))
+                                           $loop_batch_func_name_str,
+                                           $(par_for_context.is_ordered)))
     push!(parallelized_loop.args, exec_loop_stmt)
     return parallelized_loop
 end
@@ -315,7 +316,7 @@ function static_parallelize(par_for_context::ParForContext,
     num_dims = iteration_space_dist_array.num_dims
     dep_vecs = compute_dependence_vectors(par_for_context)
     par_scheme = determine_parallelization_scheme(dep_vecs, num_dims)
-    if par_scheme[1] == ParallelSchemeType_2d
+    if par_scheme[1] == ForLoopParallelScheme_2d
         return parallelize_2d(par_for_context,
                        par_for_scope,
                        par_scheme[2],

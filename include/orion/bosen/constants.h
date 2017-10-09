@@ -16,24 +16,6 @@ extern "C" {
    extern const int32_t ORION_TYPE_FLOAT64;
    extern const int32_t ORION_TYPE_STRING;
 
-   extern const int32_t ORION_TASK_TABLE_DEP_TYPE_PIPELINED;
-   extern const int32_t ORION_TASK_TABLE_DEP_TYPE_RANDOM_ACCESS;
-
-   extern const int32_t ORION_TASK_READWRITE_READ_ONLY;
-   extern const int32_t ORION_TASK_READWRITE_WRITE_ONLY;
-   extern const int32_t ORION_TASK_READWRITE_READ_WRITE;
-
-   extern const int32_t ORION_TASK_REPETITION_ONE_PARTITION;
-   extern const int32_t ORION_TASK_REPETITION_ALL_LOCAL_PARTITIONS;
-   extern const int32_t ORION_TASK_REPETITION_ALL_PARTITIONS;
-
-   extern const int32_t ORION_TASK_PARTITION_SCHEME_STATIC;
-   extern const int32_t ORION_TASK_PARTITION_SCHEME_DYNAMIC;
-   extern const int32_t ORION_TASK_PARTITION_SCHEME_RANDOM;
-
-   extern const int32_t ORION_TASK_BASETABLE_TYPE_VIRTUAL;
-   extern const int32_t ORION_TASK_BASETABLE_TYPE_CONCRETE;
-
   extern const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_TEXT_FILE;
   extern const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_DIST_ARRAY;
   extern const int32_t ORION_TASK_DIST_ARRAY_PARENT_TYPE_INIT;
@@ -62,5 +44,9 @@ extern "C" {
   extern const int32_t ORION_DIST_ARRAY_INDEX_TYPE_NONE;
   extern const int32_t ORION_DIST_ARRAY_INDEX_TYPE_GLOBAL;
   extern const int32_t ORION_DIST_ARRAY_INDEX_TYPE_LOCAL;
+
+  extern const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_NAIVE;
+  extern const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_1D;
+  extern const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_SPACE_TIME;
 }
 #endif

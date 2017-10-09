@@ -412,8 +412,6 @@ function gen_loop_body_function(func_name::Symbol,
         end
     )
 
-    println(loop_body_func)
-
     batch_loop_stmt = :(
     for i in 1:length(keys)
         key = keys[i]
@@ -432,8 +430,8 @@ function gen_loop_body_function(func_name::Symbol,
     end
     )
 
-    eval(batch_func)
-    println(batch_func)
+    #eval(batch_func)
+    #println(batch_func)
     return loop_body_func, batch_func
 end
 

@@ -27,15 +27,6 @@ extern "C" {
     driver->ConnectToMaster();
   }
 
-  const uint8_t* orion_call_func_on_one(
-      int32_t executor_id,
-      const char *function_name,
-      const TableDep *deps,
-      size_t num_deps,
-      int repetition,
-      size_t num_iterations,
-      size_t *result_size) { return nullptr; }
-
   void orion_create_dist_array(
       int32_t id,
       int32_t parent_type,

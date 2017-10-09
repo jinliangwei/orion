@@ -7,23 +7,6 @@
 #include "constants.h"
 
 extern "C" {
-  typedef struct VirtualBaseTable {
-    size_t size;
-  } VirtualBaseTable;
-
-  typedef struct ConcreteBaseTable {
-    int32_t tbale_id;
-    int partition_scheme;
-    size_t partition_size;
-  } ConcreteBaseTable;
-
-  typedef struct TableDep {
-    int32_t table_id;
-    int dep_type;
-    int read_write;
-    const char* function_compute_dep;
-  } TableDep;
-
   void orion_init(
       const char *master_ip,
       uint16_t master_port,
@@ -31,15 +14,6 @@ extern "C" {
       size_t num_executors);
 
   void orion_connect_to_master();
-
-  const uint8_t* orion_call_func_on_one(
-    int32_t executor_id,
-    const char *function_name,
-    const TableDep *deps,
-    size_t num_deps,
-    int repetition,
-    size_t num_iterations,
-    size_t *result_size);
 
   jl_value_t* orion_eval_expr_on_all(
       const uint8_t* expr,

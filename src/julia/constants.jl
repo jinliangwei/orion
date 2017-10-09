@@ -103,6 +103,15 @@ function load_dist_array_index_type_int32()
     global const dist_array_index_type_local = unsafe_load(ptr_val)
 end
 
+function load_for_loop_parallel_scheme_int32()
+    ptr_val = cglobal((:ORION_FOR_LOOP_PARALLEL_SCHEME_NAIVE, lib_path), Int32)
+    global const for_loop_parallel_scheme_naive = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_FOR_LOOP_PARALLEL_SCHEME_1D, lib_path), Int32)
+    global const for_loop_parallel_scheme_1d = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_FOR_LOOP_PARALLEL_SCHEME_SPACE_TIME, lib_path), Int32)
+    global const for_loop_parallel_scheme_space_time = unsafe_load(ptr_val)
+end
+
 function dist_array_parent_type_to_int32(parent_type::DistArrayParentType)::Int32
     if parent_type == DistArrayParentType_text_file
         return dist_array_parent_type_text_file
@@ -173,6 +182,20 @@ function dist_array_index_type_to_int32(index_type::DistArrayIndexType)
         return dist_array_index_type_local
     else
         error("unknown ", index_type)
+    end
+    return -1
+end
+
+function for_loop_parallel_scheme_to_int32(parallel_scheme::ForLoopParallelScheme)
+    if parallel_scheme == ForLoopParalellScheme_naive
+        return for_loop_parallel_scheme_naive
+    elseif parallel_scheme == ForLoopParallelScheme_1d
+        return for_loop_parallel_scheme_1d
+    elseif parallel_scheme == ForLoopParallelScheme_2d ||
+        parallel_scheme == ForLoopParallelScheme_unimodular
+        return for_loop_parallel_scheme_space_time
+    else
+        error("unknown ", parallel_scheme)
     end
     return -1
 end

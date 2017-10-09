@@ -27,13 +27,11 @@ function get_dist_array_access_visit(expr,
                         if !(referenced_var in keys(context.access_dict))
                             context.access_dict[referenced_var] = Vector{DistArrayAccess}()
                         end
-                        println("found! ", da_access)
                         push!(context.access_dict[referenced_var], da_access)
                         if head != :(=)
                             da_access = copy(da_access)
                             da_access.is_read = true
                             push!(context.access_dict[referenced_var], da_access)
-                            println("found! ", da_access)
                         end
                     end
                     subscripts = ref_get_subscripts(assigned_to)
@@ -68,7 +66,6 @@ function get_dist_array_access_visit(expr,
                     if !(referenced_var in keys(context.access_dict))
                         context.access_dict[referenced_var] = Vector{DistArrayAccess}()
                     end
-                    println("found! ", da_access)
                     push!(context.access_dict[referenced_var], da_access)
                 end
                 subscripts = ref_get_subscripts(expr)

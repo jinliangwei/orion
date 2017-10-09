@@ -1,54 +1,5 @@
 package orion.bosen.task;
 
-enum TableDepType {
-  // The function reads and writes to a pre-determined partition
-  // of the table; the partitioning guarantees that concurrent
-  // running instances of the function don't access the same partition
-  PIPELINED = 1;
-  // The function reads and/or writes to arbitrary records in the table
-  RANDOM_ACCESS = 2;
-}
-
-enum ReadWrite {
-  READ_ONLY = 1;
-  WRITE_ONLY =  2;
-  READ_WRITE = 3;
-}
-
-message TableDep {
-  required int32 table_id = 1;
-  required TableDepType dep_type = 2;
-  required ReadWrite read_write = 3;
-  optional string function_compute_dep = 4;
-}
-
-enum Repetition {
-  ONE_PARTITION = 1;
-  ALL_LOCAL_PARTITIONS = 2;
-  ALL_PARTITIONS = 3;
-}
-
-enum PartitionScheme {
-  STATIC = 1;
-  DYNAMIC = 2;
-  RANDOM = 3;
-}
-
-message ConcreteBaseTable {
-  required int32 table_id = 1;
-  required PartitionScheme partition_scheme = 2;
-  optional uint64 partition_size = 3;
-}
-
-message VirtualBaseTable {
-  required uint64 size = 1;
-}
-
-enum BaseTableType {
-  VIRTUAL = 1;
-  CONCRETE = 2;
-}
-
 enum DistArrayParentType {
   TEXT_FILE = 1;
   DIST_ARRAY = 2;
@@ -104,13 +55,12 @@ message RepartitionDistArray {
 
 message ExecForLoop {
   required int32 iteration_space_id = 1;
-  required BaseTableType base_table_type = 2;
-  optional VirtualBaseTable virtual_base_table = 3;
-  optional ConcreteBaseTable concrete_base_table = 4;
-  repeated TableDep deps = 5;
-  required Repetition repetition = 6;
-  required uint64 num_iterations = 7;
-  required int32 result_type = 8;
+  required int32 parallel_scheme = 2;
+  repeated int32 space_partitioned_dist_array_ids = 3;
+  repeated int32 time_partitioned_dist_array_ids = 4;
+  repeated int32 global_indexed_dist_array_ids = 5;
+  required string loop_batch_func_name = 6;
+  required bool is_ordered = 7;
 }
 
 //message Map {

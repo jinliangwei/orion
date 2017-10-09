@@ -102,7 +102,8 @@ enum class DriverMsgType {
     kShuffle = 8,
     kMasterResponse = 9,
     kDefineVar = 10,
-    kRepartitionDistArray = 11
+    kRepartitionDistArray = 11,
+    kExecForLoop = 12
 };
 
 struct DriverMsg {

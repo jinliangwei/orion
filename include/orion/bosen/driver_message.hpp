@@ -85,6 +85,18 @@ struct DriverMsgRepartitionDistArray {
   }
 };
 
+struct DriverMsgExecForLoop {
+  size_t task_size;
+ private:
+  DriverMsgExecForLoop() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _task_size) { task_size = _task_size; }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kExecForLoop;
+  }
+};
+
 class DriverMsgHelper {
  public:
   template<typename Msg,

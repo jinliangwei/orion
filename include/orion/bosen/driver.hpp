@@ -81,20 +81,6 @@ class Driver {
   bool sent_to_master_ { true };
 
  private:
-  void CreateCallFuncTask(
-      const char* function_name,
-      task::BaseTableType base_table_type,
-      const task::VirtualBaseTable &virtual_base_table,
-      const task::ConcreteBaseTable &concrete_base_table,
-      const std::vector<task::TableDep> &deps,
-      task::Repetition repetition,
-      int32_t num_iterations,
-      type::PrimitiveType result_type);
-
-  void CreateExecuteCodeTask(
-      const char *code,
-      type::PrimitiveType result_type);
-
   int HandleMasterMsg(PollConn *poll_conn_ptr);
   void HandleWriteEvent(PollConn *poll_conn_ptr);
   int HandleClosedConnection(PollConn *poll_conn_ptr);
@@ -142,27 +128,6 @@ class Driver {
       size_t expr_size,
       JuliaModule module);
 
-  const uint8_t* CallFuncOnOne(
-      int32_t executor_id,
-      const char* function_name,
-      task::BaseTableType base_table_type,
-      const task::VirtualBaseTable &virtual_base_table,
-      const task::ConcreteBaseTable &concrete_base_table,
-      const std::vector<task::TableDep> &deps,
-      task::Repetition repetition,
-      int32_t num_iterations,
-      size_t *result_size);
-
-  const uint8_t* CallFuncOnAll(
-      const char* function_name,
-      task::BaseTableType base_table_type,
-      const task::VirtualBaseTable &virtual_base_table,
-      const task::ConcreteBaseTable &concrete_base_table,
-      const std::vector<task::TableDep> &deps,
-      task::Repetition repetition,
-      int32_t num_iterations,
-      size_t *result_size);
-
   void CreateDistArray(
       int32_t id,
       task::DistArrayParentType parent_type,
@@ -188,6 +153,17 @@ class Driver {
       int32_t partition_scheme,
       int32_t index_type);
 
+  void ExecForLoop(
+      int32_t iteration_space_id,
+      int32_t parallel_scheme,
+      const int32_t *space_partitioned_dist_array_ids,
+      size_t num_space_partitioned_dist_arrays,
+      const int32_t *time_partitioned_dist_array_ids,
+      size_t num_time_partitioned_dist_arrays,
+      const int32_t *global_indexed_dist_array_ids,
+      size_t num_gloabl_indexed_dist_arrays,
+      std::string loop_batch_func_name,
+      bool is_ordered);
   void Stop();
 };
 
@@ -219,7 +195,6 @@ Driver::BlockRecvFromMaster() {
 
 int
 Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
-  LOG(INFO) << __func__;
   auto &recv_buff = master_.recv_buff;
   auto driver_msg_type = message::DriverMsgHelper::get_type(master_.recv_buff);
   CHECK(driver_msg_type == expected_msg_type_)
@@ -273,17 +248,6 @@ Driver::HandleClosedConnection(PollConn *poll_conn_ptr) {
   LOG(FATAL) << "Lost connection to master";
   return EventHandler<PollConn>::kExit;
 }
-
-void
-Driver::CreateCallFuncTask(
-    const char* func_name,
-    task::BaseTableType base_table_type,
-    const task::VirtualBaseTable &virtual_base_table,
-    const task::ConcreteBaseTable &concrete_base_table,
-    const std::vector<task::TableDep> &deps,
-    task::Repetition repetition,
-    int32_t num_iterations,
-    type::PrimitiveType result_type) { }
 
 void
 Driver::ConnectToMaster() {
@@ -365,33 +329,6 @@ Driver::EvalExprOnAll(
     master_recv_temp_buff_.ClearOneMsg();
   }
   return result_array;
-}
-
-const uint8_t*
-Driver::CallFuncOnOne(
-    int32_t executor_id,
-    const char* function_name,
-    task::BaseTableType base_table_type,
-    const task::VirtualBaseTable &virtual_base_table,
-    const task::ConcreteBaseTable &concrete_base_table,
-    const std::vector<task::TableDep> &deps,
-    task::Repetition repetition,
-    int32_t num_iterations,
-    size_t *result_size) {
-  return nullptr;
-}
-
-const uint8_t*
-Driver::CallFuncOnAll(
-    const char* function_name,
-    task::BaseTableType base_table_type,
-    const task::VirtualBaseTable &virtual_base_table,
-    const task::ConcreteBaseTable &concrete_base_table,
-    const std::vector<task::TableDep> &deps,
-    task::Repetition repetition,
-    int32_t num_iterations,
-    size_t *result_size) {
-  return nullptr;
 }
 
 void
@@ -499,10 +436,8 @@ Driver::DefineVariable(const char *var_name,
   master_.send_buff.clear_to_send();
   master_.send_buff.reset_sent_sizes();
   expected_msg_type_ = message::DriverMsgType::kMasterResponse;
-  LOG(INFO) << "waiting from master";
   received_from_master_ = false;
   BlockRecvFromMaster();
-  LOG(INFO) << "waiting done";
   message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
       master_recv_temp_buff_);
   master_recv_temp_buff_.ClearOneMsg();
@@ -528,10 +463,54 @@ Driver::RepartitionDistArray(
   master_.send_buff.clear_to_send();
   master_.send_buff.reset_sent_sizes();
   expected_msg_type_ = message::DriverMsgType::kMasterResponse;
-  LOG(INFO) << "waiting from master";
   received_from_master_ = false;
   BlockRecvFromMaster();
-  LOG(INFO) << "waiting done";
+  message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  master_recv_temp_buff_.ClearOneMsg();
+}
+
+void
+Driver::ExecForLoop(
+    int32_t iteration_space_id,
+    int32_t parallel_scheme,
+    const int32_t *space_partitioned_dist_array_ids,
+    size_t num_space_partitioned_dist_arrays,
+    const int32_t *time_partitioned_dist_array_ids,
+    size_t num_time_partitioned_dist_arrays,
+    const int32_t *global_indexed_dist_array_ids,
+    size_t num_global_indexed_dist_arrays,
+    std::string loop_batch_func_name,
+    bool is_ordered) {
+  task::ExecForLoop exec_for_loop_task;
+  exec_for_loop_task.set_iteration_space_id(iteration_space_id);
+  exec_for_loop_task.set_parallel_scheme(parallel_scheme);
+  for (size_t i = 0; i < num_space_partitioned_dist_arrays; i++) {
+    exec_for_loop_task.add_space_partitioned_dist_array_ids(
+        space_partitioned_dist_array_ids[i]);
+  }
+  for (size_t i = 0; i < num_time_partitioned_dist_arrays; i++) {
+    exec_for_loop_task.add_time_partitioned_dist_array_ids(
+        time_partitioned_dist_array_ids[i]);
+  }
+  for (size_t i = 0; i < num_global_indexed_dist_arrays; i++) {
+    exec_for_loop_task.add_global_indexed_dist_array_ids(
+        global_indexed_dist_array_ids[i]);
+  }
+  exec_for_loop_task.set_loop_batch_func_name(loop_batch_func_name);
+  exec_for_loop_task.set_is_ordered(is_ordered);
+
+  exec_for_loop_task.SerializeToString(&msg_buff_);
+
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgExecForLoop>(
+      &master_.send_buff, msg_buff_.size());
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  received_from_master_ = false;
+  BlockRecvFromMaster();
   message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
       master_recv_temp_buff_);
   master_recv_temp_buff_.ClearOneMsg();

@@ -872,7 +872,6 @@ function propagate_ssa_reaches(bb::BasicBlock,
             ssa_def = ssa_defs[ssa_var]
             if ssa_def[1] == sym &&
                 ssa_def[2].assignment == nothing
-                println("add assignment for ", sym, " ", ssa_syms)
                 ssa_def[2].assignment = ssa_syms[1]
             end
         end
@@ -946,7 +945,6 @@ function eval_subscript_expr(expr,
             if ssa_defs[expr][1] == iteration_var
                 return (iteration_var, nothing, nothing)
             end
-            println("sym = ", expr, " def = ", def.assignment, " ", def.mutation)
             if def.assignment != nothing &&
                 def.mutation == nothing
                 return eval_subscript_expr(def.assignment, iteration_var, ssa_defs)
