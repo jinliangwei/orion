@@ -9,6 +9,8 @@ function load_constants()
     load_dist_array_parent_type_int32()
     load_dist_array_init_type_int32()
     load_dist_array_map_type_int32()
+    load_dist_array_partition_scheme_int32()
+    load_dist_array_index_type_int32()
 end
 
 function load_module_int32()
@@ -79,6 +81,28 @@ function load_dist_array_map_type_int32()
     global const dist_array_map_type_map_values_new_keys = unsafe_load(ptr_val)
 end
 
+function load_dist_array_partition_scheme_int32()
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_NAIVE, lib_path), Int32)
+    global const dist_array_partition_scheme_naive = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_SPACE_TIME, lib_path), Int32)
+    global const dist_array_partition_scheme_space_time = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_1D, lib_path), Int32)
+    global const dist_array_partition_scheme_1d = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_HASH, lib_path), Int32)
+    global const dist_array_partition_scheme_hash = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_RANGE, lib_path), Int32)
+    global const dist_array_partition_scheme_range = unsafe_load(ptr_val)
+end
+
+function load_dist_array_index_type_int32()
+    ptr_val = cglobal((:ORION_DIST_ARRAY_INDEX_TYPE_NONE, lib_path), Int32)
+    global const dist_array_index_type_none = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_INDEX_TYPE_GLOBAL, lib_path), Int32)
+    global const dist_array_index_type_global = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_INDEX_TYPE_LOCAL, lib_path), Int32)
+    global const dist_array_index_type_local = unsafe_load(ptr_val)
+end
+
 function dist_array_parent_type_to_int32(parent_type::DistArrayParentType)::Int32
     if parent_type == DistArrayParentType_text_file
         return dist_array_parent_type_text_file
@@ -118,6 +142,37 @@ function dist_array_map_type_to_int32(map_type::DistArrayMapType)::Int32
         return dist_array_map_type_map_values_new_keys
     else
         error("unknown ", map_type)
+    end
+    return -1
+end
+
+function dist_array_partition_type_to_int32(partition_type::DistArrayPartitionType)
+    if partition_type == DistArrayPartitionType_naive
+        return dist_array_partition_scheme_naive
+    elseif partition_type == DistArrayPartitionType_1d
+        return dist_array_partition_scheme_1d
+    elseif partition_type == DistArrayPartitionType_2d ||
+        partition_type == DistArrayPartitionType_2d_unimodular
+        return dist_array_partition_scheme_space_time
+    elseif partition_type == DistArrayPartitionType_range
+        return dist_array_partition_scheme_range
+    elseif partition_type == DistArrayPartitionType_hash
+        return dist_array_partition_scheme_hash
+    else
+        error("unknown ", partition_type)
+    end
+    return -1
+end
+
+function dist_array_index_type_to_int32(index_type::DistArrayIndexType)
+    if index_type == DistArrayIndexType_none
+        return dist_array_index_type_none
+    elseif index_type == DistArrayIndexType_global
+        return dist_array_index_type_global
+    elseif index_type == DistArrayIndexType_local
+        return dist_array_index_type_local
+    else
+        error("unknown ", index_type)
     end
     return -1
 end

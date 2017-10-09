@@ -312,21 +312,19 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
   int ret = EventHandler<PollConn>::kClearOneMsg;
   int32_t sender_id = poll_conn_ptr->id;
   switch (msg_type) {
-    case message::ExecuteMsgType::kSpaceTimeRepartitionDistArrayData:
+    case message::ExecuteMsgType::kRepartitionDistArrayData:
       {
-        LOG(INFO) << "space time repartition data received";
-        //while(1);
-        auto *msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgSpaceTimeRepartitionDistArrayData>(
+        auto *msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgRepartitionDistArrayData>(
             recv_buff);
         size_t expected_size = msg->data_size;
         bool received_next_msg = (expected_size == 0);
         if (data_recv_buff_ == nullptr) {
-          auto *buff_ptr = new PeerRecvSpaceTimeRepartitionDistArrayDataBuffer();
+          auto *buff_ptr = new PeerRecvRepartitionDistArrayDataBuffer();
           buff_ptr->dist_array_id = msg->dist_array_id;
           data_recv_buff_ = buff_ptr;
         }
         auto *repartition_recv_buff =
-            reinterpret_cast<PeerRecvSpaceTimeRepartitionDistArrayDataBuffer*>(
+            reinterpret_cast<PeerRecvRepartitionDistArrayDataBuffer*>(
                 data_recv_buff_);
         if (expected_size > 0) {
           auto &byte_buffs = repartition_recv_buff->byte_buffs;
@@ -346,7 +344,7 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
           if (repartition_recv_buff->num_executors_received
               == (kNumExecutors - 1)) {
             message::ExecuteMsgHelper::CreateMsg<
-              message::ExecuteMsgSpaceTimeRepartitionDistArrayRecved>(
+              message::ExecuteMsgRepartitionDistArrayRecved>(
                 &send_buff_, data_recv_buff_);
             data_recv_buff_ = nullptr;
             Send(&executor_conn_, executor_.get());

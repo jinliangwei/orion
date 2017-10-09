@@ -107,9 +107,8 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   std::vector<int64_t>& GetKeys() { return keys_; }
   void *GetValues() { return &values_; }
   void AppendKeyValue(int64_t key, const void* value);
-  void AddToSpaceTimePartitions(
-      DistArray *dist_array,
-      const std::vector<int32_t> &partition_ids);
+  void Repartition(const int32_t *repartition_ids);
+
   size_t GetNumKeyValues();
   size_t GetValueSize();
   void CopyValues(void *mem) const;
@@ -153,6 +152,13 @@ class DistArrayPartition : public AbstractDistArrayPartition {
       int64_t key_begin,
       size_t num_elements,
       void *mem);
+
+ private:
+  void RepartitionSpaceTime(
+      const int32_t *repartition_ids);
+
+  void Repartition1D(
+      const int32_t *repartition_ids);
 };
 
 /*----- Specialized for String (const char*) ------*/
@@ -191,9 +197,8 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
   std::vector<int64_t>& GetKeys() { return keys_; }
   void *GetValues() { return &values_; }
   void AppendKeyValue(int64_t key, const void* value);
-  void AddToSpaceTimePartitions(
-      DistArray *dist_array,
-      const std::vector<int32_t> &partition_ids);
+  void Repartition(
+      const int32_t *repartition_ids);
   size_t GetNumKeyValues();
   size_t GetValueSize();
   void CopyValues(void *mem) const;
@@ -237,6 +242,13 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
       int64_t key_begin,
       size_t num_elements,
       void *mem);
+
+ private:
+  void RepartitionSpaceTime(
+      const int32_t *repartition_ids);
+
+  void Repartition1D(
+      const int32_t *repartition_ids);
 };
 
 /*---- template general implementation -----*/
@@ -357,32 +369,66 @@ DistArrayPartition<ValueType>::GetValueType() {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::AppendKeyValue(int64_t key, const void* value) {
-  ValueType v;
-  memcpy(&v, value,sizeof(ValueType));
   keys_.emplace_back(key);
-  values_.emplace_back(v);
+  values_.emplace_back(*reinterpret_cast<const ValueType*>(value));
 }
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::AddToSpaceTimePartitions(
-    DistArray* dist_array,
-    const std::vector<int32_t> &partition_ids) {
-  auto& new_partitions = dist_array->GetSpaceTimePartitions();
+DistArrayPartition<ValueType>::Repartition(
+    const int32_t *repartition_ids) {
+  auto &dist_array_meta = dist_array_->GetMeta();
+  auto partition_scheme = dist_array_meta.GetPartitionScheme();
+  if (partition_scheme == DistArrayPartitionScheme::kSpaceTime) {
+    RepartitionSpaceTime(repartition_ids);
+  } else {
+    Repartition1D(repartition_ids);
+  }
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::RepartitionSpaceTime(
+    const int32_t *repartition_ids) {
+  auto& space_time_partitions = dist_array_->GetSpaceTimePartitionMap();
   for (size_t i = 0; i < keys_.size(); i++) {
     int64_t key = keys_[i];
     ValueType value = values_[i];
-    int32_t space_partition_id = partition_ids[i * 2];
-    int32_t time_partition_id = partition_ids[i * 2 + 1];
-    auto &time_partitions = new_partitions[space_partition_id];
+    int32_t space_partition_id = repartition_ids[i * 2];
+    int32_t time_partition_id = repartition_ids[i * 2 + 1];
+    auto &time_partitions = space_time_partitions[space_partition_id];
     auto dist_array_partition_iter
         = time_partitions.find(time_partition_id);
     if (dist_array_partition_iter == time_partitions.end()) {
       //LOG(INFO) << "created partition, space = " << space_partition_id
       //          << " time = " << time_partition_id;
-      auto* partition = dist_array->CreatePartition();
+      auto* partition = dist_array_->CreatePartition();
       auto ret = time_partitions.emplace(
           std::make_pair(time_partition_id,
+                         partition));
+      CHECK(ret.second);
+      dist_array_partition_iter = ret.first;
+    }
+    auto* partition = dist_array_partition_iter->second;
+    partition->AppendKeyValue(key, &value);
+  }
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::Repartition1D(
+    const int32_t *repartition_ids) {
+  auto& partitions = dist_array_->GetLocalPartitionMap();
+  for (size_t i = 0; i < keys_.size(); i++) {
+    int64_t key = keys_[i];
+    ValueType value = values_[i];
+    int32_t repartition_id = repartition_ids[i];
+    auto dist_array_partition_iter
+        = partitions.find(repartition_id);
+    if (dist_array_partition_iter == partitions.end()) {
+      auto* partition = dist_array_->CreatePartition();
+      auto ret = partitions.emplace(
+          std::make_pair(repartition_id,
                          partition));
       CHECK(ret.second);
       dist_array_partition_iter = ret.first;

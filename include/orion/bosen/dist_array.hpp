@@ -38,14 +38,16 @@ class JuliaEvaluator;
 
 class DistArray {
  public:
-  using SpacePartition = std::map<int32_t, AbstractDistArrayPartition*>;
+  using TimePartitionMap = std::map<int32_t, AbstractDistArrayPartition*>;
+  using SpaceTimePartitionMap = std::map<int32_t, TimePartitionMap>;
+  using PartitionMap = std::unordered_map<int32_t, AbstractDistArrayPartition*>;
  private:
   const Config &kConfig;
   const type::PrimitiveType kValueType;
   const size_t kValueSize;
   const int32_t kExecutorId;
-  std::unordered_map<int32_t, AbstractDistArrayPartition*> partitions_;
-  std::map<int32_t, SpacePartition> space_time_partitions_;
+  SpaceTimePartitionMap space_time_partitions_;
+  PartitionMap partitions_;
   std::vector<int64_t> dims_;
   DistArrayMeta meta_;
   //DistArrayPartitionScheme partition_scheme_;
@@ -74,17 +76,22 @@ class DistArray {
   std::vector<int64_t> &GetDims();
   DistArrayMeta &GetMeta();
   type::PrimitiveType GetValueType();
-  std::unordered_map<int32_t, AbstractDistArrayPartition*>&
-  GetLocalPartitions();
+  PartitionMap &GetLocalPartitionMap();
   AbstractDistArrayPartition *GetLocalPartition(int32_t partition_id);
-  std::map<int32_t, SpacePartition> &GetSpaceTimePartitions();
+  SpaceTimePartitionMap &GetSpaceTimePartitionMap();
+  void GetAndClearLocalPartitions(std::vector<AbstractDistArrayPartition*>
+                                  *buff);
+
   AbstractDistArrayPartition *CreatePartition();
-  void AddSpaceTimePartition(int32_t space_id, int32_t time_id,
-                             AbstractDistArrayPartition* partition);
-  void SerializeAndClearSpaceTimePartitions(
+    void AddPartition(int32_t partition_id,
+                    AbstractDistArrayPartition* partition);
+  void AddPartition(int32_t space_id, int32_t time_id,
+                    AbstractDistArrayPartition* partition);
+  void RepartitionSerializeAndClear(
       std::unordered_map<int32_t, Blob> *send_buff_ptr);
-  void DeserializeSpaceTimePartitions(
+  void RepartitionDeserialize(
       const uint8_t *mem, size_t mem_size);
+  void CheckAndBuildIndex();
 
   void RandomInit(
       JuliaEvaluator *julia_eval,
@@ -96,6 +103,16 @@ class DistArray {
 
  private:
   DISALLOW_COPY(DistArray);
+  void RepartitionSerializeAndClearSpaceTime(
+      std::unordered_map<int32_t, Blob> *send_buff_ptr);
+  void RepartitionSerializeAndClear1D(
+      std::unordered_map<int32_t, Blob> *send_buff_ptr);
+
+  void RepartitionDeserializeSpaceTime(
+      const uint8_t *mem, size_t mem_size);
+  void RepartitionDeserialize1D(
+      const uint8_t *mem, size_t mem_size);
+
 };
 
 }

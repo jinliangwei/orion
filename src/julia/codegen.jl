@@ -16,19 +16,17 @@ function gen_2d_partition_function(func_name::Symbol,
                                    space_dim_tile_size::Int64,
                                    time_dim_tile_size::Int64)
 
-    space_partition_id = :(dim_keys[$space_partition_dim] % space_dim_tile_size)
-    time_partition_id = :(dim_keys[$time_partition_dim] % time_dim_tile_size)
+    space_partition_id = :(dim_keys[$space_partition_dim] % $space_dim_tile_size)
+    time_partition_id = :(dim_keys[$time_partition_dim] % $time_dim_tile_size)
 
-    add_space_partition_id_stmt = :(results[2 * i - 1] = $(space_partition_id))
-    add_time_partition_id_stmt = :(results[2 * i] = $(time_partition_id))
+    add_space_partition_id_stmt = :(repartition_ids[2 * i - 1] = $(space_partition_id))
+    add_time_partition_id_stmt = :(repartition_ids[2 * i] = $(time_partition_id))
 
     partition_func = :(
         function $func_name(keys::Vector{Int64},
-                            dims::Vector{Int64},
-                            results::Vector{Int32})
+                            dims::Vector{Int64})
           rev_dims = reverse(dims)
-          println("keys.size() = ", length(keys),
-                " typeof(OrionWorker) = ", typeof(OrionWorker))
+          repartition_ids = Vector{Int32}(length(keys) * 2)
           i = 1
           for key in keys
             #println(key)
@@ -37,6 +35,7 @@ function gen_2d_partition_function(func_name::Symbol,
             $add_time_partition_id_stmt
             i += 1
           end
+          return repartition_ids
         end)
 
     return partition_func
@@ -45,17 +44,15 @@ end
 function gen_1d_partition_function(func_name::Symbol,
                                    partition_dim::Int64,
                                    tile_size::Int64)
-    partition_id = :(dim_keys[$partition_dim] % tile_size)
+    partition_id = :(dim_keys[$partition_dim] % $tile_size)
 
-    add_partition_id_stmt = :(results[i] = $(partition_id))
+    add_partition_id_stmt = :(repartition_ids[i] = $(partition_id))
 
     partition_func = :(
         function $func_name(keys::Vector{Int64},
-                            dims::Vector{Int64},
-                            results::Vector{Int32})
+                            dims::Vector{Int64})
+          repartition_ids = Vector{Int32}(length(keys))
           rev_dims = reverse(dims)
-          println("keys.size() = ", length(keys),
-                " typeof(OrionWorker) = ", typeof(OrionWorker))
           i = 1
           for key in keys
             #println(key)
@@ -63,16 +60,17 @@ function gen_1d_partition_function(func_name::Symbol,
             $add_partition_id_stmt
             i += 1
           end
+          return repartition_ids
         end)
 
     return partition_func
 end
 
 function gen_utransform_2d_partition_function(func_name::Symbol,
-                                           dims::Array{Tuple{Int64}, 1},
-                                           coeffs::Array{Tuple{Int64}, 1},
-                                           tile_length::Int64,
-                                           tile_width::Int64)
+                                              dims::Array{Tuple{Int64}, 1},
+                                              coeffs::Array{Tuple{Int64}, 1},
+                                              tile_length::Int64,
+                                              tile_width::Int64)
     @assert length(dims) == 2
     @assert length(coeffs) == 2
     space_partition_id = Expr(:call, :+, 0)
@@ -89,14 +87,15 @@ function gen_utransform_2d_partition_function(func_name::Symbol,
     end
     time_partition_id = Expr(:call, :fld, time_partition_id, tile_width)
 
-    add_space_partition_id_stmt = :(results[2 * i - 1] = $(space_partition_id))
-    add_time_partition_id_stmt = :(results[2 * i] = $(time_partition_id))
+    add_space_partition_id_stmt = :(repartition_ids[2 * i - 1] = $(space_partition_id))
+    add_time_partition_id_stmt = :(repartition_ids[2 * i] = $(time_partition_id))
 
     partition_func = :(
         function $func_name(keys::Vector{Int64},
                             dims::Vector{Int64},
                             results::Vector{Int32})
           rev_dims = reverse(dims)
+          repartition_ids = Vector{Int32}(length(keys) * 2)
           println("keys.size() = ", length(keys),
                 " typeof(OrionWorker) = ", typeof(OrionWorker))
           i = 1

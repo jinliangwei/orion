@@ -66,9 +66,20 @@ DistArrayPartition<const char*>::AppendKeyValue(int64_t key, const void* value) 
 }
 
 void
-DistArrayPartition<const char*>::AddToSpaceTimePartitions(
-    DistArray *dist_array,
-    const std::vector<int32_t> &partition_ids) {
+DistArrayPartition<const char*>::Repartition(
+    const int32_t *repartition_ids) {
+
+}
+
+void
+DistArrayPartition<const char*>::RepartitionSpaceTime(
+    const int32_t *repartition_ids) {
+
+}
+
+void
+DistArrayPartition<const char*>::Repartition1D(
+    const int32_t *repartition_ids) {
 
 }
 

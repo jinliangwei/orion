@@ -56,7 +56,6 @@ function compute_dependence_vectors(par_for_context::ParForContext)
                         continue
                     else
                         dep_val = sub_a.offset - sub_b.offset
-                        println(dep_val)
                         if dep_vec[sub_a.loop_index_dim] == dep_val ||
                             dep_vec[sub_a.loop_index_dim] == DepVecValue_any
                             dep_vec[sub_a.loop_index_dim] = dep_val
@@ -66,7 +65,6 @@ function compute_dependence_vectors(par_for_context::ParForContext)
                         end
                     end
                 end
-                println(no_dep)
                 if no_dep
                     continue
                 end
@@ -205,28 +203,38 @@ function parallelize_2d(par_for_context::ParForContext,
     time_partition_func_name = gen_unique_symbol()
     time_partition_func = gen_1d_partition_function(time_partition_func_name,
                                                      time_partition_dim,
-                                                     default_tile_size)
+                                                    default_tile_size)
+
+    dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_2d,
+                                                       loop_partition_func_name,
+                                                       (space_partition_dim, time_partition_dim),
+                                                       DistArrayIndexType_none)
+    repartition_stmt = :(Orion.check_and_repartition($(esc(iteration_space)), $dist_array_partition_info))
     parallelized_loop = quote end
+    push!(parallelized_loop.args, repartition_stmt)
     for (da_sym, da_access_vec) in da_access_dict
         partition_dims = compute_dist_array_partition_dims(da_sym, da_access_vec, num_dims,
                                                            iteration_space_dims)
-        println(da_sym, " ", partition_dims)
         if space_partition_dim in partition_dims
             dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
                                                                space_partition_func_name,
-                                                               [space_partition_dim])
+                                                               (space_partition_dim,),
+                                                               DistArrayIndexType_local)
             push!(space_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
         elseif time_partition_dim in partition_dims
             dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
                                                                time_partition_func_name,
-                                                               [time_partition_dim])
+                                                               (time_partition_dim,),
+                                                               DistArrayIndexType_local)
             push!(time_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
         else
-            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash, nothing, nothing)
+            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash,
+                                                               nothing, nothing,
+                                                               DistArrayIndexType_global)
             repartition_stmt = :(Orion.build_global_index($(esc(da_sym))))
             push!(global_indexed_dist_array_ids, eval(current_module(), da_sym).id)
             push!(parallelized_loop.args, repartition_stmt)
@@ -270,7 +278,6 @@ function compute_dist_array_partition_dims(da_sym::Symbol,
         loop_index_dim = nothing
         for da_access in da_access_vec
             subscript = da_access.subscripts[i]
-            println(subscript)
             if subscript.value_type == DistArrayAccessSubscript_value_static &&
                 subscript.loop_index_dim != nothing &&
                 subscript.offset == 0
@@ -297,7 +304,6 @@ function compute_dist_array_partition_dims(da_sym::Symbol,
             push!(partition_dims, sub_dim)
         end
     end
-    println(partition_dims)
     return partition_dims
 end
 
@@ -308,9 +314,7 @@ function static_parallelize(par_for_context::ParForContext,
     iteration_space_dist_array = eval(current_module(), iteration_space)
     num_dims = iteration_space_dist_array.num_dims
     dep_vecs = compute_dependence_vectors(par_for_context)
-    println(dep_vecs)
     par_scheme = determine_parallelization_scheme(dep_vecs, num_dims)
-    println(par_scheme)
     if par_scheme[1] == ParallelSchemeType_2d
         return parallelize_2d(par_for_context,
                        par_for_scope,

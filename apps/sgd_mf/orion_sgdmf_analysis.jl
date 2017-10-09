@@ -23,8 +23,8 @@ W.dims = [6000, 100]
 H.dims = [4000, 100]
 
 for i = 1:num_iterations
-    Orion.@parallel_for for rating in rating
-s	x_idx = rating[1][1]
+    Orion.@parallel_for for rating in ratings
+	x_idx = rating[1][1]
 	y_idx = rating[1][2]
 	rv = rating[2]
 

@@ -52,5 +52,15 @@ extern "C" {
   extern const int32_t ORION_JULIA_MODULE_BASE;
   extern const int32_t ORION_JULIA_MODULE_MAIN;
   extern const int32_t ORION_JULIA_MODULE_TOP;
+
+  extern const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_NAIVE;
+  extern const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_SPACE_TIME;
+  extern const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_1D;
+  extern const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_HASH;
+  extern const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_RANGE;
+
+  extern const int32_t ORION_DIST_ARRAY_INDEX_TYPE_NONE;
+  extern const int32_t ORION_DIST_ARRAY_INDEX_TYPE_GLOBAL;
+  extern const int32_t ORION_DIST_ARRAY_INDEX_TYPE_LOCAL;
 }
 #endif

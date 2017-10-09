@@ -62,11 +62,11 @@ class JuliaEvaluator {
       std::string var_name,
       std::string var_value);
 
-  void ComputeSpaceTimeRepartition(
+  void ComputeRepartition(
       std::string repartition_func_name,
       DistArray *dist_array);
 
-  static void StaticComputeSpaceTimeRepartition(
+  static void StaticComputeRepartition(
       JuliaEvaluator *julia_eval,
       std::string repartition_func_name,
       DistArray *dist_array);

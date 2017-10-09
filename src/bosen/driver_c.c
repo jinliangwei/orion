@@ -84,10 +84,14 @@ extern "C" {
         var_name, var_value, value_size);
   }
 
-  void orion_space_time_repartition_dist_array(
+  void orion_repartition_dist_array(
       int32_t id,
-      const char *partition_func_name) {
-    driver->SpaceTimeRepartitionDistArray(id, partition_func_name);
+      const char *partition_func_name,
+      int32_t partition_scheme,
+      int32_t index_type) {
+    driver->RepartitionDistArray(id, partition_func_name,
+                                 partition_scheme,
+                                 index_type);
   }
 
   void orion_stop() {

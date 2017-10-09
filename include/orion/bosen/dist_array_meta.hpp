@@ -29,6 +29,12 @@ enum class DistArrayPartitionScheme {
     kRange = 4
 };
 
+enum class DistArrayIndexType {
+  kNone = 0,
+    kGlobal = 1,
+    kLocal = 2
+};
+
 class DistArrayMeta {
  private:
   const size_t kNumDims;
@@ -37,6 +43,7 @@ class DistArrayMeta {
   task::DistArrayInitType kInitType_;
   DistArrayPartitionScheme partition_scheme_;
   bool is_dense_;
+  DistArrayIndexType index_type_;
  public:
   DistArrayMeta(size_t num_dims,
                 task::DistArrayParentType parent_type,
@@ -52,6 +59,8 @@ class DistArrayMeta {
   bool IsDense() const;
   DistArrayPartitionScheme GetPartitionScheme() const;
   void SetPartitionScheme(DistArrayPartitionScheme partition_scheme);
+  void SetIndexType(DistArrayIndexType index_type);
+  DistArrayPartitionScheme GetPartitionScheme() { return partition_scheme_; }
 };
 
 }

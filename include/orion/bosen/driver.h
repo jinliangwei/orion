@@ -66,9 +66,11 @@ extern "C" {
       const uint8_t *var_value,
       size_t value_size);
 
-  void orion_space_time_repartition_dist_array(
+  void orion_repartition_dist_array(
       int32_t id,
-      const char *partition_func_name);
+      const char *partition_func_name,
+      int32_t partition_scheme,
+      int32_t index_type);
 
   void orion_stop();
 

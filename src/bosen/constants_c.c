@@ -2,6 +2,7 @@
 #include <orion/bosen/task.pb.h>
 #include <orion/bosen/type.hpp>
 #include <orion/bosen/julia_module.hpp>
+#include <orion/bosen/dist_array_meta.hpp>
 
 extern "C" {
   const int32_t ORION_TYPE_VOID = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kVoid);
@@ -53,4 +54,22 @@ extern "C" {
   const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_FIXED_KEYS = static_cast<int32_t>(orion::bosen::task::MAP_FIXED_KEYS);
   const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES = static_cast<int32_t>(orion::bosen::task::MAP_VALUES);
   const int32_t ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES_NEW_KEYS = static_cast<int32_t>(orion::bosen::task::MAP_VALUES_NEW_KEYS);
+
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_NAIVE
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kNaive);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_SPACE_TIME
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kSpaceTime);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_1D
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::k1D);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_HASH
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kHash);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_RANGE
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kRange);
+
+  const int32_t ORION_DIST_ARRAY_INDEX_TYPE_NONE
+  = static_cast<int32_t>(orion::bosen::DistArrayIndexType::kNone);
+  const int32_t ORION_DIST_ARRAY_INDEX_TYPE_GLOBAL
+  = static_cast<int32_t>(orion::bosen::DistArrayIndexType::kGlobal);
+  const int32_t ORION_DIST_ARRAY_INDEX_TYPE_LOCAL
+  = static_cast<int32_t>(orion::bosen::DistArrayIndexType::kLocal);
 }

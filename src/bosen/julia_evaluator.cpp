@@ -383,56 +383,46 @@ JuliaEvaluator::StaticDefineVar(
 }
 
 void
-JuliaEvaluator::ComputeSpaceTimeRepartition(
+JuliaEvaluator::ComputeRepartition(
     std::string repartition_func_name,
     DistArray *dist_array) {
-
   LOG(INFO) << __func__;
   jl_value_t *array_type = nullptr,
-*partition_id_array_type = nullptr,
             *keys_vec_jl = nullptr,
             *dims_vec_jl = nullptr,
-          *result_vec_jl = nullptr;
-  JL_GC_PUSH5(&array_type, &partition_id_array_type,
-              &keys_vec_jl, &dims_vec_jl, &result_vec_jl);
+ *repartition_ids_vec_jl = nullptr;
+  JL_GC_PUSH4(&array_type,
+              &keys_vec_jl, &dims_vec_jl, &repartition_ids_vec_jl);
   auto &dims = dist_array->GetDims();
-  auto &dist_array_partitions = dist_array->GetLocalPartitions();
-  LOG(INFO) << "dist_array_partitions.size() = " << dist_array_partitions.size();
-  std::vector<int32_t> repartition_ids;
-  for (auto &dist_array_partition_pair : dist_array_partitions) {
-    auto *dist_array_partition = dist_array_partition_pair.second;
+  std::vector<AbstractDistArrayPartition*> partition_buff;
+  dist_array->GetAndClearLocalPartitions(&partition_buff);
+  for (auto dist_array_partition : partition_buff) {
     auto &keys = dist_array_partition->GetKeys();
-    repartition_ids.resize(keys.size() * 2);
     array_type = jl_apply_array_type(jl_int64_type, 1);
-    partition_id_array_type = jl_apply_array_type(jl_int32_type, 1);
     keys_vec_jl = reinterpret_cast<jl_value_t*>(
         jl_ptr_to_array_1d(array_type, keys.data(), keys.size(), 0));
     dims_vec_jl = reinterpret_cast<jl_value_t*>(
         jl_ptr_to_array_1d(array_type, dims.data(), dims.size(), 0));
-    result_vec_jl = reinterpret_cast<jl_value_t*>(
-        jl_ptr_to_array_1d(
-            partition_id_array_type,
-            repartition_ids.data(),
-            repartition_ids.size(),
-            0));
     jl_function_t *repartition_func = GetFunction(jl_main_module, repartition_func_name.c_str());
-    jl_call3(repartition_func, keys_vec_jl, dims_vec_jl, result_vec_jl);
+    repartition_ids_vec_jl = jl_call2(repartition_func, keys_vec_jl, dims_vec_jl);
     if (jl_exception_occurred())
       LOG(INFO) << "julia exception occurs: " << jl_typeof_str(jl_exception_occurred());
-    dist_array_partition->AddToSpaceTimePartitions(dist_array, repartition_ids);
+    int32_t *repartition_ids = reinterpret_cast<int32_t*>(jl_array_data(repartition_ids_vec_jl));
+    LOG(INFO) << "num of repartition ids = " << jl_array_len(repartition_ids_vec_jl)
+              << " num_keys = " << keys.size();
+    dist_array_partition->Repartition(repartition_ids);
     delete dist_array_partition;
   }
-  dist_array_partitions.clear();
   LOG(INFO) << __func__ << " done!";
   JL_GC_POP();
 }
 
 void
-JuliaEvaluator::StaticComputeSpaceTimeRepartition(
+JuliaEvaluator::StaticComputeRepartition(
     JuliaEvaluator *julia_eval,
     std::string repartition_func_name,
     DistArray *dist_array) {
-  julia_eval->ComputeSpaceTimeRepartition(
+  julia_eval->ComputeRepartition(
       repartition_func_name,
       dist_array);
 }

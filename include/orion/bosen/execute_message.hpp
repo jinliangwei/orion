@@ -106,11 +106,11 @@ struct ExecuteMsgPeerRecvStop {
   }
 };
 
-struct ExecuteMsgSpaceTimeRepartitionDistArrayData {
+struct ExecuteMsgRepartitionDistArrayData {
   int32_t dist_array_id;
   size_t data_size;
  private:
-  ExecuteMsgSpaceTimeRepartitionDistArrayData() = default;
+  ExecuteMsgRepartitionDistArrayData() = default;
   friend class DefaultMsgCreator;
  public:
   void Init(int32_t _dist_array_id, size_t _data_size) {
@@ -118,22 +118,22 @@ struct ExecuteMsgSpaceTimeRepartitionDistArrayData {
     data_size = _data_size;
   }
   static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kSpaceTimeRepartitionDistArrayData;
+    return ExecuteMsgType::kRepartitionDistArrayData;
   }
 };
 
-struct ExecuteMsgSpaceTimeRepartitionDistArrayRecved {
+struct ExecuteMsgRepartitionDistArrayRecved {
  public:
   void *data_buff;
  private:
-  ExecuteMsgSpaceTimeRepartitionDistArrayRecved() = default;
+  ExecuteMsgRepartitionDistArrayRecved() = default;
   friend class DefaultMsgCreator;
  public:
   void Init(void *_data_buff) {
     data_buff = _data_buff;
   }
   static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kSpaceTimeRepartitionDistArrayRecved;
+    return ExecuteMsgType::kRepartitionDistArrayRecved;
   }
 };
 

@@ -182,9 +182,11 @@ class Driver {
                       const uint8_t *var_value,
                       size_t value_size);
 
-  void SpaceTimeRepartitionDistArray(
+  void RepartitionDistArray(
       int32_t id,
-      const char *partition_func_name);
+      const char *partition_func_name,
+      int32_t partition_scheme,
+      int32_t index_type);
 
   void Stop();
 };
@@ -230,7 +232,6 @@ Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
         auto *response_msg = message::DriverMsgHelper::get_msg<
           message::DriverMsgMasterResponse>(recv_buff);
         size_t expected_size = response_msg->result_bytes;
-        LOG(INFO) << "expected size = " << expected_size;
         if (expected_size == 0) {
             received_from_master_ = true;
             ret = EventHandler<PollConn>::kClearOneMsg;
@@ -311,7 +312,6 @@ Driver::EvalExprOnAll(
   eval_expr_task.SerializeToString(&msg_buff_);
   message::DriverMsgHelper::CreateMsg<message::DriverMsgEvalExpr>(
       &master_.send_buff, msg_buff_.size());
-  LOG(INFO) << "eval task size = " << msg_buff_.size();
   master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
   BlockSendToMaster();
   master_.send_buff.clear_to_send();
@@ -509,15 +509,19 @@ Driver::DefineVariable(const char *var_name,
 }
 
 void
-Driver::SpaceTimeRepartitionDistArray(
+Driver::RepartitionDistArray(
     int32_t id,
-    const char *partition_func_name) {
-  task::SpaceTimeRepartitionDistArray repartition_dist_array_task;
+    const char *partition_func_name,
+    int32_t partition_scheme,
+    int32_t index_type) {
+  task::RepartitionDistArray repartition_dist_array_task;
   repartition_dist_array_task.set_id(id);
   repartition_dist_array_task.set_partition_func_name(partition_func_name);
+  repartition_dist_array_task.set_partition_scheme(partition_scheme);
+  repartition_dist_array_task.set_index_type(index_type);
   repartition_dist_array_task.SerializeToString(&msg_buff_);
 
-  message::DriverMsgHelper::CreateMsg<message::DriverMsgSpaceTimeRepartitionDistArray>(
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgRepartitionDistArray>(
       &master_.send_buff, msg_buff_.size());
   master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
   BlockSendToMaster();

@@ -9,6 +9,7 @@ template<typename Conn>
 bool
 ReceiveArbitraryBytes(Conn &conn, conn::RecvBuffer* recv_buff,
                       ByteBuffer* byte_buff, size_t expected_size) {
+  CHECK(static_cast<int64_t>(expected_size) > 0);
   if (recv_buff->IsExepectingNextMsg()) {
     bool recv = conn.Recv(recv_buff, byte_buff->GetAvailMem());
     byte_buff->IncSize(

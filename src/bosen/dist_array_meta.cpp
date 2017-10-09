@@ -13,7 +13,8 @@ DistArrayMeta::DistArrayMeta(
     dims_(num_dims, 0),
     kParentType_(parent_type),
     kInitType_(init_type),
-    is_dense_(is_dense) {
+    is_dense_(is_dense),
+    index_type_(DistArrayIndexType::kNone) {
   switch (kParentType_) {
     case task::TEXT_FILE:
       {
@@ -72,6 +73,11 @@ DistArrayMeta::GetPartitionScheme() const {
 void
 DistArrayMeta::SetPartitionScheme(DistArrayPartitionScheme partition_scheme) {
   partition_scheme_ = partition_scheme;
+}
+
+void
+DistArrayMeta::SetIndexType(DistArrayIndexType index_type) {
+  index_type_ = index_type;
 }
 
 }

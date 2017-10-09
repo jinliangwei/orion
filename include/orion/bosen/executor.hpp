@@ -126,8 +126,8 @@ class Executor {
       kCreateDistArrayAck = 8,
       kDefineVar = 9,
       kExecutorAck = 10,
-      kSpaceTimeRepartitionDistArray = 11,
-      kSpaceTimeRepartitionDistArraySend = 12
+      kRepartitionDistArray = 11,
+      kRepartitionDistArraySend = 12
             };
 
   static const int32_t kPortSpan = 100;
@@ -229,8 +229,8 @@ class Executor {
   void EvalExpr();
   void CreateDistArray();
   void DefineVar();
-  void SpaceTimeRepartitionDistArray();
-  void SendSpaceTimePartitions(int32_t distA_array_id, DistArray *dist_array);
+  void RepartitionDistArray();
+  void RepartitionDistArraySend(int32_t dist_array_id, DistArray *dist_array);
 };
 
 Executor::Executor(const Config& config, int32_t index):
@@ -450,6 +450,8 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         break;
       case Action::kAckConnectToPeers:
         {
+          int ret = event_handler_.Remove(&prt_poll_conn_);
+          CHECK_EQ(ret, 0) << ret;
           message::Helper::CreateMsg<message::ExecutorConnectToPeersAck>(&send_buff_);
           Send(&master_poll_conn_, &master_);
           send_buff_.clear_to_send();
@@ -533,22 +535,24 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           action_ = Action::kNone;
         }
         break;
-      case Action::kSpaceTimeRepartitionDistArray:
+      case Action::kRepartitionDistArray:
         {
           task_type_ = TaskType::kExecCppFunc;
-          SpaceTimeRepartitionDistArray();
+          RepartitionDistArray();
           action_ = Action::kNone;
           result_needed_ = false;
         }
         break;
-      case Action::kSpaceTimeRepartitionDistArraySend:
+      case Action::kRepartitionDistArraySend:
         {
           LOG(INFO) << "ready to send!";
           if (kNumExecutors > 1) {
             auto &dist_array = dist_arrays_.at(dist_array_under_operation_);
-            SendSpaceTimePartitions(dist_array_under_operation_,
-                                    &dist_array);
+            RepartitionDistArraySend(dist_array_under_operation_,
+                                     &dist_array);
             action_ = Action::kNone;
+            LOG(INFO) << "RepartitionDistArraySend done!";
+            event_handler_.SetToReadOnly(&prt_poll_conn_);
           } else {
             action_ = Action::kExecutorAck;
           }
@@ -673,21 +677,24 @@ Executor::HandlePeerRecvThrExecuteMsg() {
   int ret = EventHandler<PollConn>::kClearOneMsg;
   auto msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
   switch (msg_type) {
-    case message::ExecuteMsgType::kSpaceTimeRepartitionDistArrayRecved:
+    case message::ExecuteMsgType::kRepartitionDistArrayRecved:
       {
         LOG(INFO) << "space time partitions received";
         auto *msg = message::ExecuteMsgHelper::get_msg<
-          message::ExecuteMsgSpaceTimeRepartitionDistArrayRecved>(recv_buff);
-        auto *partition_recv_buff = reinterpret_cast<PeerRecvSpaceTimeRepartitionDistArrayDataBuffer*>(
+          message::ExecuteMsgRepartitionDistArrayRecved>(recv_buff);
+        auto *partition_recv_buff = reinterpret_cast<PeerRecvRepartitionDistArrayDataBuffer*>(
             msg->data_buff);
         auto &dist_array = dist_arrays_.at(partition_recv_buff->dist_array_id);
         auto byte_buffs = partition_recv_buff->byte_buffs;
         for (auto &buff_pair : byte_buffs) {
           auto &blob = buff_pair.second;
-          dist_array.DeserializeSpaceTimePartitions(blob.GetBytes(), blob.GetSize());
+          dist_array.RepartitionDeserialize(blob.GetBytes(), blob.GetSize());
         }
         delete partition_recv_buff;
+        dist_array.CheckAndBuildIndex();
         action_ = Action::kExecutorAck;
+        int ret = event_handler_.Remove(&prt_poll_conn_);
+        CHECK_EQ(ret, 0) << ret;
       }
       break;
     default:
@@ -724,9 +731,9 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
                 action_ = Action::kExecutorAck;
               }
               break;
-            case TaskLabel::kComputeSpaceTimeRepartition:
+            case TaskLabel::kComputeRepartition:
               {
-                action_ = Action::kSpaceTimeRepartitionDistArraySend;
+                action_ = Action::kRepartitionDistArraySend;
               }
               break;
             case TaskLabel::kRandomInitDistArray:
@@ -847,10 +854,10 @@ Executor::HandleDriverMsg() {
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
-    case message::DriverMsgType::kSpaceTimeRepartitionDistArray:
+    case message::DriverMsgType::kRepartitionDistArray:
       {
         auto *msg = message::DriverMsgHelper::get_msg<
-          message::DriverMsgSpaceTimeRepartitionDistArray>(recv_buff);
+          message::DriverMsgRepartitionDistArray>(recv_buff);
         size_t expected_size = msg->task_size;
         bool received_next_msg =
             ReceiveArbitraryBytes(master_.sock,
@@ -859,7 +866,7 @@ Executor::HandleDriverMsg() {
                                   expected_size);
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kSpaceTimeRepartitionDistArray;
+          action_ = Action::kRepartitionDistArray;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -1114,43 +1121,49 @@ Executor::DefineVar() {
 }
 
 void
-Executor::SpaceTimeRepartitionDistArray() {
+Executor::RepartitionDistArray() {
   LOG(INFO) << "Executor " << __func__;
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
       master_recv_byte_buff_.GetSize());
 
-  task::SpaceTimeRepartitionDistArray repartition_dist_array_task;
+  task::RepartitionDistArray repartition_dist_array_task;
   repartition_dist_array_task.ParseFromString(task_str);
   int32_t id = repartition_dist_array_task.id();
   dist_array_under_operation_ = id;
+
+  int32_t partition_scheme = repartition_dist_array_task.partition_scheme();
+  int32_t index_type = repartition_dist_array_task.index_type();
+
   std::string partition_func_name
       = repartition_dist_array_task.partition_func_name();
   auto &dist_array_to_repartition = dist_arrays_.at(id);
-  dist_array_to_repartition.GetMeta().SetPartitionScheme(
-      DistArrayPartitionScheme::kSpaceTime);
+  auto &meta = dist_array_to_repartition.GetMeta();
+  meta.SetPartitionScheme(static_cast<DistArrayPartitionScheme>(partition_scheme));
+  meta.SetIndexType(static_cast<DistArrayIndexType>(index_type));
+
   auto cpp_func = std::bind(
-        JuliaEvaluator::StaticComputeSpaceTimeRepartition,
-        std::placeholders::_1,
-        partition_func_name,
-        &dist_array_to_repartition);
+      JuliaEvaluator::StaticComputeRepartition,
+      std::placeholders::_1,
+      partition_func_name,
+      &dist_array_to_repartition);
   //julia_eval_result_ = repartition_ids;
   exec_cpp_func_task_.func = cpp_func;
-  exec_cpp_func_task_.label = TaskLabel::kComputeSpaceTimeRepartition;
+  exec_cpp_func_task_.label = TaskLabel::kComputeRepartition;
   julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
 }
 
 void
-Executor::SendSpaceTimePartitions(int32_t dist_array_id,
-                                  DistArray *dist_array) {
+Executor::RepartitionDistArraySend(int32_t dist_array_id,
+                                   DistArray *dist_array) {
   auto &send_buff = blob_send_buff_;
   send_buff.clear();
-  dist_array->SerializeAndClearSpaceTimePartitions(&send_buff);
+  dist_array->RepartitionSerializeAndClear(&send_buff);
   for (size_t recv_id = 0; recv_id < kNumExecutors; recv_id++) {
     if (recv_id == kId) continue;
     auto iter = send_buff.find(recv_id);
     if (iter == send_buff.end()) {
-      message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgSpaceTimeRepartitionDistArrayData>(
+      message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayData>(
           &send_buff_, dist_array_id, 0);
       Send(&peer_conn_[recv_id], peer_[recv_id].get());
       send_buff_.clear_to_send();
@@ -1159,7 +1172,7 @@ Executor::SendSpaceTimePartitions(int32_t dist_array_id,
       auto &buff = iter->second;
       size_t send_size = buff.size();
       uint8_t* send_data = buff.data();
-      message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgSpaceTimeRepartitionDistArrayData>(
+      message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayData>(
           &send_buff_, dist_array_id, send_size);
       send_buff_.set_next_to_send(send_data, send_size);
       Send(&peer_conn_[recv_id], peer_[recv_id].get());

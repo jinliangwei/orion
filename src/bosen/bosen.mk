@@ -62,7 +62,7 @@ $(DRIVER_LIB_PROTO_OBJ): %_drlib.pb.o: %.pb.cc %.pb.h deps $(BOSEN_HPP) $(BOSEN_
 $(DRIVER_LIB_COBJ): %_drlib.o: %.c deps $(BOSEN_HPP) $(BOSEN_H) $(BOSEN_PROTO_H)
 	$(CXX) $(CFLAGS) -c $< -o $@
 
-$(BOSEN_PROTO_OBJ): src/bosen/protobuf/%.o: src/bosen/protobuf/%.cc src/bosen/protobuf/%.h
+$(BOSEN_PROTO_OBJ): src/bosen/protobuf/%.o: src/bosen/protobuf/%.cc
 	$(CXX) $(CFLAGS) $(SANITIZER_FLAGS) -I$(ORION_HOME)/include/orion/bosen -c $< -o $@
 
 $(BOSEN_TEST_EXE): src/bosen/bosen_test_main.o orion_lib $(BOSEN_TEST_OBJ) bin/bosen

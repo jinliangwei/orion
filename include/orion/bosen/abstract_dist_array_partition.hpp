@@ -38,10 +38,8 @@ class AbstractDistArrayPartition {
   virtual void GetRange(int64_t start, int64_t end, Blob *buff) = 0;
   virtual std::vector<int64_t>& GetKeys() = 0;
   virtual void* GetValues() = 0;
-  virtual void AddToSpaceTimePartitions(
-      DistArray *dist_array,
-      const std::vector<int32_t> &partition_ids) = 0;
   virtual void AppendKeyValue(int64_t key, const void* value) = 0;
+  virtual void Repartition(const int32_t *repartition_ids) = 0;
   virtual size_t GetNumKeyValues() = 0;
   virtual size_t GetValueSize() = 0;
   virtual void CopyValues(void *mem) const = 0;

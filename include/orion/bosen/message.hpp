@@ -102,7 +102,7 @@ enum class DriverMsgType {
     kShuffle = 8,
     kMasterResponse = 9,
     kDefineVar = 10,
-    kSpaceTimeRepartitionDistArray = 11
+    kRepartitionDistArray = 11
 };
 
 struct DriverMsg {
@@ -124,8 +124,8 @@ enum class ExecuteMsgType {
     kTextFileLoadAck = 5,
     kDistArrayDims = 6,
     kCreateDistArrayAck = 7,
-      kSpaceTimeRepartitionDistArrayData = 8,
-      kSpaceTimeRepartitionDistArrayRecved = 9,
+      kRepartitionDistArrayData = 8,
+      kRepartitionDistArrayRecved = 9,
       kExecutorAck = 10,
       kPeerRecvStop = 11
 };

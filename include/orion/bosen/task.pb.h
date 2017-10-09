@@ -42,7 +42,7 @@ class VirtualBaseTable;
 class CreateDistArray;
 class EvalExpr;
 class DefineVar;
-class SpaceTimeRepartitionDistArray;
+class RepartitionDistArray;
 class ExecForLoop;
 
 enum TableDepType {
@@ -904,14 +904,14 @@ class DefineVar : public ::google::protobuf::Message {
 };
 // -------------------------------------------------------------------
 
-class SpaceTimeRepartitionDistArray : public ::google::protobuf::Message {
+class RepartitionDistArray : public ::google::protobuf::Message {
  public:
-  SpaceTimeRepartitionDistArray();
-  virtual ~SpaceTimeRepartitionDistArray();
+  RepartitionDistArray();
+  virtual ~RepartitionDistArray();
 
-  SpaceTimeRepartitionDistArray(const SpaceTimeRepartitionDistArray& from);
+  RepartitionDistArray(const RepartitionDistArray& from);
 
-  inline SpaceTimeRepartitionDistArray& operator=(const SpaceTimeRepartitionDistArray& from) {
+  inline RepartitionDistArray& operator=(const RepartitionDistArray& from) {
     CopyFrom(from);
     return *this;
   }
@@ -925,17 +925,17 @@ class SpaceTimeRepartitionDistArray : public ::google::protobuf::Message {
   }
 
   static const ::google::protobuf::Descriptor* descriptor();
-  static const SpaceTimeRepartitionDistArray& default_instance();
+  static const RepartitionDistArray& default_instance();
 
-  void Swap(SpaceTimeRepartitionDistArray* other);
+  void Swap(RepartitionDistArray* other);
 
   // implements Message ----------------------------------------------
 
-  SpaceTimeRepartitionDistArray* New() const;
+  RepartitionDistArray* New() const;
   void CopyFrom(const ::google::protobuf::Message& from);
   void MergeFrom(const ::google::protobuf::Message& from);
-  void CopyFrom(const SpaceTimeRepartitionDistArray& from);
-  void MergeFrom(const SpaceTimeRepartitionDistArray& from);
+  void CopyFrom(const RepartitionDistArray& from);
+  void MergeFrom(const RepartitionDistArray& from);
   void Clear();
   bool IsInitialized() const;
 
@@ -976,12 +976,30 @@ class SpaceTimeRepartitionDistArray : public ::google::protobuf::Message {
   inline ::std::string* release_partition_func_name();
   inline void set_allocated_partition_func_name(::std::string* partition_func_name);
 
-  // @@protoc_insertion_point(class_scope:orion.bosen.task.SpaceTimeRepartitionDistArray)
+  // required int32 partition_scheme = 3;
+  inline bool has_partition_scheme() const;
+  inline void clear_partition_scheme();
+  static const int kPartitionSchemeFieldNumber = 3;
+  inline ::google::protobuf::int32 partition_scheme() const;
+  inline void set_partition_scheme(::google::protobuf::int32 value);
+
+  // required int32 index_type = 4;
+  inline bool has_index_type() const;
+  inline void clear_index_type();
+  static const int kIndexTypeFieldNumber = 4;
+  inline ::google::protobuf::int32 index_type() const;
+  inline void set_index_type(::google::protobuf::int32 value);
+
+  // @@protoc_insertion_point(class_scope:orion.bosen.task.RepartitionDistArray)
  private:
   inline void set_has_id();
   inline void clear_has_id();
   inline void set_has_partition_func_name();
   inline void clear_has_partition_func_name();
+  inline void set_has_partition_scheme();
+  inline void clear_has_partition_scheme();
+  inline void set_has_index_type();
+  inline void clear_has_index_type();
 
   ::google::protobuf::UnknownFieldSet _unknown_fields_;
 
@@ -989,12 +1007,14 @@ class SpaceTimeRepartitionDistArray : public ::google::protobuf::Message {
   mutable int _cached_size_;
   ::std::string* partition_func_name_;
   ::google::protobuf::int32 id_;
+  ::google::protobuf::int32 partition_scheme_;
+  ::google::protobuf::int32 index_type_;
   friend void  protobuf_AddDesc_task_2eproto();
   friend void protobuf_AssignDesc_task_2eproto();
   friend void protobuf_ShutdownFile_task_2eproto();
 
   void InitAsDefaultInstance();
-  static SpaceTimeRepartitionDistArray* default_instance_;
+  static RepartitionDistArray* default_instance_;
 };
 // -------------------------------------------------------------------
 
@@ -2105,85 +2125,85 @@ inline void DefineVar::set_allocated_var_value(::std::string* var_value) {
 
 // -------------------------------------------------------------------
 
-// SpaceTimeRepartitionDistArray
+// RepartitionDistArray
 
 // required int32 id = 1;
-inline bool SpaceTimeRepartitionDistArray::has_id() const {
+inline bool RepartitionDistArray::has_id() const {
   return (_has_bits_[0] & 0x00000001u) != 0;
 }
-inline void SpaceTimeRepartitionDistArray::set_has_id() {
+inline void RepartitionDistArray::set_has_id() {
   _has_bits_[0] |= 0x00000001u;
 }
-inline void SpaceTimeRepartitionDistArray::clear_has_id() {
+inline void RepartitionDistArray::clear_has_id() {
   _has_bits_[0] &= ~0x00000001u;
 }
-inline void SpaceTimeRepartitionDistArray::clear_id() {
+inline void RepartitionDistArray::clear_id() {
   id_ = 0;
   clear_has_id();
 }
-inline ::google::protobuf::int32 SpaceTimeRepartitionDistArray::id() const {
-  // @@protoc_insertion_point(field_get:orion.bosen.task.SpaceTimeRepartitionDistArray.id)
+inline ::google::protobuf::int32 RepartitionDistArray::id() const {
+  // @@protoc_insertion_point(field_get:orion.bosen.task.RepartitionDistArray.id)
   return id_;
 }
-inline void SpaceTimeRepartitionDistArray::set_id(::google::protobuf::int32 value) {
+inline void RepartitionDistArray::set_id(::google::protobuf::int32 value) {
   set_has_id();
   id_ = value;
-  // @@protoc_insertion_point(field_set:orion.bosen.task.SpaceTimeRepartitionDistArray.id)
+  // @@protoc_insertion_point(field_set:orion.bosen.task.RepartitionDistArray.id)
 }
 
 // required string partition_func_name = 2;
-inline bool SpaceTimeRepartitionDistArray::has_partition_func_name() const {
+inline bool RepartitionDistArray::has_partition_func_name() const {
   return (_has_bits_[0] & 0x00000002u) != 0;
 }
-inline void SpaceTimeRepartitionDistArray::set_has_partition_func_name() {
+inline void RepartitionDistArray::set_has_partition_func_name() {
   _has_bits_[0] |= 0x00000002u;
 }
-inline void SpaceTimeRepartitionDistArray::clear_has_partition_func_name() {
+inline void RepartitionDistArray::clear_has_partition_func_name() {
   _has_bits_[0] &= ~0x00000002u;
 }
-inline void SpaceTimeRepartitionDistArray::clear_partition_func_name() {
+inline void RepartitionDistArray::clear_partition_func_name() {
   if (partition_func_name_ != &::google::protobuf::internal::GetEmptyStringAlreadyInited()) {
     partition_func_name_->clear();
   }
   clear_has_partition_func_name();
 }
-inline const ::std::string& SpaceTimeRepartitionDistArray::partition_func_name() const {
-  // @@protoc_insertion_point(field_get:orion.bosen.task.SpaceTimeRepartitionDistArray.partition_func_name)
+inline const ::std::string& RepartitionDistArray::partition_func_name() const {
+  // @@protoc_insertion_point(field_get:orion.bosen.task.RepartitionDistArray.partition_func_name)
   return *partition_func_name_;
 }
-inline void SpaceTimeRepartitionDistArray::set_partition_func_name(const ::std::string& value) {
+inline void RepartitionDistArray::set_partition_func_name(const ::std::string& value) {
   set_has_partition_func_name();
   if (partition_func_name_ == &::google::protobuf::internal::GetEmptyStringAlreadyInited()) {
     partition_func_name_ = new ::std::string;
   }
   partition_func_name_->assign(value);
-  // @@protoc_insertion_point(field_set:orion.bosen.task.SpaceTimeRepartitionDistArray.partition_func_name)
+  // @@protoc_insertion_point(field_set:orion.bosen.task.RepartitionDistArray.partition_func_name)
 }
-inline void SpaceTimeRepartitionDistArray::set_partition_func_name(const char* value) {
+inline void RepartitionDistArray::set_partition_func_name(const char* value) {
   set_has_partition_func_name();
   if (partition_func_name_ == &::google::protobuf::internal::GetEmptyStringAlreadyInited()) {
     partition_func_name_ = new ::std::string;
   }
   partition_func_name_->assign(value);
-  // @@protoc_insertion_point(field_set_char:orion.bosen.task.SpaceTimeRepartitionDistArray.partition_func_name)
+  // @@protoc_insertion_point(field_set_char:orion.bosen.task.RepartitionDistArray.partition_func_name)
 }
-inline void SpaceTimeRepartitionDistArray::set_partition_func_name(const char* value, size_t size) {
+inline void RepartitionDistArray::set_partition_func_name(const char* value, size_t size) {
   set_has_partition_func_name();
   if (partition_func_name_ == &::google::protobuf::internal::GetEmptyStringAlreadyInited()) {
     partition_func_name_ = new ::std::string;
   }
   partition_func_name_->assign(reinterpret_cast<const char*>(value), size);
-  // @@protoc_insertion_point(field_set_pointer:orion.bosen.task.SpaceTimeRepartitionDistArray.partition_func_name)
+  // @@protoc_insertion_point(field_set_pointer:orion.bosen.task.RepartitionDistArray.partition_func_name)
 }
-inline ::std::string* SpaceTimeRepartitionDistArray::mutable_partition_func_name() {
+inline ::std::string* RepartitionDistArray::mutable_partition_func_name() {
   set_has_partition_func_name();
   if (partition_func_name_ == &::google::protobuf::internal::GetEmptyStringAlreadyInited()) {
     partition_func_name_ = new ::std::string;
   }
-  // @@protoc_insertion_point(field_mutable:orion.bosen.task.SpaceTimeRepartitionDistArray.partition_func_name)
+  // @@protoc_insertion_point(field_mutable:orion.bosen.task.RepartitionDistArray.partition_func_name)
   return partition_func_name_;
 }
-inline ::std::string* SpaceTimeRepartitionDistArray::release_partition_func_name() {
+inline ::std::string* RepartitionDistArray::release_partition_func_name() {
   clear_has_partition_func_name();
   if (partition_func_name_ == &::google::protobuf::internal::GetEmptyStringAlreadyInited()) {
     return NULL;
@@ -2193,7 +2213,7 @@ inline ::std::string* SpaceTimeRepartitionDistArray::release_partition_func_name
     return temp;
   }
 }
-inline void SpaceTimeRepartitionDistArray::set_allocated_partition_func_name(::std::string* partition_func_name) {
+inline void RepartitionDistArray::set_allocated_partition_func_name(::std::string* partition_func_name) {
   if (partition_func_name_ != &::google::protobuf::internal::GetEmptyStringAlreadyInited()) {
     delete partition_func_name_;
   }
@@ -2204,7 +2224,55 @@ inline void SpaceTimeRepartitionDistArray::set_allocated_partition_func_name(::s
     clear_has_partition_func_name();
     partition_func_name_ = const_cast< ::std::string*>(&::google::protobuf::internal::GetEmptyStringAlreadyInited());
   }
-  // @@protoc_insertion_point(field_set_allocated:orion.bosen.task.SpaceTimeRepartitionDistArray.partition_func_name)
+  // @@protoc_insertion_point(field_set_allocated:orion.bosen.task.RepartitionDistArray.partition_func_name)
+}
+
+// required int32 partition_scheme = 3;
+inline bool RepartitionDistArray::has_partition_scheme() const {
+  return (_has_bits_[0] & 0x00000004u) != 0;
+}
+inline void RepartitionDistArray::set_has_partition_scheme() {
+  _has_bits_[0] |= 0x00000004u;
+}
+inline void RepartitionDistArray::clear_has_partition_scheme() {
+  _has_bits_[0] &= ~0x00000004u;
+}
+inline void RepartitionDistArray::clear_partition_scheme() {
+  partition_scheme_ = 0;
+  clear_has_partition_scheme();
+}
+inline ::google::protobuf::int32 RepartitionDistArray::partition_scheme() const {
+  // @@protoc_insertion_point(field_get:orion.bosen.task.RepartitionDistArray.partition_scheme)
+  return partition_scheme_;
+}
+inline void RepartitionDistArray::set_partition_scheme(::google::protobuf::int32 value) {
+  set_has_partition_scheme();
+  partition_scheme_ = value;
+  // @@protoc_insertion_point(field_set:orion.bosen.task.RepartitionDistArray.partition_scheme)
+}
+
+// required int32 index_type = 4;
+inline bool RepartitionDistArray::has_index_type() const {
+  return (_has_bits_[0] & 0x00000008u) != 0;
+}
+inline void RepartitionDistArray::set_has_index_type() {
+  _has_bits_[0] |= 0x00000008u;
+}
+inline void RepartitionDistArray::clear_has_index_type() {
+  _has_bits_[0] &= ~0x00000008u;
+}
+inline void RepartitionDistArray::clear_index_type() {
+  index_type_ = 0;
+  clear_has_index_type();
+}
+inline ::google::protobuf::int32 RepartitionDistArray::index_type() const {
+  // @@protoc_insertion_point(field_get:orion.bosen.task.RepartitionDistArray.index_type)
+  return index_type_;
+}
+inline void RepartitionDistArray::set_index_type(::google::protobuf::int32 value) {
+  set_has_index_type();
+  index_type_ = value;
+  // @@protoc_insertion_point(field_set:orion.bosen.task.RepartitionDistArray.index_type)
 }
 
 // -------------------------------------------------------------------

@@ -21,15 +21,21 @@ import Base.copy
 @enum DistArrayPartitionType DistArrayPartitionType_naive =
     1 DistArrayPartitionType_1d =
     2 DistArrayPartitionType_2d =
-    3 DistArrayPartitionType_range =
-    4 DistArrayPartitionType_hash =
-    5
+    3 DistArrayPartitionType_2d_unimodular =
+    4 DistArrayPartitionType_range =
+    5 DistArrayPartitionType_hash =
+    6
 
+@enum DistArrayIndexType DistArrayIndexType_none =
+    1 DistArrayIndexType_global =
+    2 DistArrayIndexType_local =
+    3
 
 type DistArrayPartitionInfo
     partition_type::DistArrayPartitionType
     partition_func_name
-    partition_dims::Vector{Int32}
+    partition_dims
+    index_type::DistArrayIndexType
 end
 
 type DistArray{T} <: AbstractArray{T}
@@ -96,7 +102,8 @@ type DistArray{T} <: AbstractArray{T}
                       zeros(Int64, 0),
                       Void,
                       false,
-                      DistArrayPartitionInfo(DistArrayPartitionType_naive))
+                      DistArrayPartitionInfo(DistArrayPartitionType_naive, nothing,
+                                             nothing, DistArrayIndexType_none))
 end
 
 const dist_arrays = Dict{Int32, DistArray}()
@@ -136,7 +143,8 @@ function text_file(
         false,
         Void,
         is_dense,
-        DistArrayPartitionInfo(DistArrayPartitionType_naive))
+        DistArrayPartitionInfo(DistArrayPartitionType_naive, nothing, nothing,
+                               DistArrayIndexType_none))
     dist_arrays[id] = dist_array
     return dist_array
 end
@@ -161,7 +169,8 @@ function rand(ValueType::DataType, dims...)::DistArray
         false,
         ValueType,
         true,
-        DistArrayPartitionInfo(DistArrayPartitionType_range))
+        DistArrayPartitionInfo(DistArrayPartitionType_range, nothing, nothing,
+                           DistArrayIndexType_none))
     dist_array.dims = [dims...]
     dist_arrays[id] = dist_array
     return dist_array
@@ -191,7 +200,8 @@ function randn(ValueType::DataType, dims...)::DistArray
         false,
         ValueType,
         true,
-        DistArrayPartitionInfo(DistArrayPartitionType_range))
+        DistArrayPartitionInfo(DistArrayPartitionType_range, nothing, nothing,
+                           DistArrayIndexType_none))
     dist_array.dims = [dims...]
     dist_arrays[id] = dist_array
     return dist_array
@@ -264,7 +274,6 @@ function process_dist_array_map(dist_array::DistArray)::DistArray
 
     while !origin_dist_array.is_materialized &&
         origin_dist_array.parent_type == DistArrayParentType_dist_array
-        println("here ", typeof(origin_dist_array.mapper_func_name))
 
         insert!(map_func_names, 1, origin_dist_array.mapper_func_name)
         insert!(map_func_modules, 1, origin_dist_array.mapper_func_module)
@@ -327,7 +336,12 @@ end
 
 function space_time_repartition(dist_array::DistArray,
                                 partition_func_name::AbstractString)
-    ccall((:orion_space_time_repartition_dist_array, lib_path),
+
+end
+
+function repartition_1d(dist_array::DistArray,
+                        partition_func_name::AbstractString)
+    ccall((:orion_repartition_1d_dist_array, lib_path),
           Void, (Int32, Cstring),
           dist_array.id,
           partition_func_name)
@@ -372,7 +386,7 @@ function map_generic(parent_dist_array::DistArray,
         false,
         parent_dist_array.random_init_type,
         parent_dist_array.is_dense,
-        DistArrayPartitionInfo(DistArrayPartitionType_naive))
+        DistArrayPartitionInfo(DistArrayPartitionType_naive, nothing, nothing, DistArrayIndexType_none))
     dist_array.dims = parent_dist_array.dims
     dist_arrays[id] = dist_array
     return dist_array
@@ -388,6 +402,31 @@ end
 
 function check_and_repartition(dist_array::DistArray,
                                partition_info::DistArrayPartitionInfo)
+    println("check_and_repartition ", dist_array.id)
+    curr_partition_info = dist_array.partition_info
+    repartition = false
+    if curr_partition_info.partition_type ==
+        partition_info.partition_type
+        if (partition_info.partition_type == DistArrayPartitionType_1d ||
+            partition_info.partition_type == DistArrayPartitionType_2d) &&
+            partition_info.partition_dims != curr_partition_info.partition_dims
+            repartition = true
+        elseif partition_info.partition_type == DistArrayPartitionType_2d_unimodular &&
+            partition_info.partition_func_name != curr_partition_info.partition_func_name
+            repartition = true
+        end
+    else
+        repartition = true
+    end
+    dist_array.partition_info = partition_info
+    if repartition
+        ccall((:orion_repartition_dist_array, lib_path),
+              Void, (Int32, Cstring, Int32, Int32),
+              dist_array.id,
+              partition_info.partition_func_name,
+              dist_array_partition_type_to_int32(partition_info.partition_type),
+              dist_array_index_type_to_int32(partition_info.index_type))
+    end
 end
 
 function build_global_index(dist_array::DistArray)

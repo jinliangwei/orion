@@ -30,7 +30,8 @@ function parallelize_for_loop(loop_stmt, is_ordered::Bool)
     iteration_space = for_get_iteration_space(loop_stmt)
 
     @assert isa(iteration_space, Symbol)
-    @assert isdefined(iteration_space)
+    println(iteration_space)
+    @assert isdefined(current_module(), iteration_space)
     @assert isa(eval(current_module(), iteration_space), DistArray)
 
     par_for_context = ParForContext(iteration_var,

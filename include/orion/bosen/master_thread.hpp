@@ -465,10 +465,10 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
-    case message::DriverMsgType::kSpaceTimeRepartitionDistArray:
+    case message::DriverMsgType::kRepartitionDistArray:
       {
         auto *msg = message::DriverMsgHelper::get_msg<
-          message::DriverMsgSpaceTimeRepartitionDistArray>(recv_buff);
+          message::DriverMsgRepartitionDistArray>(recv_buff);
         size_t expected_size = msg->task_size;
         bool received_next_msg
             = ReceiveArbitraryBytes(driver_.sock, &recv_buff,
@@ -479,15 +479,17 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kForwardDriverMsgToAll;
 
-          task::SpaceTimeRepartitionDistArray repartition_task;
+          task::RepartitionDistArray repartition_task;
           std::string task_buff(
               reinterpret_cast<const char*>(driver_recv_byte_buff_.GetBytes()),
               driver_recv_byte_buff_.GetSize());
           repartition_task.ParseFromString(task_buff);
           int32_t id = repartition_task.id();
           auto &meta = dist_array_metas_.at(id);
-          meta.SetPartitionScheme(DistArrayPartitionScheme::kSpaceTime);
-
+          int32_t partition_scheme = repartition_task.partition_scheme();
+          int32_t index_type = repartition_task.index_type();
+          meta.SetPartitionScheme(static_cast<DistArrayPartitionScheme>(partition_scheme));
+          meta.SetIndexType(static_cast<DistArrayIndexType>(index_type));
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;

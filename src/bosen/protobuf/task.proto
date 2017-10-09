@@ -95,9 +95,11 @@ message DefineVar {
   required bytes var_value = 2;
 }
 
-message SpaceTimeRepartitionDistArray {
+message RepartitionDistArray {
   required int32 id = 1;
   required string partition_func_name = 2;
+  required int32 partition_scheme = 3;
+  required int32 index_type = 4;
 }
 
 message ExecForLoop {
