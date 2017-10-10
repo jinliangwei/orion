@@ -508,9 +508,10 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgTextFileLoadAck>(
               &send_buff_, exec_cpp_func_task_.result_buff.size() / sizeof(int64_t),
               dist_array_under_operation_);
-          if (exec_cpp_func_task_.result_buff.size() > 0)
+          if (exec_cpp_func_task_.result_buff.size() > 0) {
             send_buff_.set_next_to_send(exec_cpp_func_task_.result_buff.data(),
                                         exec_cpp_func_task_.result_buff.size());
+          }
           Send(&master_poll_conn_, &master_);
           send_buff_.clear_to_send();
           send_buff_.reset_sent_sizes();
@@ -679,7 +680,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
   switch (msg_type) {
     case message::ExecuteMsgType::kRepartitionDistArrayRecved:
       {
-        LOG(INFO) << "space time partitions received";
+        LOG(INFO) << "partitioned data received!";
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgRepartitionDistArrayRecved>(recv_buff);
         auto *partition_recv_buff = reinterpret_cast<PeerRecvRepartitionDistArrayDataBuffer*>(
@@ -723,6 +724,7 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
               break;
             case TaskLabel::kLoadDistArrayFromTextFile:
               {
+                LOG(INFO) << "LoadTextFile done";
                 action_ = Action::kTextFileLoadAck;
               }
               break;
@@ -790,6 +792,8 @@ Executor::HandleExecuteMsg() {
                                   &master_recv_byte_buff_,
                                   expected_size);
         if (received_next_msg) {
+          LOG(INFO) << "received DistArrayDims from master";
+
           std::vector<int64_t> dims(msg->num_dims, 0);
           memcpy(dims.data(), master_recv_byte_buff_.GetBytes(),
                  msg->num_dims*sizeof(int64_t));
@@ -953,7 +957,6 @@ Executor::Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn) {
   auto& send_buff = poll_conn_ptr->get_send_buff();
   if (send_buff.get_remaining_to_send_size() > 0
       || send_buff.get_remaining_next_to_send_size() > 0) {
-    LOG(INFO) << "waiting to send remaining bytes";
     bool sent = sock_conn->sock.Send(&send_buff);
     while (!sent) {
       sent = sock_conn->sock.Send(&send_buff);
@@ -961,8 +964,8 @@ Executor::Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn) {
     send_buff.clear_to_send();
   }
   bool sent = sock_conn->sock.Send(&send_buff_);
+
   if (!sent) {
-    LOG(INFO) << "have to copy!";
     send_buff.Copy(send_buff_);
     if (poll_conn_ptr->type == PollConn::ConnType::peer)
       event_handler_.SetToWriteOnly(poll_conn_ptr);
@@ -996,7 +999,6 @@ Executor::EvalExpr() {
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
       master_recv_byte_buff_.GetSize());
-  LOG(INFO) << "received task size = " << master_recv_byte_buff_.GetSize();
   task::EvalExpr eval_expr_task;
   eval_expr_task.ParseFromString(task_str);
   eval_julia_expr_task_.serialized_expr = eval_expr_task.serialized_expr();

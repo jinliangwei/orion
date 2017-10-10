@@ -172,19 +172,14 @@ EventHandler<PollConn>::Remove(PollConn* poll_conn_ptr) {
   int write_fd = poll_conn_ptr->get_write_fd();
   int ret = 0;
   if (read_fd == write_fd) {
-    LOG(INFO) << __func__ << " read/write_fd = " << read_fd;
     ret = poll_.Remove(read_fd);
     return ret;
   } else {
     bool read_noent = false;
     ret = poll_.Remove(read_fd);
     if (ret < 0 && errno == ENOENT) read_noent = true;
-    LOG(INFO) << __func__ << " read_fd = " << read_fd
-              << " read_noent = " << read_noent;
-
     if (ret < 0 && errno != ENOENT) return ret;
 
-    LOG(INFO) << __func__ << " write_fd = " << read_fd;
     ret = poll_.Remove(write_fd);
     if (ret < 0 && errno != ENOENT) return ret;
     if (ret < 0 && errno == ENOENT && read_noent) return -1;

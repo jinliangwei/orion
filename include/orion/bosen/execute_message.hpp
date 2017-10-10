@@ -148,8 +148,9 @@ class ExecuteMsgHelper {
     execute_msg->execute_msg_type = Msg::get_type();
 
     uint8_t *payload_mem = send_buff->get_avai_payload_mem();
-        uint8_t *aligned_mem = reinterpret_cast<uint8_t*>(
+    uint8_t *aligned_mem = reinterpret_cast<uint8_t*>(
         get_aligned(payload_mem, alignof(Msg)));
+
     Msg* msg = MsgCreator::template CreateMsg<Msg, Args...>(
         aligned_mem, args...);
     send_buff->inc_payload_size(aligned_mem + sizeof(Msg) - payload_mem);

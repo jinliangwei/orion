@@ -278,7 +278,7 @@ class SendBuffer {
   }
 
   void set_next_to_send(const void *mem, size_t to_send_size) {
-    next_to_send_mem_  = reinterpret_cast<const uint8_t*>(mem);
+    next_to_send_mem_ = reinterpret_cast<const uint8_t*>(mem);
     next_to_send_size_ = to_send_size;
     next_to_send_sent_size_ = 0;
   }
@@ -292,7 +292,7 @@ class SendBuffer {
   }
 
   size_t get_remaining_to_send_size() const {
-    return size_ - sent_size_;
+    return (size_ == payload_mem_ - mem_) ? 0 : size_ - sent_size_;
   }
 
   void inc_next_to_send_sent_size(size_t sent_size) {

@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stdlib.h>
 
 namespace orion {
 namespace bosen {

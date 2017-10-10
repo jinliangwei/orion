@@ -516,6 +516,8 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
         auto* sock_conn = poll_conn_ptr->conn;
         executors_[executor_id].reset(sock_conn);
         executor_sock_conn_to_id_[executors_[executor_id].get()] = executor_id;
+        LOG(INFO) << "set " << (void*) executors_[executor_id].get()
+                  << " to " << executor_id;
         executor_byte_buff_.emplace(std::make_pair(executor_id, ByteBuffer()));
         num_identified_executors_++;
         if (state_ == State::kInitialization
@@ -595,11 +597,16 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         int32_t executor_id = executor_sock_conn_to_id_[poll_conn_ptr->conn];
         int32_t dist_array_id = ack_msg->dist_array_id;
         auto &dist_array_meta = dist_array_metas_.at(dist_array_id);
+        LOG(INFO) << "TextFileLoadAck received! from " << executor_id
+                  << " " << (void*) poll_conn_ptr->conn
+                  << " expected size = " << expected_size;
+
         if (expected_size > 0) {
           bool received_next_msg =
               ReceiveArbitraryBytes(poll_conn_ptr->conn->sock, &recv_buff,
                                     &executor_byte_buff_[executor_id], expected_size);
           if (received_next_msg) {
+            LOG(INFO) << "received next message!";
             ret = EventHandler<PollConn>::kClearOneAndNextMsg;
             num_recved_executor_acks_++;
             std::vector<int64_t> max_keys(ack_msg->num_dims);

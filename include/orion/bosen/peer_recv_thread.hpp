@@ -314,6 +314,7 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
   switch (msg_type) {
     case message::ExecuteMsgType::kRepartitionDistArrayData:
       {
+        LOG(INFO) << "received kRepartitionDistArrayData";
         auto *msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgRepartitionDistArrayData>(
             recv_buff);
         size_t expected_size = msg->data_size;
