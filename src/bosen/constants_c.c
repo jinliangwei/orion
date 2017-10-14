@@ -55,8 +55,6 @@ extern "C" {
   const int32_t ORION_DIST_ARRAY_INDEX_TYPE_LOCAL
   = static_cast<int32_t>(orion::bosen::DistArrayIndexType::kLocal);
 
-  const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_NAIVE
-  = static_cast<int32_t>(orion::bosen::ForLoopParallelScheme::kNaive);
   const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_1D
   = static_cast<int32_t>(orion::bosen::ForLoopParallelScheme::k1D);
   const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_SPACE_TIME

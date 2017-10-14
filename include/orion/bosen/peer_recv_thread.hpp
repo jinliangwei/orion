@@ -317,10 +317,12 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         LOG(INFO) << "received kRepartitionDistArrayData";
         auto *msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgRepartitionDistArrayData>(
             recv_buff);
+        //while(1);
         size_t expected_size = msg->data_size;
         bool received_next_msg = (expected_size == 0);
         if (data_recv_buff_ == nullptr) {
           auto *buff_ptr = new PeerRecvRepartitionDistArrayDataBuffer();
+          LOG(INFO) << "received id = " << msg->dist_array_id;
           buff_ptr->dist_array_id = msg->dist_array_id;
           data_recv_buff_ = buff_ptr;
         }

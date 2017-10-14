@@ -234,7 +234,8 @@ function materialize(dist_array::DistArray)
     println("map_type = ", dist_array_to_create.map_type)
     ccall((:orion_create_dist_array, lib_path),
           Void, (Int32, Int32, Int32, Bool, UInt64, Int32,
-                 Cstring, Int32, Int32, Int32, Cstring, Ptr{Int64}, Int32),
+                 Cstring, Int32, Int32, Int32, Cstring, Ptr{Int64}, Int32,
+                 Bool),
           dist_array_to_create.id,
           dist_array_parent_type_to_int32(dist_array_to_create.parent_type),
           dist_array_map_type_to_int32(dist_array_to_create.map_type),
@@ -247,7 +248,8 @@ function materialize(dist_array::DistArray)
           module_to_int32(Symbol(dist_array_to_create.mapper_func_module)),
           dist_array_to_create.mapper_func_name,
           dist_array_to_create.dims,
-          data_type_to_int32(dist_array_to_create.random_init_type))
+          data_type_to_int32(dist_array_to_create.random_init_type),
+          dist_array_to_create.is_dense)
     dist_array.is_materialized = true
 end
 
@@ -266,6 +268,7 @@ function copy(dist_array::DistArray)::DistArray
     new_dist_array.is_materialized = dist_array.is_materialized
     new_dist_array.dims = copy(dist_array.dims)
     new_dist_array.random_init_type = dist_array.random_init_type
+    new_dist_array.is_dense = dist_array.is_dense
     new_dist_array.partition_info = dist_array.partition_info
     return new_dist_array
 end
@@ -412,6 +415,13 @@ function check_and_repartition(dist_array::DistArray,
     println("check_and_repartition ", dist_array.id)
     curr_partition_info = dist_array.partition_info
     repartition = false
+    if partition_info.index_type == DistArrayIndexType_global
+        if dist_array.is_dense
+            partition_info.partition_type = DistArrayPartitionType_range
+        else
+            partition_info.partition_type = DistArrayPartitionType_hash
+        end
+    end
     if curr_partition_info.partition_type ==
         partition_info.partition_type
         if (partition_info.partition_type == DistArrayPartitionType_1d ||
@@ -434,10 +444,4 @@ function check_and_repartition(dist_array::DistArray,
               dist_array_partition_type_to_int32(partition_info.partition_type),
               dist_array_index_type_to_int32(partition_info.index_type))
     end
-end
-
-function build_global_index(dist_array::DistArray)
-end
-
-function build_local_index(dist_array::DistArray)
 end

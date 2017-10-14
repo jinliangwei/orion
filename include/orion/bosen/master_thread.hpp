@@ -490,6 +490,23 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
           int32_t index_type = repartition_task.index_type();
           meta.SetPartitionScheme(static_cast<DistArrayPartitionScheme>(partition_scheme));
           meta.SetIndexType(static_cast<DistArrayIndexType>(index_type));
+          meta.ResetMaxPartitionIds();
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::DriverMsgType::kExecForLoop:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgExecForLoop>(recv_buff);
+        size_t expected_size = msg->task_size;
+        bool received_next_msg
+            = ReceiveArbitraryBytes(driver_.sock, &recv_buff,
+                                    &driver_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          executor_in_action_ = -1;
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kForwardDriverMsgToAll;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -567,6 +584,9 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
           message::ExecuteMsgExecutorAck>(recv_buff);
         size_t expected_size = ack_msg->result_size;
         int32_t executor_id = executor_sock_conn_to_id_[poll_conn_ptr->conn];
+        LOG(INFO) << "received ExecutorAck from "
+                  << executor_id << " recv_buff = " << &recv_buff;
+
         executor_in_action_ = executor_id;
 
         if (expected_size > 0) {
@@ -593,14 +613,14 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
       {
         auto *ack_msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgTextFileLoadAck>(recv_buff);
-        size_t expected_size = ack_msg->num_dims*sizeof(int64_t);
+        size_t expected_size = ack_msg->num_dims * sizeof(int64_t);
         int32_t executor_id = executor_sock_conn_to_id_[poll_conn_ptr->conn];
         int32_t dist_array_id = ack_msg->dist_array_id;
         auto &dist_array_meta = dist_array_metas_.at(dist_array_id);
         LOG(INFO) << "TextFileLoadAck received! from " << executor_id
                   << " " << (void*) poll_conn_ptr->conn
+                  << " recv_buff = " << (void*) &recv_buff
                   << " expected size = " << expected_size;
-
         if (expected_size > 0) {
           bool received_next_msg =
               ReceiveArbitraryBytes(poll_conn_ptr->conn->sock, &recv_buff,
@@ -613,6 +633,8 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
             memcpy(max_keys.data(), executor_byte_buff_[executor_id].GetBytes(),
                    ack_msg->num_dims*sizeof(int64_t));
             dist_array_meta.UpdateDimsMax(max_keys);
+          } else {
+            ret = EventHandler<PollConn>::kNoAction;
           }
         } else {
           num_recved_executor_acks_++;
@@ -661,6 +683,34 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         }
         ret = EventHandler<PollConn>::kClearOneMsg;
         action_ = Action::kNone;
+      }
+      break;
+    case message::ExecuteMsgType::kRepartitionDistArrayAck:
+      {
+        auto *ack_msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgRepartitionDistArrayAck>(recv_buff);
+        num_recved_executor_acks_++;
+        int dist_array_id = ack_msg->dist_array_id;
+        LOG(INFO) << "dist_array_id = " << dist_array_id;
+        size_t num_dims = ack_msg->num_dims;
+        int32_t *max_ids = ack_msg->max_ids;
+        auto &dist_array_meta = dist_array_metas_.at(dist_array_id);
+        dist_array_meta.AccumMaxPartitionIds(max_ids, num_dims);
+        if (num_recved_executor_acks_ == kNumExecutors) {
+          auto &max_ids = dist_array_meta.GetMaxPartitionIds();
+          auto *msg = message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayMaxPartitionIds>(
+              &send_buff_,
+              dist_array_id,
+              max_ids.size());
+          for (size_t i = 0; i < max_ids.size(); i++) {
+            msg->max_ids[i] = max_ids[i];
+          }
+          BroadcastToAllExecutors();
+          send_buff_.reset_sent_sizes();
+          send_buff_.clear_to_send();
+          accum_result_size_ = 0;
+          action_ = Action::kRespondToDriver;
+        }
       }
       break;
     default:

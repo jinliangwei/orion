@@ -11,6 +11,7 @@ function load_constants()
     load_dist_array_map_type_int32()
     load_dist_array_partition_scheme_int32()
     load_dist_array_index_type_int32()
+    load_for_loop_parallel_scheme_int32()
 end
 
 function load_module_int32()
@@ -104,8 +105,6 @@ function load_dist_array_index_type_int32()
 end
 
 function load_for_loop_parallel_scheme_int32()
-    ptr_val = cglobal((:ORION_FOR_LOOP_PARALLEL_SCHEME_NAIVE, lib_path), Int32)
-    global const for_loop_parallel_scheme_naive = unsafe_load(ptr_val)
     ptr_val = cglobal((:ORION_FOR_LOOP_PARALLEL_SCHEME_1D, lib_path), Int32)
     global const for_loop_parallel_scheme_1d = unsafe_load(ptr_val)
     ptr_val = cglobal((:ORION_FOR_LOOP_PARALLEL_SCHEME_SPACE_TIME, lib_path), Int32)
@@ -187,9 +186,8 @@ function dist_array_index_type_to_int32(index_type::DistArrayIndexType)
 end
 
 function for_loop_parallel_scheme_to_int32(parallel_scheme::ForLoopParallelScheme)
-    if parallel_scheme == ForLoopParalellScheme_naive
-        return for_loop_parallel_scheme_naive
-    elseif parallel_scheme == ForLoopParallelScheme_1d
+    if parallel_scheme == ForLoopParalellScheme_naive ||
+        parallel_scheme == ForLoopParallelScheme_1d
         return for_loop_parallel_scheme_1d
     elseif parallel_scheme == ForLoopParallelScheme_2d ||
         parallel_scheme == ForLoopParallelScheme_unimodular

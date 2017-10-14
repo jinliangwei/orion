@@ -40,7 +40,7 @@ class DistArray {
  public:
   using TimePartitionMap = std::map<int32_t, AbstractDistArrayPartition*>;
   using SpaceTimePartitionMap = std::map<int32_t, TimePartitionMap>;
-  using PartitionMap = std::unordered_map<int32_t, AbstractDistArrayPartition*>;
+  using PartitionMap = std::map<int32_t, AbstractDistArrayPartition*>;
  private:
   const Config &kConfig;
   const type::PrimitiveType kValueType;
@@ -101,6 +101,8 @@ class DistArray {
       std::string mapper_func_name,
       type::PrimitiveType random_init_type);
 
+  void GetMaxPartitionIds(std::vector<int32_t>* ids);
+
  private:
   DISALLOW_COPY(DistArray);
   void RepartitionSerializeAndClearSpaceTime(
@@ -112,7 +114,9 @@ class DistArray {
       const uint8_t *mem, size_t mem_size);
   void RepartitionDeserialize1D(
       const uint8_t *mem, size_t mem_size);
-
+  void GetMaxPartitionIdsSpaceTime(std::vector<int32_t>* ids);
+  void GetMaxPartitionIds1D(std::vector<int32_t>* ids);
+  void BuildPartitionIndices();
 };
 
 }

@@ -153,12 +153,17 @@ class DistArrayPartition : public AbstractDistArrayPartition {
       size_t num_elements,
       void *mem);
 
+  void BuildIndex();
+
  private:
   void RepartitionSpaceTime(
       const int32_t *repartition_ids);
 
   void Repartition1D(
       const int32_t *repartition_ids);
+
+  void BuildDenseIndex();
+  void BuildSparseIndex();
 };
 
 /*----- Specialized for String (const char*) ------*/
@@ -242,6 +247,8 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
       int64_t key_begin,
       size_t num_elements,
       void *mem);
+
+  void BuildIndex();
 
  private:
   void RepartitionSpaceTime(
@@ -527,7 +534,6 @@ DistArrayPartition<ValueType>::RandomInit(
     values_.resize(num_elements_after_map);
     memcpy(values_.data(), output_values.data(), output_values.size());
   }
-  LOG(INFO) << "values_[10] = " << values_[10];
   if (map_type == task::MAP || map_type == task::MAP_VALUES_NEW_KEYS) {
     keys_.resize(output_keys.size());
     memcpy(keys_.data(), output_keys.data(), output_keys.size() * sizeof(int64_t));
@@ -542,11 +548,8 @@ DistArrayPartition<ValueType>::ReadRange(
     void *mem) {
   auto &dist_array_meta = dist_array_->GetMeta();
   bool is_dense = dist_array_meta.IsDense();
-  auto partition_scheme = dist_array_meta.GetPartitionScheme();
 
-  if (is_dense
-      && (partition_scheme == DistArrayPartitionScheme::k1D
-          || partition_scheme == DistArrayPartitionScheme::kRange)) {
+  if (is_dense) {
     ReadRangeDense(key_begin, num_elements, mem);
   } else {
     ReadRangeSparse(key_begin, num_elements, mem);
@@ -582,11 +585,7 @@ DistArrayPartition<ValueType>::WriteRange(
     void *mem) {
   auto &dist_array_meta = dist_array_->GetMeta();
   bool is_dense = dist_array_meta.IsDense();
-  auto partition_scheme = dist_array_meta.GetPartitionScheme();
-
-  if (is_dense
-      && (partition_scheme == DistArrayPartitionScheme::k1D
-          || partition_scheme == DistArrayPartitionScheme::kRange)) {
+  if (is_dense) {
     WriteRangeDense(key_begin, num_elements, mem);
   } else {
     WriteRangeSparse(key_begin, num_elements, mem);
@@ -612,6 +611,44 @@ DistArrayPartition<ValueType>::WriteRangeSparse(
     size_t num_elements,
     void *mem) {
 
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::BuildIndex() {
+  auto &dist_array_meta = dist_array_->GetMeta();
+  bool is_dense = dist_array_meta.IsDense();
+  if (is_dense) {
+    BuildDenseIndex();
+  } else {
+    BuildSparseIndex();
+  }
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::BuildDenseIndex() {
+  if (keys_.size() == 0) return;
+  int64_t min_key = keys_[0];
+  LOG(INFO) << "min_key = " << min_key;
+  for (auto key : keys_) {
+    min_key = std::min(key, min_key);
+  }
+  key_start_ = min_key;
+  std::sort(values_.begin(), values_.end(),
+            [this] (const int64_t &key1, const int64_t &key2) {
+              return keys_[key1 - key_start_] < keys_[key2 - key_start_];
+            });
+  for (size_t i = 0; i < keys_.size(); i++) {
+    keys_[i] = min_key + i;
+  }
+  LOG(INFO) << "key_start = " << key_start_;
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::BuildSparseIndex() {
+  LOG(FATAL) << "unsupported yet!";
 }
 
 }

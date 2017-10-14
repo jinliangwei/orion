@@ -80,5 +80,22 @@ DistArrayMeta::SetIndexType(DistArrayIndexType index_type) {
   index_type_ = index_type;
 }
 
+void
+DistArrayMeta::ResetMaxPartitionIds() {
+  max_partition_ids_.clear();
+}
+
+void
+DistArrayMeta::AccumMaxPartitionIds(const int32_t *max_ids, size_t num_dims) {
+  if (num_dims != max_partition_ids_.size())
+    max_partition_ids_.resize(num_dims);
+  for (size_t i = 0; i < num_dims; i++) {
+    max_partition_ids_[i] = std::max(max_partition_ids_[i], max_ids[i]);
+    LOG(INFO) << __func__ << " " << max_partition_ids_[i];
+  }
+}
+
+
+
 }
 }

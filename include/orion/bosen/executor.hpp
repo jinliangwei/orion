@@ -26,6 +26,8 @@
 #include <orion/bosen/dist_array.hpp>
 #include <orion/bosen/driver_message.hpp>
 #include <orion/bosen/key.hpp>
+#include <orion/bosen/abstract_exec_for_loop.hpp>
+
 namespace orion {
 namespace bosen {
 
@@ -127,7 +129,8 @@ class Executor {
       kDefineVar = 9,
       kExecutorAck = 10,
       kRepartitionDistArray = 11,
-      kRepartitionDistArraySend = 12
+      kRepartitionDistArraySend = 12,
+      kExecForLoop = 13
             };
 
   static const int32_t kPortSpan = 100;
@@ -201,6 +204,7 @@ class Executor {
   bool result_needed_ { true };
   std::unordered_map<int32_t, Blob> blob_send_buff_;
   bool connected_to_peers_ { false };
+  AbstractExecForLoop *exec_for_loop_ {nullptr};
 
  public:
   Executor(const Config& config, int32_t id);
@@ -231,6 +235,7 @@ class Executor {
   void DefineVar();
   void RepartitionDistArray();
   void RepartitionDistArraySend(int32_t dist_array_id, DistArray *dist_array);
+  void ExecForLoop();
 };
 
 Executor::Executor(const Config& config, int32_t index):
@@ -506,7 +511,8 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
       case Action::kTextFileLoadAck:
         {
           message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgTextFileLoadAck>(
-              &send_buff_, exec_cpp_func_task_.result_buff.size() / sizeof(int64_t),
+              &send_buff_,
+              exec_cpp_func_task_.result_buff.size() / sizeof(int64_t),
               dist_array_under_operation_);
           if (exec_cpp_func_task_.result_buff.size() > 0) {
             send_buff_.set_next_to_send(exec_cpp_func_task_.result_buff.data(),
@@ -685,7 +691,8 @@ Executor::HandlePeerRecvThrExecuteMsg() {
           message::ExecuteMsgRepartitionDistArrayRecved>(recv_buff);
         auto *partition_recv_buff = reinterpret_cast<PeerRecvRepartitionDistArrayDataBuffer*>(
             msg->data_buff);
-        auto &dist_array = dist_arrays_.at(partition_recv_buff->dist_array_id);
+        int32_t dist_array_id = partition_recv_buff->dist_array_id;
+        auto &dist_array = dist_arrays_.at(dist_array_id);
         auto byte_buffs = partition_recv_buff->byte_buffs;
         for (auto &buff_pair : byte_buffs) {
           auto &blob = buff_pair.second;
@@ -693,7 +700,19 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         }
         delete partition_recv_buff;
         dist_array.CheckAndBuildIndex();
-        action_ = Action::kExecutorAck;
+
+        auto &max_ids = dist_array.GetMeta().GetMaxPartitionIds();
+        auto *ack_msg = message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayAck>(
+            &send_buff_,
+            dist_array_id,
+            max_ids.size());
+         for (size_t i = 0; i < max_ids.size(); i++) {
+          ack_msg->max_ids[i] = max_ids[i];
+        }
+        Send(&master_poll_conn_, &master_);
+        send_buff_.clear_to_send();
+        send_buff_.reset_sent_sizes();
+        action_ = Action::kNone;
         int ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(ret, 0) << ret;
       }
@@ -807,6 +826,20 @@ Executor::HandleExecuteMsg() {
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
+    case message::ExecuteMsgType::kRepartitionDistArrayMaxPartitionIds:
+    {
+      auto *msg = message::ExecuteMsgHelper::get_msg<
+        message::ExecuteMsgRepartitionDistArrayMaxPartitionIds>(recv_buff);
+      size_t num_dims = msg->num_dims;
+      int32_t *max_ids = msg->max_ids;
+      int32_t dist_array_id = msg->dist_array_id;
+      auto &dist_array_meta = dist_arrays_.at(dist_array_id).GetMeta();
+      dist_array_meta.ResetMaxPartitionIds();
+      dist_array_meta.AccumMaxPartitionIds(max_ids, num_dims);
+      ret = EventHandler<PollConn>::kClearOneMsg;
+      action_ = Action::kNone;
+    }
+    break;
     default:
       {
         LOG(FATAL) << "unknown message type " << static_cast<int>(msg_type);
@@ -862,6 +895,22 @@ Executor::HandleDriverMsg() {
       {
         auto *msg = message::DriverMsgHelper::get_msg<
           message::DriverMsgRepartitionDistArray>(recv_buff);
+        size_t expected_size = msg->task_size;
+        bool received_next_msg =
+            ReceiveArbitraryBytes(master_.sock,
+                                  &recv_buff,
+                                  &master_recv_byte_buff_,
+                                  expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kRepartitionDistArray;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::DriverMsgType::kExecForLoop:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgExecForLoop>(recv_buff);
         size_t expected_size = msg->task_size;
         bool received_next_msg =
             ReceiveArbitraryBytes(master_.sock,
@@ -1018,6 +1067,7 @@ Executor::CreateDistArray() {
   create_dist_array.ParseFromString(task_str);
 
   int32_t id = create_dist_array.id();
+  bool is_dense = create_dist_array.is_dense();
   dist_array_under_operation_ = id;
   type::PrimitiveType value_type
       = static_cast<type::PrimitiveType>(create_dist_array.value_type());
@@ -1035,7 +1085,7 @@ Executor::CreateDistArray() {
       std::forward_as_tuple(id),
       std::forward_as_tuple(kConfig, value_type, kId,
                             num_dims, parent_type, init_type,
-                            parent_dist_array_meta_ptr, false));
+                            parent_dist_array_meta_ptr, is_dense));
   auto &dist_array = iter_pair.first->second;
 
   task::DistArrayMapType map_type = create_dist_array.map_type();
@@ -1132,6 +1182,7 @@ Executor::RepartitionDistArray() {
   task::RepartitionDistArray repartition_dist_array_task;
   repartition_dist_array_task.ParseFromString(task_str);
   int32_t id = repartition_dist_array_task.id();
+  LOG(INFO) << __func__ << " dist_array_id = " << id;
   dist_array_under_operation_ = id;
 
   int32_t partition_scheme = repartition_dist_array_task.partition_scheme();
@@ -1158,6 +1209,7 @@ Executor::RepartitionDistArray() {
 void
 Executor::RepartitionDistArraySend(int32_t dist_array_id,
                                    DistArray *dist_array) {
+  LOG(INFO) << __func__ << " dist_array_id = " << dist_array_id;
   auto &send_buff = blob_send_buff_;
   send_buff.clear();
   dist_array->RepartitionSerializeAndClear(&send_buff);

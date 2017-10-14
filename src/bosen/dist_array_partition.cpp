@@ -168,5 +168,10 @@ DistArrayPartition<const char*>::WriteRangeSparse(
 
 }
 
+void
+DistArrayPartition<const char*>::BuildIndex() {
+
+}
+
 }
 }

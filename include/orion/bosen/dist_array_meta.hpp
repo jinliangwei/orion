@@ -36,9 +36,8 @@ enum class DistArrayIndexType {
 };
 
 enum class ForLoopParallelScheme {
-  kNaive = 0,
-    k1D = 1,
-    kSpaceTime = 2
+  k1D = 0,
+    kSpaceTime = 1
 };
 
 class DistArrayMeta {
@@ -50,6 +49,7 @@ class DistArrayMeta {
   DistArrayPartitionScheme partition_scheme_;
   bool is_dense_;
   DistArrayIndexType index_type_;
+  std::vector<int32_t> max_partition_ids_;
  public:
   DistArrayMeta(size_t num_dims,
                 task::DistArrayParentType parent_type,
@@ -67,6 +67,10 @@ class DistArrayMeta {
   void SetPartitionScheme(DistArrayPartitionScheme partition_scheme);
   void SetIndexType(DistArrayIndexType index_type);
   DistArrayPartitionScheme GetPartitionScheme() { return partition_scheme_; }
+  DistArrayIndexType GetIndexType() { return index_type_; }
+  void ResetMaxPartitionIds();
+  void AccumMaxPartitionIds(const int32_t *max_ids, size_t num_dims);
+  const std::vector<int32_t> &GetMaxPartitionIds() { return max_partition_ids_; }
 };
 
 }

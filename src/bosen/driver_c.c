@@ -40,7 +40,8 @@ extern "C" {
       int32_t mapper_func_module,
       const char* mapper_func_name,
       int64_t* dims,
-      int32_t random_init_type) {
+      int32_t random_init_type,
+      bool is_dense) {
     driver->CreateDistArray(
         id,
         static_cast<orion::bosen::task::DistArrayParentType>(parent_type),
@@ -54,7 +55,8 @@ extern "C" {
         static_cast<orion::bosen::JuliaModule>(mapper_func_module),
         mapper_func_name,
         dims,
-        random_init_type);
+        random_init_type,
+        is_dense);
   }
 
   jl_value_t* orion_eval_expr_on_all(
@@ -83,6 +85,30 @@ extern "C" {
     driver->RepartitionDistArray(id, partition_func_name,
                                  partition_scheme,
                                  index_type);
+  }
+
+  void orion_exec_for_loop(
+      int32_t iteration_space_id,
+      int32_t parallel_scheme,
+      const int32_t *space_partitioned_dist_array_ids,
+      size_t num_space_partitioned_dist_arrays,
+      const int32_t *time_partitioned_dist_array_ids,
+      size_t num_time_partitioned_dist_arrays,
+      const int32_t *global_indexed_dist_array_ids,
+      size_t num_global_indexed_dist_arrays,
+      const char *loop_batch_func_name,
+      bool is_ordered) {
+    driver->ExecForLoop(
+        iteration_space_id,
+        parallel_scheme,
+        space_partitioned_dist_array_ids,
+        num_space_partitioned_dist_arrays,
+        time_partitioned_dist_array_ids,
+        num_time_partitioned_dist_arrays,
+        global_indexed_dist_array_ids,
+        num_global_indexed_dist_arrays,
+        loop_batch_func_name,
+        is_ordered);
   }
 
   void orion_stop() {

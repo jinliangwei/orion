@@ -141,7 +141,8 @@ class Driver {
       JuliaModule parser_func_module,
       const char* parser_func_name,
       int64_t *dims,
-      int32_t random_init_type);
+      int32_t random_init_type,
+      bool is_dense);
 
   void DefineVariable(const char *var_name,
                       const uint8_t *var_value,
@@ -162,7 +163,7 @@ class Driver {
       size_t num_time_partitioned_dist_arrays,
       const int32_t *global_indexed_dist_array_ids,
       size_t num_gloabl_indexed_dist_arrays,
-      std::string loop_batch_func_name,
+      const char* loop_batch_func_name,
       bool is_ordered);
   void Stop();
 };
@@ -345,7 +346,8 @@ Driver::CreateDistArray(
       JuliaModule mapper_func_module,
       const char* mapper_func_name,
       int64_t *dims,
-      int32_t random_init_type) {
+      int32_t random_init_type,
+      bool is_dense) {
   task::CreateDistArray create_dist_array;
   create_dist_array.set_id(id);
   create_dist_array.set_parent_type(parent_type);
@@ -387,6 +389,7 @@ Driver::CreateDistArray(
   }
   create_dist_array.set_num_dims(num_dims);
   create_dist_array.set_value_type(static_cast<int>(value_type));
+  create_dist_array.set_is_dense(is_dense);
   create_dist_array.SerializeToString(&msg_buff_);
   LOG(INFO) << "task size = " << msg_buff_.size();
 
@@ -480,7 +483,7 @@ Driver::ExecForLoop(
     size_t num_time_partitioned_dist_arrays,
     const int32_t *global_indexed_dist_array_ids,
     size_t num_global_indexed_dist_arrays,
-    std::string loop_batch_func_name,
+    const char *loop_batch_func_name,
     bool is_ordered) {
   task::ExecForLoop exec_for_loop_task;
   exec_for_loop_task.set_iteration_space_id(iteration_space_id);

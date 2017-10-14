@@ -64,6 +64,8 @@ class AbstractDistArrayPartition {
       size_t num_elements,
       void *mem) = 0;
 
+  virtual void BuildIndex() = 0;
+
  protected:
   DISALLOW_COPY(AbstractDistArrayPartition);
 

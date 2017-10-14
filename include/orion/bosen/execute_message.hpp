@@ -137,6 +137,44 @@ struct ExecuteMsgRepartitionDistArrayRecved {
   }
 };
 
+struct ExecuteMsgRepartitionDistArrayAck {
+ public:
+  int32_t dist_array_id;
+  size_t num_dims;
+  int32_t max_ids[2];
+ private:
+  ExecuteMsgRepartitionDistArrayAck() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(int32_t _dist_array_id,
+            size_t _num_dims) {
+    dist_array_id = _dist_array_id;
+    num_dims = _num_dims;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kRepartitionDistArrayAck;
+  }
+};
+
+struct ExecuteMsgRepartitionDistArrayMaxPartitionIds {
+ public:
+  int32_t dist_array_id;
+  size_t num_dims;
+  int32_t max_ids[2];
+ private:
+  ExecuteMsgRepartitionDistArrayMaxPartitionIds() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(int32_t _dist_array_id,
+            size_t _num_dims) {
+    dist_array_id = _dist_array_id;
+    num_dims = _num_dims;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kRepartitionDistArrayMaxPartitionIds;
+  }
+};
+
 class ExecuteMsgHelper {
  public:
   template<typename Msg,

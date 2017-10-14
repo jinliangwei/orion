@@ -275,6 +275,8 @@ bool Socket::Recv(RecvBuffer *buf) const {
 }
 
 bool Socket::Recv(RecvBuffer *buf, void *mem) const {
+  LOG(INFO) << __func__ << " buf = " << (void*) buf
+            << " mem = " << (void*) mem;
   ssize_t ret = read(socket_, reinterpret_cast<uint8_t*>(mem),
                      buf->get_next_expected_size() \
                      - buf->get_next_recved_size());

@@ -129,7 +129,7 @@ DistArray::CreatePartition() {
         break;
       }
     default:
-      LOG(FATAL) << "unknown type";
+      LOG(FATAL) << "unknown type " << static_cast<int>(kValueType);
   }
   return partition_ptr;
 }
@@ -499,6 +499,86 @@ DistArray::RandomInit(
 
 void
 DistArray::CheckAndBuildIndex() {
+  LOG(INFO) << __func__ << " meta = " << (void*) &meta_;
+  auto index_type = meta_.GetIndexType();
+  LOG(INFO) << "index_type = " << static_cast<int>(index_type);
+  switch (index_type) {
+    case DistArrayIndexType::kNone:
+      break;
+    case DistArrayIndexType::kGlobal:
+      {
+        auto partition_scheme = meta_.GetPartitionScheme();
+        CHECK(partition_scheme == DistArrayPartitionScheme::kHash ||
+              partition_scheme == DistArrayPartitionScheme::kRange);
+      }
+      // continue to build partition indices
+    case DistArrayIndexType::kLocal:
+      {
+        BuildPartitionIndices();
+      }
+      break;
+    default:
+      LOG(FATAL) << "unknown index type " << static_cast<int>(index_type);
+  }
+}
+
+void
+DistArray::BuildPartitionIndices() {
+  LOG(INFO) << __func__ << " meta = " << (void*) &meta_;
+  if (meta_.GetPartitionScheme() == DistArrayPartitionScheme::kSpaceTime) {
+    for (auto &time_partition_map : space_time_partitions_) {
+      for (auto &partition_pair : time_partition_map.second) {
+        auto partition = partition_pair.second;
+        partition->BuildIndex();
+      }
+    }
+  } else {
+    for (auto &partition_pair : partitions_) {
+      LOG(INFO) << __func__ << " for partition " << partition_pair.first;
+      auto partition = partition_pair.second;
+      partition->BuildIndex();
+    }
+  }
+}
+
+void
+DistArray::GetMaxPartitionIds(
+    std::vector<int32_t>* ids) {
+  if (meta_.GetPartitionScheme() == DistArrayPartitionScheme::kSpaceTime) {
+    GetMaxPartitionIdsSpaceTime(ids);
+  } else {
+    GetMaxPartitionIds1D(ids);
+  }
+}
+
+void
+DistArray::GetMaxPartitionIdsSpaceTime(
+    std::vector<int32_t>* ids) {
+  ids->resize(2);
+  int32_t max_space_id = 0,
+           max_time_id = 1;
+  for (auto &time_partition_map : space_time_partitions_) {
+    int32_t space_id = time_partition_map.first;
+    max_space_id = std::max(max_space_id, space_id);
+    for (auto &partition_pair : time_partition_map.second) {
+      int32_t time_id = partition_pair.first;
+      max_time_id = std::max(max_time_id, time_id);
+    }
+  }
+  (*ids)[0] = max_space_id;
+  (*ids)[1] = max_time_id;
+}
+
+void
+DistArray::GetMaxPartitionIds1D(
+    std::vector<int32_t>* ids) {
+  ids->resize(1);
+  int32_t max_id = 0;
+  for (auto &partition_pair : partitions_) {
+    int32_t partition_id = partition_pair.first;
+    max_id = std::max(max_id, partition_id);
+  }
+  (*ids)[0] = max_id;
 }
 
 }

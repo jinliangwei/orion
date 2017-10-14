@@ -232,10 +232,10 @@ function parallelize_2d(par_for_context::ParForContext,
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
         else
-            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash,
+            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_naive,
                                                                nothing, nothing,
                                                                DistArrayIndexType_global)
-            repartition_stmt = :(Orion.build_global_index($(esc(da_sym))))
+            repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(global_indexed_dist_array_ids, eval(current_module(), da_sym).id)
             push!(parallelized_loop.args, repartition_stmt)
         end
