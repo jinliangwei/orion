@@ -50,17 +50,20 @@ class DistArrayMeta {
   bool is_dense_;
   DistArrayIndexType index_type_;
   std::vector<int32_t> max_partition_ids_;
+  std::string symbol_;
  public:
   DistArrayMeta(size_t num_dims,
                 task::DistArrayParentType parent_type,
                 task::DistArrayInitType init_type,
                 const DistArrayMeta *parent_dist_array_meta,
-                bool is_dense);
+                bool is_dense,
+                const std::string &symbol);
   ~DistArrayMeta() { }
   DISALLOW_COPY(DistArrayMeta);
 
   void UpdateDimsMax(const std::vector<int64_t> &dims);
   const std::vector<int64_t> &GetDims() const;
+  std::vector<int64_t> &GetDims() { return dims_; }
   void AssignDims(const int64_t* dims);
   bool IsDense() const;
   DistArrayPartitionScheme GetPartitionScheme() const;
@@ -71,6 +74,7 @@ class DistArrayMeta {
   void ResetMaxPartitionIds();
   void AccumMaxPartitionIds(const int32_t *max_ids, size_t num_dims);
   const std::vector<int32_t> &GetMaxPartitionIds() { return max_partition_ids_; }
+  std::string &GetSymbol() { return symbol_; }
 };
 
 }

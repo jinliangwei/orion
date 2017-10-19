@@ -6,7 +6,7 @@ namespace bosen {
 namespace key {
 
 int64_t array_to_int64(const std::vector<int64_t> &dims,
-                        const int64_t* key) {
+                       const int64_t* key) {
   int64_t key_int = 0;
   int i = dims.size() - 1;
   for (; i > 0; i--) {
@@ -20,7 +20,7 @@ int64_t array_to_int64(const std::vector<int64_t> &dims,
 }
 
 int64_t vec_to_int64(const std::vector<int64_t> &dims,
-                            const std::vector<int64_t> &key) {
+                     const std::vector<int64_t> &key) {
   return array_to_int64(dims, key.data());
 }
 

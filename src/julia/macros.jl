@@ -99,3 +99,17 @@ end
 
 macro evaluate(args...)
 end
+
+macro dist_array(expr::Expr)
+    ret_stmts = quote
+        $(esc(expr))
+    end
+
+    @assert expr.head == :(=)
+    dist_array_symbol = assignment_get_assigned_to(expr)
+    @assert isa(dist_array_symbol, Symbol)
+    symbol_str = string(dist_array_symbol)
+    push!(ret_stmts.args,
+          :(Orion.dist_array_set_symbol($(esc(dist_array_symbol)), $symbol_str)))
+    return ret_stmts
+end

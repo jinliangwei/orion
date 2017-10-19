@@ -14,7 +14,10 @@ enum class TaskLabel {
     kLoadDistArrayFromTextFile = 1,
     kRandomInitDistArray = 2,
     kDefineVar = 3,
-    kComputeRepartition = 4
+    kComputeRepartition = 4,
+    kDefineJuliaDistArray = 5,
+    kExecForLoopTile = 6
+
 };
 
 class JuliaEvaluator;

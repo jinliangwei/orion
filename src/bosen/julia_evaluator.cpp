@@ -307,7 +307,7 @@ JuliaEvaluator::ParseString(
     (*key)[i] = jl_unbox_int64(key_ith);
   }
   value = jl_get_nth_field(ret_tuple, 1);
-  CHECK(jl_is_float64(value)) << "value ptr is " << (void*) value;
+  CHECK(jl_is_float32(value)) << "value ptr is " << (void*) value;
   UnboxValue(value, result_type, value_buff);
   JL_GC_POP();
 }
@@ -383,6 +383,61 @@ JuliaEvaluator::StaticDefineVar(
 }
 
 void
+JuliaEvaluator::DefineDistArray(
+    std::string *symbol,
+    type::PrimitiveType value_type,
+    std::vector<int64_t> *dims,
+    bool is_dense,
+    void* access_ptr) {
+  LOG(INFO) << __func__ << " dist_array: " << *symbol;
+  jl_value_t **jl_values;
+  JL_GC_PUSHARGS(jl_values, 6);
+  jl_value_t* &symbol_jl = jl_values[0];
+  jl_value_t* &value_type_jl = jl_values[1];
+  jl_value_t* &dims_vec_jl = jl_values[2];
+  jl_value_t* &is_dense_jl = jl_values[3];
+  jl_value_t* &access_ptr_jl = jl_values[4];
+  jl_value_t* &dims_vec_array_type_jl = jl_values[5];
+
+  symbol_jl = jl_cstr_to_string(symbol->c_str());
+  value_type_jl = reinterpret_cast<jl_value_t*>(type::GetJlDataType(value_type));
+  dims_vec_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
+  dims_vec_jl = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(dims_vec_array_type_jl,
+                         dims->data(), dims->size(), 0));
+  is_dense_jl = jl_box_bool(is_dense);
+  access_ptr_jl = jl_box_voidpointer(access_ptr);
+
+  jl_function_t *create_dist_array_func = GetFunction(
+      jl_main_module, "orionres_define_dist_array");
+  jl_value_t* args[5];
+  args[0] = value_type_jl;
+  args[1] = symbol_jl;
+  args[2] = dims_vec_jl;
+  args[3] = is_dense_jl;
+  args[4] = access_ptr_jl;
+  jl_call(create_dist_array_func, args, 5);
+  if (jl_exception_occurred())
+      LOG(FATAL) << "julia exception occurs: " << jl_typeof_str(jl_exception_occurred());
+  JL_GC_POP();
+}
+
+void
+JuliaEvaluator::StaticDefineDistArray(
+    JuliaEvaluator *julia_eval,
+    std::string *symbol,
+    type::PrimitiveType value_type,
+    std::vector<int64_t> *dims,
+    bool is_dense,
+    void* access_ptr) {
+  julia_eval->DefineDistArray(symbol,
+                              value_type,
+                              dims,
+                              is_dense,
+                              access_ptr);
+}
+
+void
 JuliaEvaluator::ComputeRepartition(
     std::string repartition_func_name,
     DistArray *dist_array) {
@@ -405,15 +460,11 @@ JuliaEvaluator::ComputeRepartition(
         jl_ptr_to_array_1d(array_type, dims.data(), dims.size(), 0));
     jl_function_t *repartition_func = GetFunction(jl_main_module, repartition_func_name.c_str());
     repartition_ids_vec_jl = jl_call2(repartition_func, keys_vec_jl, dims_vec_jl);
-    if (jl_exception_occurred())
-      LOG(INFO) << "julia exception occurs: " << jl_typeof_str(jl_exception_occurred());
+    CHECK(!jl_exception_occurred()) << jl_typeof_str(jl_exception_occurred());
     int32_t *repartition_ids = reinterpret_cast<int32_t*>(jl_array_data(repartition_ids_vec_jl));
-    LOG(INFO) << "num of repartition ids = " << jl_array_len(repartition_ids_vec_jl)
-              << " num_keys = " << keys.size();
     dist_array_partition->Repartition(repartition_ids);
     delete dist_array_partition;
   }
-  LOG(INFO) << __func__ << " done!";
   JL_GC_POP();
 }
 
@@ -749,6 +800,61 @@ JuliaEvaluator::RunMapValuesNewKeys(
   memcpy(output_values->data(), output_array, num_output_values * type::SizeOf(output_value_type));
   JL_GC_POP();
   CHECK(!jl_exception_occurred());
+}
+
+void
+JuliaEvaluator::ExecForLoopTile(
+    AbstractDistArrayPartition *iteration_space_partition,
+    std::string exec_loop_func_name) {
+  return;
+  auto& dims = iteration_space_partition->GetDims();
+  auto& keys = iteration_space_partition->GetKeys();
+  void* values = iteration_space_partition->GetValues();
+
+  jl_value_t **jl_values;
+  JL_GC_PUSHARGS(jl_values, 6);
+
+  jl_value_t* &dims_vec_jl = jl_values[0];
+  jl_value_t* &keys_vec_jl = jl_values[1];
+  jl_value_t* &values_vec_jl = jl_values[2];
+  jl_value_t* &dims_array_type_jl = jl_values[3];
+  jl_value_t* &keys_array_type_jl = jl_values[4];
+  jl_value_t* &values_array_type_jl = jl_values[5];
+  dims_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
+  keys_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
+  jl_datatype_t* value_type_jl =type::GetJlDataType(
+      iteration_space_partition->GetValueType());
+  values_array_type_jl = reinterpret_cast<jl_value_t*>(jl_apply_array_type(
+      value_type_jl, 1));
+  dims_vec_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
+      dims_array_type_jl, dims.data(), dims.size(), 0));
+  keys_vec_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
+      keys_array_type_jl, keys.data(), keys.size(), 0));
+  values_vec_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
+      values_array_type_jl, values, keys.size(), 0));
+
+  jl_function_t *exec_loop_func
+      = GetFunction(jl_main_module, exec_loop_func_name.c_str());
+  jl_call3(exec_loop_func, keys_vec_jl, values_vec_jl, dims_vec_jl);
+  jl_value_t* exception_jl = jl_exception_occurred();
+  if (exception_jl) {
+    jl_function_t *show_error_func
+        = GetFunction(jl_base_module, "showerror");
+    jl_call2(show_error_func, jl_stdout_obj(), exception_jl);
+    LOG(FATAL) << "julia exception occurs: " << jl_typeof_str(exception_jl)
+               << " " << jl_typename_str(exception_jl);
+  }
+  JL_GC_POP();
+}
+
+void
+JuliaEvaluator::StaticExecForLoopTile(
+    JuliaEvaluator *julia_eval,
+    AbstractDistArrayPartition *iteration_space_partition,
+    std::string exec_loop_func_name) {
+  julia_eval->ExecForLoopTile(iteration_space_partition,
+                          exec_loop_func_name);
+
 }
 
 }

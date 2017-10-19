@@ -8,13 +8,15 @@ DistArrayMeta::DistArrayMeta(
     task::DistArrayParentType parent_type,
     task::DistArrayInitType init_type,
     const DistArrayMeta *parent_dist_array_meta,
-    bool is_dense):
+    bool is_dense,
+    const std::string &symbol):
     kNumDims(num_dims),
     dims_(num_dims, 0),
     kParentType_(parent_type),
     kInitType_(init_type),
     is_dense_(is_dense),
-    index_type_(DistArrayIndexType::kNone) {
+    index_type_(DistArrayIndexType::kNone),
+    symbol_(symbol) {
   switch (kParentType_) {
     case task::TEXT_FILE:
       {
@@ -87,8 +89,9 @@ DistArrayMeta::ResetMaxPartitionIds() {
 
 void
 DistArrayMeta::AccumMaxPartitionIds(const int32_t *max_ids, size_t num_dims) {
-  if (num_dims != max_partition_ids_.size())
+  if (num_dims != max_partition_ids_.size()) {
     max_partition_ids_.resize(num_dims);
+  }
   for (size_t i = 0; i < num_dims; i++) {
     max_partition_ids_[i] = std::max(max_partition_ids_[i], max_ids[i]);
     LOG(INFO) << __func__ << " " << max_partition_ids_[i];

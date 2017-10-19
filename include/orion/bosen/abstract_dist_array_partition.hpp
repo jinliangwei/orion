@@ -29,7 +29,7 @@ class AbstractDistArrayPartition {
       JuliaModule mapper_func_module,
       const std::string &mapper_func,
       Blob *result_buff) = 0;
-  virtual void SetDims(const std::vector<int64_t> &dims) = 0;
+  virtual void ComputeKeysFromBuffer(const std::vector<int64_t> &dims) = 0;
   virtual std::vector<int64_t> &GetDims() = 0;
   virtual type::PrimitiveType GetValueType() = 0;
 
@@ -65,6 +65,9 @@ class AbstractDistArrayPartition {
       void *mem) = 0;
 
   virtual void BuildIndex() = 0;
+
+  virtual std::pair<uint8_t*, size_t> Serialize() = 0;
+  virtual void Deserialize(const uint8_t *buffer, size_t num_bytes) = 0;
 
  protected:
   DISALLOW_COPY(AbstractDistArrayPartition);

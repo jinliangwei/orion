@@ -118,7 +118,6 @@ class PeerRecvThread {
   Action action_ { Action::kNone };
 
   void *data_recv_buff_ { nullptr };
-
  public:
   PeerRecvThread(int32_t id,
                  const std::vector<conn::Socket> &peer_socks,
@@ -132,7 +131,7 @@ class PeerRecvThread {
   int HandleExecutorMsg();
   int HandleClosedConnection(PollConn *poll_conn_ptr);
 
-  void Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn);
+  void SendToExecutor();
 };
 
 PeerRecvThread::PeerRecvThread(
@@ -231,7 +230,7 @@ PeerRecvThread::HandleMsg(PollConn* poll_conn_ptr) {
           message::Helper::CreateMsg<message::ExecutorConnectToPeersAck>(&send_buff_);
           send_buff_.set_next_to_send(
               peer_sock_fds_.data(), peer_sock_fds_.size() * sizeof(int));
-          Send(&executor_conn_, executor_.get());
+          SendToExecutor();
           send_buff_.clear_to_send();
           action_ = Action::kNone;
         }
@@ -275,8 +274,6 @@ PeerRecvThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
       {
         auto *msg = message::Helper::get_msg<message::ExecutorIdentity>(recv_buff);
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(poll_conn_ptr->conn);
-        //LOG(INFO) << "id = " << kId << " executor_id = " << msg->executor_id
-        //          << " sock_fd = " << sock_conn->sock.get_fd();
         peer_[msg->executor_id].reset(sock_conn);
         peer_sock_fds_[msg->executor_id] = sock_conn->sock.get_fd();
         poll_conn_ptr->id = msg->executor_id;
@@ -307,22 +304,17 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
   auto &recv_buff = poll_conn_ptr->get_recv_buff();
   auto &sock = *reinterpret_cast<conn::Socket*>(poll_conn_ptr->conn);
   auto msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
-  LOG(INFO) << __func__ << " msg_type = " << static_cast<int>(msg_type)
-            << " from " << poll_conn_ptr->id;
   int ret = EventHandler<PollConn>::kClearOneMsg;
   int32_t sender_id = poll_conn_ptr->id;
   switch (msg_type) {
     case message::ExecuteMsgType::kRepartitionDistArrayData:
       {
-        LOG(INFO) << "received kRepartitionDistArrayData";
         auto *msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgRepartitionDistArrayData>(
             recv_buff);
-        //while(1);
         size_t expected_size = msg->data_size;
         bool received_next_msg = (expected_size == 0);
         if (data_recv_buff_ == nullptr) {
           auto *buff_ptr = new PeerRecvRepartitionDistArrayDataBuffer();
-          LOG(INFO) << "received id = " << msg->dist_array_id;
           buff_ptr->dist_array_id = msg->dist_array_id;
           data_recv_buff_ = buff_ptr;
         }
@@ -350,13 +342,34 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
               message::ExecuteMsgRepartitionDistArrayRecved>(
                 &send_buff_, data_recv_buff_);
             data_recv_buff_ = nullptr;
-            Send(&executor_conn_, executor_.get());
+            SendToExecutor();
             send_buff_.clear_to_send();
           }
         } else {
           ret = EventHandler<PollConn>::kNoAction;
         }
         action_ = Action::kNone;
+      }
+      break;
+    case message::ExecuteMsgType::kPipelineTimePartition:
+      {
+        auto* msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgPipelineTimePartition>(
+            recv_buff);
+        size_t expected_size = msg->data_size;
+        bool received_next_msg = ReceiveArbitraryBytes(sock, &recv_buff,
+                                                       &(peer_recv_byte_buff_[sender_id]), expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kNone;
+          send_buff_.Copy(recv_buff);
+          send_buff_.set_next_to_send(peer_recv_byte_buff_[sender_id].GetBytes(),
+                                      peer_recv_byte_buff_[sender_id].GetSize());
+          SendToExecutor();
+          send_buff_.clear_to_send();
+        } else {
+          ret = EventHandler<PollConn>::kNoAction;
+          action_ = Action::kNone;
+        }
       }
       break;
     default:
@@ -374,20 +387,20 @@ PeerRecvThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
 }
 
 void
-PeerRecvThread::Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn) {
-  auto& send_buff = poll_conn_ptr->get_send_buff();
+PeerRecvThread::SendToExecutor() {
+  auto& send_buff = executor_conn_.get_send_buff();
   if (send_buff.get_remaining_to_send_size() > 0
       || send_buff.get_remaining_next_to_send_size() > 0) {
-    bool sent = pipe_conn->pipe.Send(&send_buff);
+    bool sent = executor_->pipe.Send(&send_buff);
     while (!sent) {
-      sent = pipe_conn->pipe.Send(&send_buff);
+      sent = executor_->pipe.Send(&send_buff);
     }
     send_buff.clear_to_send();
   }
-  bool sent = pipe_conn->pipe.Send(&send_buff_);
+  bool sent = executor_->pipe.Send(&send_buff_);
   if (!sent) {
-    send_buff.Copy(send_buff_);
-    event_handler_.SetToReadWrite(poll_conn_ptr);
+    send_buff.CopyAndMoveNextToSend(&send_buff_);
+    event_handler_.SetToReadWrite(&executor_conn_);
   }
   send_buff_.reset_sent_sizes();
 }

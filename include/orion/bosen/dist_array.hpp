@@ -9,6 +9,7 @@
 #include <orion/bosen/blob.hpp>
 #include <orion/bosen/task.pb.h>
 #include <orion/bosen/dist_array_meta.hpp>
+#include <orion/bosen/dist_array_access.hpp>
 
 namespace orion {
 namespace bosen {
@@ -51,6 +52,7 @@ class DistArray {
   std::vector<int64_t> dims_;
   DistArrayMeta meta_;
   //DistArrayPartitionScheme partition_scheme_;
+  DistArrayAccess access_;
  public:
   DistArray(const Config& config,
             type::PrimitiveType value_type,
@@ -59,7 +61,8 @@ class DistArray {
             task::DistArrayParentType parent_type,
             task::DistArrayInitType init_type,
             const DistArrayMeta *parent_dist_array_meta,
-            bool is_dense);
+            bool is_dense,
+            const std::string &symbol);
   ~DistArray();
   //DistArray(DistArray &&other);
   void LoadPartitionsFromTextFile(
@@ -83,12 +86,12 @@ class DistArray {
                                   *buff);
 
   AbstractDistArrayPartition *CreatePartition();
-    void AddPartition(int32_t partition_id,
+  void AddPartition(int32_t partition_id,
                     AbstractDistArrayPartition* partition);
   void AddPartition(int32_t space_id, int32_t time_id,
                     AbstractDistArrayPartition* partition);
   void RepartitionSerializeAndClear(
-      std::unordered_map<int32_t, Blob> *send_buff_ptr);
+      std::unordered_map<int32_t, std::pair<uint8_t*, size_t>>* send_buff_ptr);
   void RepartitionDeserialize(
       const uint8_t *mem, size_t mem_size);
   void CheckAndBuildIndex();
@@ -103,12 +106,17 @@ class DistArray {
 
   void GetMaxPartitionIds(std::vector<int32_t>* ids);
 
+  DistArrayAccess *GetAccessPtr() { return &access_; }
+  void SetAccessPartition(int32_t partition_id);
+  void SetAccessPartition(AbstractDistArrayPartition *partition);
+  AbstractDistArrayPartition* GetAccessPartition();
+  void DeletePartition(int32_t partition_id);
  private:
   DISALLOW_COPY(DistArray);
   void RepartitionSerializeAndClearSpaceTime(
-      std::unordered_map<int32_t, Blob> *send_buff_ptr);
+      std::unordered_map<int32_t, std::pair<uint8_t*, size_t>>* send_buff_ptr);
   void RepartitionSerializeAndClear1D(
-      std::unordered_map<int32_t, Blob> *send_buff_ptr);
+      std::unordered_map<int32_t, std::pair<uint8_t*, size_t>>* send_buff_ptr);
 
   void RepartitionDeserializeSpaceTime(
       const uint8_t *mem, size_t mem_size);

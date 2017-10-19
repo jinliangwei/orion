@@ -35,7 +35,9 @@ void RandomInitAndRunMap(
     Blob *output_values,
     JuliaModule mapper_func_module,
     const std::string &mapper_func_name) {
-  LOG(INFO) << __func__;
+  LOG(INFO) << __func__
+            << " random_init_type = " << static_cast<int>(random_init_type)
+            << " outpu_value_type = " << static_cast<int>(output_value_type);
   std::vector<ValueType> init_values(num_elements);
   switch (init_type) {
     case task::NORMAL_RANDOM:
@@ -97,7 +99,7 @@ class DistArrayPartition : public AbstractDistArrayPartition {
                     const std::string &mapper_func_name,
                     Blob *max_key);
 
-  void SetDims(const std::vector<int64_t> &dims);
+  void ComputeKeysFromBuffer(const std::vector<int64_t> &dims);
   std::vector<int64_t> &GetDims();
   type::PrimitiveType GetValueType();
 
@@ -155,6 +157,9 @@ class DistArrayPartition : public AbstractDistArrayPartition {
 
   void BuildIndex();
 
+  std::pair<uint8_t*, size_t> Serialize();
+  void Deserialize(const uint8_t *buffer, size_t num_bytes);
+
  private:
   void RepartitionSpaceTime(
       const int32_t *repartition_ids);
@@ -193,7 +198,7 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
                     JuliaModule mapper_func_module,
                     const std::string &mapper_func_name,
                     Blob *max_key);
-  void SetDims(const std::vector<int64_t> &dims);
+  void ComputeKeysFromBuffer(const std::vector<int64_t> &dims);
   std::vector<int64_t> &GetDims();
   type::PrimitiveType GetValueType();
   void Insert(int64_t key, const Blob &buff) { }
@@ -250,6 +255,8 @@ class DistArrayPartition<const char*> : public AbstractDistArrayPartition {
 
   void BuildIndex();
 
+  std::pair<uint8_t*, size_t> Serialize();
+  void Deserialize(const uint8_t *buffer, size_t num_bytes);
  private:
   void RepartitionSpaceTime(
       const int32_t *repartition_ids);
@@ -350,7 +357,7 @@ DistArrayPartition<ValueType>::LoadTextFile(
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::SetDims(const std::vector<int64_t> &dims) {
+DistArrayPartition<ValueType>::ComputeKeysFromBuffer(const std::vector<int64_t> &dims) {
   size_t num_dims = dims.size();
   CHECK_EQ(key_buff_.size() / num_dims, values_.size());
   keys_.clear();
@@ -430,6 +437,7 @@ DistArrayPartition<ValueType>::Repartition1D(
     int64_t key = keys_[i];
     ValueType value = values_[i];
     int32_t repartition_id = repartition_ids[i];
+
     auto dist_array_partition_iter
         = partitions.find(repartition_id);
     if (dist_array_partition_iter == partitions.end()) {
@@ -630,19 +638,25 @@ void
 DistArrayPartition<ValueType>::BuildDenseIndex() {
   if (keys_.size() == 0) return;
   int64_t min_key = keys_[0];
-  LOG(INFO) << "min_key = " << min_key;
+  CHECK(values_.size() == keys_.size());
   for (auto key : keys_) {
     min_key = std::min(key, min_key);
   }
   key_start_ = min_key;
-  std::sort(values_.begin(), values_.end(),
-            [this] (const int64_t &key1, const int64_t &key2) {
-              return keys_[key1 - key_start_] < keys_[key2 - key_start_];
+  std::vector<size_t> perm(keys_.size());
+  std::vector<ValueType> values_temp(values_);
+
+  std::iota(perm.begin(), perm.end(), 0);
+  std::sort(perm.begin(), perm.end(),
+            [&] (const size_t &i, const size_t &j) {
+              return keys_[i] < keys_[j];
             });
+  std::transform(perm.begin(), perm.end(), values_.begin(),
+                 [&](size_t i) { return values_temp[i]; });
+
   for (size_t i = 0; i < keys_.size(); i++) {
     keys_[i] = min_key + i;
   }
-  LOG(INFO) << "key_start = " << key_start_;
 }
 
 template<typename ValueType>
@@ -650,6 +664,38 @@ void
 DistArrayPartition<ValueType>::BuildSparseIndex() {
   LOG(FATAL) << "unsupported yet!";
 }
+
+template<typename ValueType>
+std::pair<uint8_t*, size_t>
+DistArrayPartition<ValueType>::Serialize() {
+  size_t num_bytes = sizeof(size_t)
+                     + keys_.size() * (sizeof(int64_t) + sizeof(ValueType));
+  uint8_t* buff = new uint8_t[num_bytes];
+  uint8_t* cursor = buff;
+  *(reinterpret_cast<size_t*>(cursor)) = keys_.size();
+  cursor += sizeof(size_t);
+  memcpy(cursor, keys_.data(), keys_.size() * sizeof(int64_t));
+  cursor += sizeof(int64_t) * keys_.size();
+  memcpy(cursor, values_.data(), values_.size());
+  return std::make_pair(buff, num_bytes);
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::Deserialize(const uint8_t *buffer,
+                                           size_t num_bytes) {
+
+  const uint8_t* cursor = buffer;
+  size_t num_keys = *(reinterpret_cast<const size_t*>(cursor));
+  cursor += sizeof(size_t);
+  keys_.resize(num_keys);
+  values_.resize(num_keys);
+
+  memcpy(keys_.data(), cursor, num_keys * sizeof(int64_t));
+  cursor += sizeof(int64_t) * num_keys;
+  memcpy(values_.data(), cursor, num_keys * sizeof(ValueType));
+}
+
 
 }
 }

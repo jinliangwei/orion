@@ -57,10 +57,25 @@ class JuliaEvaluator {
 
   void DefineVar(std::string var_name,
                  std::string var_value);
+
   static void StaticDefineVar(
       JuliaEvaluator *julia_eval,
       std::string var_name,
       std::string var_value);
+
+  void DefineDistArray(std::string *symbol,
+                       type::PrimitiveType value_type,
+                       std::vector<int64_t> *dims,
+                       bool is_dense,
+                       void* access_ptr);
+
+  static void StaticDefineDistArray(
+      JuliaEvaluator *julia_eval,
+      std::string *symbol,
+      type::PrimitiveType value_type,
+      std::vector<int64_t> *dims,
+      bool is_dense,
+      void* access_ptr);
 
   void ComputeRepartition(
       std::string repartition_func_name,
@@ -132,6 +147,15 @@ class JuliaEvaluator {
       Blob *output_values,
       JuliaModule mapper_func_module,
       const std::string &mapper_func_name);
+
+  void ExecForLoopTile(
+      AbstractDistArrayPartition *iteration_space_partition,
+      std::string exec_loop_func_name);
+
+  static void StaticExecForLoopTile(
+      JuliaEvaluator *julia_evaluator,
+      AbstractDistArrayPartition *iteration_space_partition,
+      std::string exec_loop_func_name);
 };
 
 }

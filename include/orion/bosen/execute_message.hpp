@@ -175,6 +175,27 @@ struct ExecuteMsgRepartitionDistArrayMaxPartitionIds {
   }
 };
 
+struct ExecuteMsgPipelineTimePartition {
+ public:
+  int32_t dist_array_id;
+  int32_t time_partition_id;
+  size_t data_size;
+ private:
+  ExecuteMsgPipelineTimePartition() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(int32_t _dist_array_id,
+            int32_t _time_partition_id,
+            size_t _data_size) {
+    dist_array_id = _dist_array_id;
+    time_partition_id = _time_partition_id;
+    data_size = _data_size;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kPipelineTimePartition;
+  }
+};
+
 class ExecuteMsgHelper {
  public:
   template<typename Msg,

@@ -186,7 +186,7 @@ function dist_array_index_type_to_int32(index_type::DistArrayIndexType)
 end
 
 function for_loop_parallel_scheme_to_int32(parallel_scheme::ForLoopParallelScheme)
-    if parallel_scheme == ForLoopParalellScheme_naive ||
+    if parallel_scheme == ForLoopParallelScheme_naive ||
         parallel_scheme == ForLoopParallelScheme_1d
         return for_loop_parallel_scheme_1d
     elseif parallel_scheme == ForLoopParallelScheme_2d ||

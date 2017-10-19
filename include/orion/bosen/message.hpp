@@ -130,7 +130,8 @@ enum class ExecuteMsgType {
       kExecutorAck = 10,
       kPeerRecvStop = 11,
       kRepartitionDistArrayAck = 12,
-      kRepartitionDistArrayMaxPartitionIds = 13
+      kRepartitionDistArrayMaxPartitionIds = 13,
+      kPipelineTimePartition = 14
 };
 
 struct ExecuteMsg {

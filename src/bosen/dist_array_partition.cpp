@@ -57,7 +57,8 @@ DistArrayPartition<const char*>::GetValueType() {
 }
 
 void
-DistArrayPartition<const char*>::SetDims(const std::vector<int64_t> &dims) {
+DistArrayPartition<const char*>::ComputeKeysFromBuffer(
+    const std::vector<int64_t> &dims) {
 }
 
 void
@@ -171,6 +172,16 @@ DistArrayPartition<const char*>::WriteRangeSparse(
 void
 DistArrayPartition<const char*>::BuildIndex() {
 
+}
+
+std::pair<uint8_t*, size_t>
+DistArrayPartition<const char*>::Serialize() {
+  return std::make_pair(nullptr, 0);
+}
+
+void
+DistArrayPartition<const char*>::Deserialize(const uint8_t *buffer,
+                                           size_t num_bytes) {
 }
 
 }

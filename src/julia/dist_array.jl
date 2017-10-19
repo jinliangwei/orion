@@ -1,5 +1,7 @@
 import Base
 import Base.copy
+import Main: size, getindex, setindex!
+export DistArray, size, getindex, setindex!
 
 @enum DistArrayParentType DistArrayParentType_text_file =
     1 DistArrayParentType_dist_array =
@@ -58,17 +60,17 @@ type DistArray{T} <: AbstractArray{T}
     mapper_func_module::Module
     mapper_func_name::String
     is_materialized::Bool
-    dims::Array{Int64, 1}
+    dims::Vector{Int64}
     random_init_type::DataType
     is_dense::Bool
     partition_info::DistArrayPartitionInfo
-
+    symbol
+    access_ptr
     DistArray(id::Integer,
               parent_type::DistArrayParentType,
               flatten_results::Bool,
               map_type::DistArrayMapType,
               num_dims::Integer,
-              ValueType::DataType,
               file_path::String,
               parent_id::Integer,
               init_type::DistArrayInitType,
@@ -77,29 +79,32 @@ type DistArray{T} <: AbstractArray{T}
               is_materialized::Bool,
               random_init_type::DataType,
               is_dense::Bool,
-              partition_info::DistArrayPartitionInfo) = new(id,
-                                    parent_type,
-                                    flatten_results,
-                                    map_type,
-                                    num_dims,
-                                    ValueType,
-                                    file_path,
-                                    parent_id,
-                                    init_type,
-                                    mapper_func_module,
-                                    mapper_func_name,
-                                    is_materialized,
-                                    zeros(Int64, num_dims),
-                                    random_init_type,
-                                    is_dense,
-                                    partition_info)
+              partition_info::DistArrayPartitionInfo) = new(
+                  id,
+                  parent_type,
+                  flatten_results,
+                  map_type,
+                  num_dims,
+                  T,
+                  file_path,
+                  parent_id,
+                  init_type,
+                  mapper_func_module,
+                  mapper_func_name,
+                  is_materialized,
+                  zeros(Int64, num_dims),
+                  random_init_type,
+                  is_dense,
+                  partition_info,
+                  nothing,
+                  nothing)
 
     DistArray() = new(-1,
                       DistArrayParentType_init,
                       false,
                       DistArrayMapType_no_map,
                       0,
-                     Float32,
+                      T,
                       "",
                       -1,
                       DistArrayInitType_empty,
@@ -110,7 +115,9 @@ type DistArray{T} <: AbstractArray{T}
                       Void,
                       false,
                       DistArrayPartitionInfo(DistArrayPartitionType_naive, nothing,
-                                             nothing, DistArrayIndexType_none))
+                                             nothing, DistArrayIndexType_none),
+                      nothing,
+                      nothing)
 end
 
 const dist_arrays = Dict{Int32, DistArray}()
@@ -141,7 +148,6 @@ function text_file(
         flatten_results,
         map_type,
         num_dims,
-        ValueType,
         file_path,
         -1,
         DistArrayInitType_empty,
@@ -167,7 +173,6 @@ function rand(ValueType::DataType, dims...)::DistArray
         false,
         DistArrayMapType_no_map,
         length(dims),
-        ValueType,
         "",
         -1,
         DistArrayInitType_uniform_random,
@@ -198,7 +203,6 @@ function randn(ValueType::DataType, dims...)::DistArray
         false,
         DistArrayMapType_no_map,
         length(dims),
-        ValueType,
         "",
         -1,
         DistArrayInitType_normal_random,
@@ -235,7 +239,7 @@ function materialize(dist_array::DistArray)
     ccall((:orion_create_dist_array, lib_path),
           Void, (Int32, Int32, Int32, Bool, UInt64, Int32,
                  Cstring, Int32, Int32, Int32, Cstring, Ptr{Int64}, Int32,
-                 Bool),
+                 Bool, Cstring),
           dist_array_to_create.id,
           dist_array_parent_type_to_int32(dist_array_to_create.parent_type),
           dist_array_map_type_to_int32(dist_array_to_create.map_type),
@@ -249,7 +253,8 @@ function materialize(dist_array::DistArray)
           dist_array_to_create.mapper_func_name,
           dist_array_to_create.dims,
           data_type_to_int32(dist_array_to_create.random_init_type),
-          dist_array_to_create.is_dense)
+          dist_array_to_create.is_dense,
+          dist_array_to_create.symbol)
     dist_array.is_materialized = true
 end
 
@@ -270,6 +275,7 @@ function copy(dist_array::DistArray)::DistArray
     new_dist_array.random_init_type = dist_array.random_init_type
     new_dist_array.is_dense = dist_array.is_dense
     new_dist_array.partition_info = dist_array.partition_info
+    new_dist_array.symbol = dist_array.symbol
     return new_dist_array
 end
 
@@ -313,13 +319,13 @@ function process_dist_array_map(dist_array::DistArray)::DistArray
     map_values_only = (map_types[1] == DistArrayMapType_map_values) ||
         (map_types[1] == DistArrayMapType_map_values_new_keys)
     new_keys = reduce((x, y) -> x || y,
-                          false,
+                      false,
                       Base.map(x -> (x == DistArrayMapType_map) || (x == DistArrayMapType_map_values_new_keys),
-                          map_types))
-        processed_dist_array.map_type =
-            map_values_only ?
-            (new_keys ? DistArrayMapType_map_values_new_keys : DistArrayMapType_map_values) :
-            (new_keys ? DistArrayMapType_map : DistArrayMapType_map_fixed_keys)
+                               map_types))
+    processed_dist_array.map_type =
+        map_values_only ?
+        (new_keys ? DistArrayMapType_map_values_new_keys : DistArrayMapType_map_values) :
+        (new_keys ? DistArrayMapType_map : DistArrayMapType_map_fixed_keys)
     flatten_results = reduce((x, y) -> x || y, false, map_flattens)
 
     if origin_dist_array.parent_type == DistArrayParentType_text_file
@@ -387,7 +393,6 @@ function map_generic(parent_dist_array::DistArray,
         (preserving_keys ? DistArrayMapType_map_values : DistArrayMapType_map_values_new_keys) :
         (preserving_keys ? DistArrayMapType_map_fixed_keys : DistArrayMapType_map),
         length(parent_dist_array.dims),
-        parent_dist_array.ValueType,
         "",
         parent_dist_array.id,
         DistArrayInitType_empty,
@@ -444,4 +449,281 @@ function check_and_repartition(dist_array::DistArray,
               dist_array_partition_type_to_int32(partition_info.partition_type),
               dist_array_index_type_to_int32(partition_info.index_type))
     end
+end
+
+function dist_array_set_symbol(dist_array::DistArray,
+                               symbol)
+    dist_array.symbol = symbol
+    println(dist_array.dims, " symbol type = ", typeof(symbol), " ", symbol)
+end
+
+function getindex(dist_array::DistArray, index::Integer)
+end
+
+function setindex!(dist_array::DistArray, value, index::Integer)
+end
+
+function dist_array_get_value_type(dist_array::DistArray)::DataType
+    value_type_int32 = ccall((:orion_dist_array_get_value_type, lib_path),
+                             Int32, (Ptr{Void},), partition_ptr)
+    return int32_to_data_type(value_type_int32)
+end
+
+function getindex(dist_array::DistArray, index...)
+    num_dist_array_dims = length(index)
+    dims = dist_array.dims
+    ValueType = dist_array.ValueType
+    access_ptr = dist_array.access_ptr
+
+    if length(index) == 1
+        value_array = Vector{ValueType}(1)
+        ccall((:orion_dist_array_read, lib_path),
+              Void, (Ptr{Void}, Int64, UInt64, Ptr{Void}),
+              access_ptr, index[1], 1, value_array)
+        return value_array
+    end
+
+    result_dims = Vector{Int64}()
+    @assert length(index) == length(dims)
+    for i in eachindex(index)
+        dim_i = index[i]
+        if isa(dim_i, Integer)
+        elseif isa(dim_i, Vector)
+            push!(result_dims, length(dim_i))
+        elseif dim_i == Colon()
+            push!(result_dims, dims[i])
+        elseif isa(dim_i, UnitRange)
+            push!(result_dims, max(0, dim_i[end] - dim_i[1] + 1))
+        else
+            @assert false
+        end
+    end
+
+    println("result dims = ", result_dims)
+    array_size = reduce((x, y) -> x * y, 1, result_dims)
+    result_array = Vector{ValueType}(array_size)
+
+    per_read_size = 1
+    num_dims_per_read = 0
+    # column major!!
+    for i in eachindex(index)
+        dim_i = index[i]
+        if dim_i == Colon()
+            println(dim_i)
+            per_read_size *= dims[i]
+        else
+            break
+        end
+        num_dims_per_read += 1
+    end
+
+    println("per_read_size = ", per_read_size)
+    println("num_dims_per_read = ", num_dims_per_read)
+
+    read_array = Vector{ValueType}(per_read_size)
+    read_dims_begin = num_dims_per_read + 1
+    read_offset = 1
+
+    num_reads_by_dim = Vector{Int64}()
+    for i = read_dims_begin:length(dims)
+        dim_i = index[i]
+        if dim_i == Colon()
+            push!(num_reads_by_dim, dims[i])
+        elseif isa(dim_i, Vector)
+            push!(num_reads_by_dim, length(dim_i))
+        elseif isa(dim_i, Integer)
+            push!(num_reads_by_dim, 1)
+        elseif isa(dim_i, UnitRange)
+            push!(num_reads_by_dim, max(0, dim_i[end] - dim_i[1] + 1))
+        else
+            @assert false
+        end
+    end
+
+    num_reads = fld(array_size, per_read_size)
+    println("num_reads_by_dim = ", num_reads_by_dim)
+    key_begin = Vector{Int64}(length(dims))
+    fill!(key_begin, 1)
+    key_begin_index = Vector{Int64}(length(dims))
+    fill!(key_begin_index, 1)
+    println("num_reads = ", num_reads)
+    for i = 1:num_reads
+        for j = read_dims_begin:length(dims)
+            index_this_dim = key_begin_index[j]
+            println("j = ", j, " index_this_dim = ", index_this_dim)
+            if index[j] == Colon()
+                key_begin[j] = index_this_dim
+            elseif isa(index[j], Vector)
+                key_begin[j] = index[j][index_this_dim]
+            elseif isa(index[j], Integer)
+                key_begin[j] = index[j]
+            elseif isa(index[j], UnitRange)
+                key_begin[j] = index[j][index_this_dim]
+            else
+                @assert false
+            end
+        end
+        println("key_begin = ", key_begin)
+        key_begin_int64 = from_keys_to_int64(key_begin, dims)
+        ccall((:orion_dist_array_read, lib_path),
+              Void, (Ptr{Void}, Int64, UInt64, Ptr{Void}),
+              partition_ptr, key_begin_int64, per_read_size, read_array)
+
+        result_array[read_offset:(read_offset + per_read_size - 1)] = read_array
+        read_offset += per_read_size
+        if read_dims_begin <= length(dims)
+            key_begin_index[read_dims_begin] += 1
+            j = read_dims_begin
+            while j < length(dims)
+                if key_begin_index[j] == (num_reads_by_dim[j - num_dims_per_read] + 1)
+                    key_begin_index[j] = 1
+                    key_begin_index[j + 1] += 1
+                else
+                    break
+                end
+                j += 1
+            end
+        end
+    end
+    result_array = reshape(result_array, tuple(result_dims...))
+    return result_array
+end
+
+function setindex!(dist_array::DistArray,
+                  values,
+                  index...)
+    num_dist_array_dims = length(index)
+    array_size = length(values)
+    write_dims = Vector{Int64}()
+    dims = dist_array.dims
+    ValueType = dist_array.ValueType
+    value_array = reshape(values, (array_size,))
+
+    if length(index) == 1
+        value_array = Vector{ValueType}(1)
+        ccall((:orion_dist_array_write, lib_path),
+              Void, (Ptr{Void}, Int64, UInt64, Ptr{Void}),
+              partition_ptr, index[1], 1, values)
+    end
+
+    @assert length(index) == length(dims)
+    for i in eachindex(index)
+        dim_i = index[i]
+        if isa(dim_i, Integer)
+        elseif isa(dim_i, Vector)
+            push!(result_dims, length(dim_i))
+        elseif dim_i == :
+            push!(result_dims, dims[i])
+        elseif isa(dim_i, UnitRange)
+            push!(result_dims, max(0, dim_i[end] - dim_i[1] + 1))
+        else
+            @assert false
+        end
+    end
+
+    per_write_size = 1
+    num_dims_per_write = 0
+    for i in eachindex(index)
+        dim_i = index[i]
+        if dim_i != :
+            break
+        end
+        per_write_size *= dims[i]
+        num_dims_per_write += 1
+    end
+
+    write_dims_begin = num_dims_per_write + 1
+    write_offset = 1
+
+    num_writes_by_dim = Vector{Int64}()
+    for i = read_dims_begin:length(dims)
+        dim_i = index[i]
+        if dim_i == :
+            push!(num_writes_by_dim, dims[i])
+        elseif isa(dim_i, Vector)
+            push!(num_writes_by_dim, length(dim_i))
+        elseif isa(dim_i, Integer)
+            push!(num_writes_by_dim, 1)
+        elseif isa(dim_i, UnitRange)
+            push!(num_writes_by_dim, max(0, dim_i[end] - dim_i[1] + 1))
+        else
+            @assert false
+        end
+    end
+
+    num_writes = fld(array_size, per_write_size)
+
+    key_begin = Vector{Int64}(length(dims))
+    fill!(key_begin, 1)
+    key_begin_index = Vector{Int64}(length(dims))
+    fill!(key_begin_index, 1)
+    for i = 1:num_writes
+        for j = write_dims_begin:length(dims)
+            index_this_dim = key_begin_index[j]
+            if index[j] == Colon()
+                key_begin[j] = index_this_dim
+            elseif isa(index[j], Vector)
+                key_begin[j] = index[j][index_this_dim]
+            elseif isa(index[j], Integer)
+                key_begin[j] = index[j]
+            elseif isa(index[j], UnitRange)
+                key_begin[j] = index[j][index_this_dim]
+            else
+                @assert false
+            end
+        end
+        write_array = value_array[write_offset:(write_offset + per_write_size - 1)]
+        write_offset += per_write_size
+        key_begin_int64 = from_keys_to_int64(key_begin, dims)
+        ccall((:orion_dist_array_write, lib_path),
+              Void, (Ptr{Void}, Int64, UInt64, Ptr{Void}),
+              partition_ptr, key_begin_int64, per_write_size, write_array)
+        if write_dims_begin <= length(dims)
+            key_begin_index[write_dims_begin] += 1
+            j = write_dims_begin
+            while j < length(dims)
+                if key_begin_index[j] == (num_reads_by_dim[j - num_dims_per_read] + 1)
+                    key_begin_index[j] = 1
+                    key_begin_index[j + 1] += 1
+                else
+                    break
+                end
+                j += 1
+            end
+        end
+    end
+end
+
+function create_dist_array_for_access(ValueType::DataType,
+                                      symbol::AbstractString,
+                                      dims::Vector,
+                                      is_dense::Bool,
+                                      access_ptr)
+    dist_array = DistArray{ValueType}()
+    dist_array.symbol = symbol
+    dist_array.dims = dims
+    dist_array.num_dims = length(dims)
+    dist_array.is_dense = is_dense
+    dist_array.access_ptr = access_ptr
+    return dist_array
+end
+
+function from_int64_to_keys(key::Int64, dims::Vector{Int64})
+    dim_keys = []
+    for dim in dims
+        key_this_dim = key % dim + 1
+        push!(dim_keys, key_this_dim)
+        key = fld(key, dim)
+    end
+    return dim_keys
+end
+
+function from_keys_to_int64(key, dims::Vector{Int64})
+    key_int = 0
+    for i = length(dims):-1:2
+        key_int += key[i] - 1
+        key_int *= dims[i - 1]
+    end
+    key_int += key[1] - 1
+    return key_int
 end

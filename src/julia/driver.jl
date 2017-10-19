@@ -90,6 +90,15 @@ function exec_for_loop(iteration_space_id::Integer,
                        time_partitioned_dist_array_ids::Vector{Int32},
                        global_indexed_dist_array_ids::Vector{Int32},
                        loop_batch_func_name::AbstractString,
-                       is_orderd::Bool)
-
+                       is_ordered::Bool)
+    ccall((:orion_exec_for_loop, lib_path),
+          Void, (Int32, Int32, Ref{Int32}, UInt64,
+                 Ref{Int32}, UInt64,
+                 Ref{Int32}, UInt64,
+                 Cstring, Bool),
+          iteration_space_id, for_loop_parallel_scheme_to_int32(parallel_scheme),
+          space_partitioned_dist_array_ids, length(space_partitioned_dist_array_ids),
+          time_partitioned_dist_array_ids, length(time_partitioned_dist_array_ids),
+          global_indexed_dist_array_ids, length(global_indexed_dist_array_ids),
+          loop_batch_func_name, is_ordered)
 end

@@ -33,7 +33,9 @@ extern "C" {
       int32_t mapper_func_module,
       const char* mapper_func_name,
       int64_t* dims,
-      int32_t random_init_type);
+      int32_t random_init_type,
+      bool is_dense,
+      const char* symbol);
 
   void orion_define_var(
       const char *var_name,
@@ -45,6 +47,18 @@ extern "C" {
       const char *partition_func_name,
       int32_t partition_scheme,
       int32_t index_type);
+
+  void orion_exec_for_loop(
+      int32_t iteration_space_id,
+      int32_t parallel_scheme,
+      const int32_t *space_partitioned_dist_array_ids,
+      size_t num_space_partitioned_dist_arrays,
+      const int32_t *time_partitioned_dist_array_ids,
+      size_t num_time_partitioned_dist_arrays,
+      const int32_t *global_indexed_dist_array_ids,
+      size_t num_global_indexed_dist_arrays,
+      const char *loop_batch_func_name,
+      bool is_ordered);
 
   void orion_stop();
 

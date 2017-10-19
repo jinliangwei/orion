@@ -45,7 +45,6 @@ extern "C" {
   extern const int32_t ORION_DIST_ARRAY_INDEX_TYPE_GLOBAL;
   extern const int32_t ORION_DIST_ARRAY_INDEX_TYPE_LOCAL;
 
-  extern const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_NAIVE;
   extern const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_1D;
   extern const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_SPACE_TIME;
 }

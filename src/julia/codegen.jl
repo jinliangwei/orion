@@ -16,8 +16,8 @@ function gen_2d_partition_function(func_name::Symbol,
                                    space_dim_tile_size::Int64,
                                    time_dim_tile_size::Int64)
 
-    space_partition_id = :(dim_keys[$space_partition_dim] % $space_dim_tile_size)
-    time_partition_id = :(dim_keys[$time_partition_dim] % $time_dim_tile_size)
+    space_partition_id = :(fld(dim_keys[$space_partition_dim] - 1, $space_dim_tile_size))
+    time_partition_id = :(fld(dim_keys[$time_partition_dim] - 1, $time_dim_tile_size))
 
     add_space_partition_id_stmt = :(repartition_ids[2 * i - 1] = $(space_partition_id))
     add_time_partition_id_stmt = :(repartition_ids[2 * i] = $(time_partition_id))
@@ -25,12 +25,11 @@ function gen_2d_partition_function(func_name::Symbol,
     partition_func = :(
         function $func_name(keys::Vector{Int64},
                             dims::Vector{Int64})
-          rev_dims = reverse(dims)
           repartition_ids = Vector{Int32}(length(keys) * 2)
           i = 1
           for key in keys
             #println(key)
-            dim_keys = OrionWorker.from_int64_to_keys(key, rev_dims)
+            dim_keys = OrionWorker.from_int64_to_keys(key, dims)
             $add_space_partition_id_stmt
             $add_time_partition_id_stmt
             i += 1
@@ -44,7 +43,7 @@ end
 function gen_1d_partition_function(func_name::Symbol,
                                    partition_dim::Int64,
                                    tile_size::Int64)
-    partition_id = :(dim_keys[$partition_dim] % $tile_size)
+    partition_id = :(fld(dim_keys[$partition_dim] - 1, $tile_size))
 
     add_partition_id_stmt = :(repartition_ids[i] = $(partition_id))
 
@@ -52,11 +51,10 @@ function gen_1d_partition_function(func_name::Symbol,
         function $func_name(keys::Vector{Int64},
                             dims::Vector{Int64})
           repartition_ids = Vector{Int32}(length(keys))
-          rev_dims = reverse(dims)
           i = 1
           for key in keys
             #println(key)
-            dim_keys = OrionWorker.from_int64_to_keys(key, rev_dims)
+            dim_keys = OrionWorker.from_int64_to_keys(key, dims)
             $add_partition_id_stmt
             i += 1
           end
@@ -94,14 +92,13 @@ function gen_utransform_2d_partition_function(func_name::Symbol,
         function $func_name(keys::Vector{Int64},
                             dims::Vector{Int64},
                             results::Vector{Int32})
-          rev_dims = reverse(dims)
           repartition_ids = Vector{Int32}(length(keys) * 2)
           println("keys.size() = ", length(keys),
                 " typeof(OrionWorker) = ", typeof(OrionWorker))
           i = 1
           for key in keys
             #println(key)
-            dim_keys = OrionWorker.from_int64_to_keys(key, rev_dims)
+            dim_keys = OrionWorker.from_int64_to_keys(key, dims)
             $add_space_partition_id_stmt
             $add_time_partition_id_stmt
             i += 1
@@ -127,7 +124,7 @@ function gen_map_function(func_name::Symbol,
     loop_stmt = :(for i = 1:length(keys)
                   key = keys[i]
                   value = values[i]
-                  dim_keys = OrionWorker.from_int64_to_keys(key, rev_dims)
+                  dim_keys = OrionWorker.from_int64_to_keys(key, dims)
                   dim_keys = tuple(dim_keys...)
                   end)
     stmt_array_to_append = loop_stmt.args[2].args
@@ -233,7 +230,6 @@ function gen_map_function(func_name::Symbol,
             keys::Vector{Int64},
             values::Vector,
             output_value_type::DataType)::Tuple{Vector{Int64}, Vector{output_value_type}}
-        rev_dims = reverse(dims)
         output_keys = Vector{Int64}()
         output_values = Vector{output_value_type}()
         $loop_stmt
@@ -359,7 +355,6 @@ function gen_map_values_function(func_name::Symbol,
             dims::Vector{Int64},
             values::Vector,
             output_value_type::DataType)::Tuple{Vector{Int64}, Vector{output_value_type}}
-        rev_dims = reverse(dims)
         output_keys = Vector{Int64}()
         output_values = Vector{output_value_type}()
         $loop_stmt
@@ -404,7 +399,7 @@ function gen_loop_body_function(func_name::Symbol,
     iteration_var_string = string(iteration_var)
 
     remap_ssa_vars(loop_body, ssa_defs)
-    rewrite_dist_array_access(loop_body)
+    #rewrite_dist_array_access(loop_body)
 
     loop_body_func = :(
         function $func_name($iteration_var)
@@ -416,7 +411,7 @@ function gen_loop_body_function(func_name::Symbol,
     for i in 1:length(keys)
         key = keys[i]
         value = values[i]
-        dim_keys = OrionWorker.from_int64_to_keys(key, rev_dims)
+        dim_keys = OrionWorker.from_int64_to_keys(key, dims)
 
         key_value = (dim_keys, value)
         $(func_name)(key_value)
@@ -425,7 +420,8 @@ function gen_loop_body_function(func_name::Symbol,
 
     batch_func = :(
     function $batch_func_name(keys::Vector{Int64},
-                              values::Vector{$iter_space_value_type})
+                              values::Vector{$iter_space_value_type},
+                              dims::Vector{Int64})
         $(batch_loop_stmt)
     end
     )

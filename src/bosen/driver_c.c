@@ -41,7 +41,8 @@ extern "C" {
       const char* mapper_func_name,
       int64_t* dims,
       int32_t random_init_type,
-      bool is_dense) {
+      bool is_dense,
+      const char* symbol) {
     driver->CreateDistArray(
         id,
         static_cast<orion::bosen::task::DistArrayParentType>(parent_type),
@@ -56,7 +57,8 @@ extern "C" {
         mapper_func_name,
         dims,
         random_init_type,
-        is_dense);
+        is_dense,
+        symbol);
   }
 
   jl_value_t* orion_eval_expr_on_all(

@@ -1,16 +1,34 @@
-include("/home/ubuntu/orion/src/julia/orion.jl")
+#include("/home/ubuntu/orion/src/julia/orion.jl")
+include("/users/jinlianw/orion.git/src/julia/orion.jl")
 
 const K = 100
 const num_iterations = 10
 step_size = 0.001
 
 # set path to the C++ runtime library
-Orion.set_lib_path("/home/ubuntu/orion/lib/liborion_driver.so")
+#Orion.set_lib_path("/home/ubuntu/orion/lib/liborion_driver.so")
+Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 Orion.load_constants()
 # test library path
 Orion.helloworld()
 
-ratings = Orion.DistArray{Float32}()
+function define_dist_array(ValueType::DataType,
+                           symbol::AbstractString,
+                           dims::Vector,
+                           is_dense::Bool)
+    dist_array = Orion.create_dist_array_for_access(ValueType,
+                                                    symbol,
+                                                    dims,
+                                                    is_dense)
+    dist_array_symbol = Symbol(symbol)
+    println(dist_array_symbol)
+    eval(:(global $dist_array_symbol = $dist_array))
+end
+@Orion.dist_array ratings = Orion.DistArray{Float32}()
+define_dist_array(Float32, "good", [10, 19], false)
+
+println(good.dims)
+
 W = Orion.DistArray{Float32}()
 H = Orion.DistArray{Float32}()
 ratings.num_dims = 2
@@ -22,12 +40,13 @@ ratings.dims = [6000, 4000]
 W.dims = [6000, 100]
 H.dims = [4000, 100]
 
+exit(0)
+
 for i = 1:num_iterations
     Orion.@parallel_for for rating in ratings
 	x_idx = rating[1][1]
 	y_idx = rating[1][2]
 	rv = rating[2]
-
         W_row = W[x_idx, :]
 	H_row = H[y_idx, :]
 	pred = dot(W_row, H_row)

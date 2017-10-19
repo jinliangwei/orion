@@ -203,14 +203,19 @@ bool Pipe::Recv(RecvBuffer *buf) const {
   }
 
   if (buf->is_initialized())
-    CHECK(buf->get_capacity() >= buf->get_expected_size()) << "message is too large";
+    CHECK(buf->get_capacity() >= buf->get_expected_size())
+        << "received the first " << ret << " bytes"
+        << " message is too large "
+        << "capacity = " << buf->get_capacity()
+        << " expected size = " << buf->get_expected_size()
+        << " buff = " << (void*) buf;
   if (buf->ReceivedFullMsg()) return true;
   return false;
 }
 
 bool Pipe::Recv(RecvBuffer *buf, void *mem) const {
-  ssize_t ret = read(read_, reinterpret_cast<uint8_t*>(mem) \
-                     + buf->get_next_recved_size(),
+
+  ssize_t ret = read(read_, reinterpret_cast<uint8_t*>(mem),
                      buf->get_next_expected_size() \
                      - buf->get_next_recved_size());
 
@@ -275,8 +280,6 @@ bool Socket::Recv(RecvBuffer *buf) const {
 }
 
 bool Socket::Recv(RecvBuffer *buf, void *mem) const {
-  LOG(INFO) << __func__ << " buf = " << (void*) buf
-            << " mem = " << (void*) mem;
   ssize_t ret = read(socket_, reinterpret_cast<uint8_t*>(mem),
                      buf->get_next_expected_size() \
                      - buf->get_next_recved_size());

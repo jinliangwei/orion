@@ -184,17 +184,13 @@ class RecvBuffer {
   }
 
   void ClearOneAndNextMsg() {
-    LOG(INFO) << "size = " << size_
-              << " expected_size = " << expected_size_;
     if (size_ > expected_size_) {
       size_t size_to_clear = std::min(size_,
                                       expected_size_ + next_expected_size_);
-      LOG(INFO) << __func__ << " size_to_clear = " << size_to_clear;
       memmove(mem_, mem_ + size_to_clear, size_ - size_to_clear);
       size_ -= size_to_clear;
     } else {
       size_ -= expected_size_;
-      LOG(INFO) << __func__ << " after clear, size = " << size_;
     }
     reset_next_recv();
   }
@@ -221,6 +217,7 @@ class SendBuffer {
   size_t next_to_send_size_ {0};
   size_t next_to_send_sent_size_ {0};
   uint8_t const * next_to_send_mem_ {nullptr};
+  bool owns_next_to_send_mem_ {false};
 
   DISALLOW_COPY(SendBuffer);
 
@@ -270,12 +267,19 @@ class SendBuffer {
     return mem_end_ - payload_mem_;
   }
 
-  void Copy(const SendBuffer &send_buff) {
+  void CopyAndMoveNextToSend(SendBuffer *send_buff_ptr) {
+    SendBuffer &send_buff = *send_buff_ptr;
     memcpy(mem_, send_buff.mem_, send_buff.get_size());
+    owns_next_to_send_mem_ = send_buff.owns_next_to_send_mem_;
+    send_buff.owns_next_to_send_mem_ = false;
     sent_size_ = send_buff.sent_size_;
     next_to_send_mem_ = send_buff.next_to_send_mem_;
+    send_buff.next_to_send_mem_ = nullptr;
     next_to_send_size_ = send_buff.next_to_send_size_;
+    send_buff.next_to_send_size_ = 0;
     next_to_send_sent_size_ = send_buff.next_to_send_sent_size_;
+    send_buff.next_to_send_sent_size_ = 0;
+    //reset_sent_sizes();
   }
 
   void Copy(const RecvBuffer &recv_buff) {
@@ -283,10 +287,12 @@ class SendBuffer {
     reset_sent_sizes();
   }
 
-  void set_next_to_send(const void *mem, size_t to_send_size) {
+  void set_next_to_send(const void *mem, size_t to_send_size,
+                        bool owns_mem = false) {
     next_to_send_mem_ = reinterpret_cast<const uint8_t*>(mem);
     next_to_send_size_ = to_send_size;
     next_to_send_sent_size_ = 0;
+    owns_next_to_send_mem_ = owns_mem;
   }
 
   void inc_sent_size(size_t sent_size) {
@@ -323,6 +329,8 @@ class SendBuffer {
     sent_size_ = 0;
     next_to_send_size_ = 0;
     next_to_send_sent_size_ = 0;
+    if (owns_next_to_send_mem_) delete[] next_to_send_mem_;
+    owns_next_to_send_mem_ = false;
     next_to_send_mem_ = nullptr;
   }
 };

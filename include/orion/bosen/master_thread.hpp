@@ -341,6 +341,7 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           auto parent_type = create_dist_array.parent_type();
           auto init_type = create_dist_array.init_type();
           DistArrayMeta *parent_dist_array_meta_ptr = nullptr;
+          auto symbol = create_dist_array.symbol();
           if (parent_type == task::DIST_ARRAY) {
             int32_t parent_id = create_dist_array.parent_id();
             auto &parent_meta = dist_array_metas_.at(parent_id);
@@ -350,7 +351,8 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
               std::piecewise_construct,
               std::forward_as_tuple(id),
               std::forward_as_tuple(num_dims, parent_type, init_type,
-                                    parent_dist_array_meta_ptr, false));
+                                    parent_dist_array_meta_ptr, false,
+                                    symbol));
           auto meta_iter = iter_pair.first;
           if (init_type != task::EMPTY) {
             meta_iter->second.AssignDims(create_dist_array.dims().data());
@@ -496,6 +498,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
       break;
     case message::DriverMsgType::kExecForLoop:
       {
+        LOG(INFO) << "master thread received ExecForLoop";
         auto *msg = message::DriverMsgHelper::get_msg<
           message::DriverMsgExecForLoop>(recv_buff);
         size_t expected_size = msg->task_size;
@@ -653,7 +656,7 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
             BroadcastToAllExecutors();
             send_buff_.reset_sent_sizes();
             send_buff_.clear_to_send();
-            action_ = Action::kNone;
+            action_ = Action::kWaitingExecutorResponse;
           } else {
             action_ = Action::kRespondToDriver;
           }
@@ -693,6 +696,7 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         int dist_array_id = ack_msg->dist_array_id;
         LOG(INFO) << "dist_array_id = " << dist_array_id;
         size_t num_dims = ack_msg->num_dims;
+        LOG(INFO) << "Ack num dims = " << num_dims;
         int32_t *max_ids = ack_msg->max_ids;
         auto &dist_array_meta = dist_array_metas_.at(dist_array_id);
         dist_array_meta.AccumMaxPartitionIds(max_ids, num_dims);
@@ -763,7 +767,7 @@ MasterThread::BroadcastToAllExecutors() {
     }
     bool sent = executors_[i]->sock.Send(&send_buff_);
     if (!sent) {
-      send_buff.Copy(send_buff_);
+      send_buff.CopyAndMoveNextToSend(&send_buff_);
       event_handler_.SetToReadWrite(&executor_poll_conn_[i]);
     }
     send_buff_.reset_sent_sizes();
@@ -784,7 +788,7 @@ MasterThread::SendToExecutor(int executor_index) {
   }
   bool sent = executor->sock.Send(&send_buff_);
   if (!sent) {
-    send_buff.Copy(send_buff_);
+    send_buff.CopyAndMoveNextToSend(&send_buff_);
     event_handler_.SetToReadWrite(&executor_poll_conn_[executor_index]);
   }
 }
@@ -803,7 +807,7 @@ MasterThread::SendToDriver() {
   bool sent = driver_.sock.Send(&send_buff_);
   LOG(INFO) << __func__ << " sent = " << sent;
   if (!sent) {
-    send_buff.Copy(send_buff_);
+    send_buff.CopyAndMoveNextToSend(&send_buff_);
     event_handler_.SetToReadWrite(&driver_poll_conn_);
   }
 }

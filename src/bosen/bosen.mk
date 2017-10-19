@@ -33,7 +33,7 @@ BOSEN_PROTO_H := $(patsubst src/bosen/protobuf/%.proto,include/orion/bosen/%.pb.
 BOSEN_PROTO_OBJ := $(BOSEN_PROTO_SRC:.proto=.pb.o)
 BOSEN_PROTO := $(patsubst src/bosen/protobuf/%.proto,protobuf/%,$(BOSEN_PROTO_SRC))
 
-DRIVER_LIB_CPP := src/bosen/conn.cpp src/bosen/util.cpp src/bosen/byte_buffer.cpp
+DRIVER_LIB_CPP := src/bosen/conn.cpp src/bosen/util.cpp src/bosen/byte_buffer.cpp src/bosen/dist_array_access.cpp
 DRIVER_LIB_C := src/bosen/driver_c.c src/bosen/constants_c.c
 
 DRIVER_LIB_OBJ := $(DRIVER_LIB_CPP:.cpp=_drlib.o)

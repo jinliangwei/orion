@@ -35,6 +35,7 @@ message CreateDistArray {
   repeated int64 dims = 12;
   optional int32 random_init_type = 13; // used only if map is ture with random init
   required bool is_dense = 14;
+  required string symbol = 15;
 }
 
 message EvalExpr {
