@@ -230,6 +230,7 @@ MasterThread::InitListener() {
  */
 void
 MasterThread::HandleConnection(PollConn *poll_conn_ptr) {
+  LOG(INFO) << __func__;
   conn::Socket accepted;
   listen_.sock.Accept(&accepted);
   if (num_accepted_executors_ < kNumExecutors) {

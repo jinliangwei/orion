@@ -5,12 +5,12 @@
 #include <stdlib.h>
 #include <julia.h>
 extern "C" {
-  void orion_dist_array_read(void *dist_array_partition,
+  void orion_dist_array_read(void *dist_array_access_ptr,
                              int64_t key_begin,
                              uint64_t num_elements,
                              void *array_mem);
 
-  void orion_dist_array_write(void *dist_array_partition,
+  void orion_dist_array_write(void *dist_array_access_ptr,
                              int64_t key_begin,
                              uint64_t num_elements,
                              void *array_mem);

@@ -209,7 +209,7 @@ if __name__ == "__main__":
         for host in hosts:
             for i in range(0, num_executors_per_worker):
                 print("starting %d-th executor on worker %d" % (i, worker_id))
-                ssh_cmd_worker = cmd_worker + " --worker_ip=" + host.strip() \
+                ssh_cmd_worker = "cd " + project_dir + "; " + cmd_worker + " --worker_ip=" + host.strip() \
                                 + " --worker_id=" + str(worker_id) \
                                 + " --local_executor_index=" + str(i)
                 print(ssh_cmd_worker)

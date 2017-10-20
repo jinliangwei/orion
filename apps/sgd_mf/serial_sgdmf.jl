@@ -1,4 +1,6 @@
-const data_path = "/home/ubuntu/data/ml-1m/ratings.csv"
+#const data_path = "/users/jinlianw/ratings.csv"
+#const data_path = "/home/ubuntu/data/ml-1m/ratings.csv"
+const data_path = "/proj/BigLearning/jinlianw/data/netflix.csv"
 const K = 100
 const num_iterations = 1
 const step_size = 0.001
@@ -43,24 +45,23 @@ println("serial sgd mf starts here!")
 ratings = load_data(data_path)
 
 dim_x, dim_y = get_dimension(ratings)
-
-W = rand(dim_x, K)
-H = rand(dim_y, K)
+println((dim_x, dim_y))
+W = rand(K, dim_x)
+H = rand(K, dim_y)
 
 for i = 1:num_iterations
-    for rating in ratings
+@time for rating in ratings
 	x_idx = rating[1] + 1
 	y_idx = rating[2] + 1
 	rv = rating[3]
 
-        W_row = W[x_idx, :]
-	H_row = H[y_idx, :]
+        W_row = W[:, x_idx]
+	H_row = H[:, y_idx]
 	pred = dot(W_row, H_row)
 	diff = rv - pred
 	W_grad = -2 * diff .* H_row
 	H_grad = -2 * diff .* W_row
-	W[x_idx, :] = W_row - step_size .* W_grad
-	H[y_idx, :] = H_row - step_size .*H_grad
+	W[:, x_idx] = W_row - step_size .* W_grad
+	H[:, y_idx] = H_row - step_size .*H_grad
     end
-    println("iteration = ", i, " error = ", error)
 end

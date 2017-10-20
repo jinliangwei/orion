@@ -1,6 +1,6 @@
 #include <orion/bosen/executor.hpp>
 #include <orion/bosen/exec_for_loop_1d.hpp>
-#include <orion/bosen/exec_for_loop_space_time.hpp>
+#include <orion/bosen/exec_for_loop_space_time_unordered.hpp>
 #include <orion/bosen/dist_array_meta.hpp>
 
 namespace orion {
@@ -42,19 +42,22 @@ Executor::CreateExecForLoop() {
       }
     case ForLoopParallelScheme::kSpaceTime:
       {
-        exec_for_loop_ = new ExecForLoopSpaceTime(
-            kId,
-            kNumExecutors,
-            iteration_space_id,
-            space_partitioned_dist_array_ids,
-            num_space_partitioned_dist_arrays,
-            time_partitioned_dist_array_ids,
-            num_time_partitioned_dist_arrays,
-            global_indexed_dist_array_ids,
-            num_global_indexed_dist_arrays,
-            loop_batch_func_name.c_str(),
-            is_ordered,
-            dist_arrays_);
+        if (!is_ordered) {
+          exec_for_loop_ = new ExecForLoopSpaceTimeUnordered(
+              kId,
+              kNumExecutors,
+              iteration_space_id,
+              space_partitioned_dist_array_ids,
+              num_space_partitioned_dist_arrays,
+              time_partitioned_dist_array_ids,
+              num_time_partitioned_dist_arrays,
+              global_indexed_dist_array_ids,
+              num_global_indexed_dist_arrays,
+              loop_batch_func_name.c_str(),
+              dist_arrays_);
+        } else {
+          LOG(FATAL) << "unsupported!";
+        }
         break;
       }
     default:
@@ -63,19 +66,23 @@ Executor::CreateExecForLoop() {
   }
 }
 
-void
+bool
 Executor::CheckAndExecuteForLoopUntilNotRunnable() {
   bool exec_is_scheduled = false;
   bool waiting_for_peers = false;
+  bool completed = false;
   while (!exec_is_scheduled
          && !waiting_for_peers
-         && exec_for_loop_ != nullptr) {
-    exec_is_scheduled = CheckAndExecuteForLoop(&waiting_for_peers);
+         && !completed) {
+    exec_is_scheduled = CheckAndExecuteForLoop(&waiting_for_peers,
+                                               &completed);
   }
 
   if (waiting_for_peers) {
     event_handler_.SetToReadOnly(&prt_poll_conn_);
+    RequestDistArrayData();
   }
+  return completed;
 }
 
 // return true if it some work has been launched else
@@ -83,51 +90,57 @@ Executor::CheckAndExecuteForLoopUntilNotRunnable() {
 // return false when 1) some deps is missing; or 2) no work is left to do in this clock, so I advanced to the next clock;
 // or 3) I completed all works in this loop
 bool
-Executor::CheckAndExecuteForLoop(bool *waiting_for_peers) {
+Executor::CheckAndExecuteForLoop(bool *waiting_for_peers, bool *completed) {
   bool exec_is_scheduled = false;
   *waiting_for_peers = false;
+  *completed = false;
 
-  if (dynamic_cast<ExecForLoopSpaceTime*>(exec_for_loop_) != nullptr) {
-    ExecForLoopSpaceTime *exec_for_loop_space_time
-        = dynamic_cast<ExecForLoopSpaceTime*>(exec_for_loop_);
-    auto runnable_status = exec_for_loop_space_time->GetRunnableStatus();
-    LOG(INFO) << __func__ << " executor " << kId << " "
-              << static_cast<int>(runnable_status);
-    switch (runnable_status) {
-      case ExecForLoopSpaceTime::RunnableStatus::kRunnable:
-        {
-          auto* partition_to_exec = exec_for_loop_space_time->PrepareExecCurrentTile();
-          if (partition_to_exec == nullptr) {
-            ExecForLoopSendResults();
-            exec_for_loop_space_time->IncClock();
-          } else {
-            auto &loop_func_name = exec_for_loop_space_time->GetExecLoopFuncName();
-            ExecuteForLoopTile(partition_to_exec, loop_func_name);
-            exec_is_scheduled = true;
-          }
-        }
-        break;
-      case ExecForLoopSpaceTime::RunnableStatus::kPrefretchGlobalIndexedDep:
-        {
-          LOG(FATAL) << "I can't yet deal with prefetching global dep";
-          *waiting_for_peers = true;
-        }
-        break;
-      case ExecForLoopSpaceTime::RunnableStatus::kMissingDep:
-        *waiting_for_peers = true;
-        break;
-      case ExecForLoopSpaceTime::RunnableStatus::kSkip:
-        exec_for_loop_space_time->IncClock();
-        break;
-      case ExecForLoopSpaceTime::RunnableStatus::kCompleted:
-        delete exec_for_loop_;
-        exec_for_loop_ = nullptr;
-        break;
-      default:
-        LOG(FATAL) << "unknown status code";
+  if (dynamic_cast<ExecForLoopSpaceTimeUnordered*>(exec_for_loop_) == nullptr) {
+    LOG(FATAL) << "I don't yet support this";
+    return exec_is_scheduled;
+  }
+  auto *exec_for_loop_space_time
+      = dynamic_cast<ExecForLoopSpaceTimeUnordered*>(exec_for_loop_);
+  int32_t space_id = 0, time_id = 0;
+  AbstractDistArrayPartition* partition_to_exec = exec_for_loop_space_time->GetNextPartitionToExec(
+      &space_id, &time_id);
+  const auto &completed_time_partitions = exec_for_loop_space_time->GetCompletedTimePartitions();
+  if (!completed_time_partitions.empty()) {
+    for (auto time_partition_to_send : completed_time_partitions) {
+      ExecForLoopSendResults(time_partition_to_send);
     }
-  } else {
-    LOG(INFO) << "I don't yet support this";
+    exec_for_loop_space_time->ClearCompletedTimePartitions();
+  }
+  exec_for_loop_space_time->SetCurrRunningTimePartitionId(time_id);
+
+  if (partition_to_exec == nullptr) {
+    *completed = true;
+    return exec_is_scheduled;
+  }
+
+  auto runnable_status = exec_for_loop_space_time->GetRunnableStatus(time_id);
+  switch (runnable_status) {
+    case ExecForLoopSpaceTimeUnordered::RunnableStatus::kRunnable:
+      {
+        exec_for_loop_space_time->PrepareToExecCurrentTile(time_id);
+        if (!exec_for_loop_space_time->IsCompleted()) {
+          auto &loop_func_name = exec_for_loop_space_time->GetExecLoopFuncName();
+          ExecuteForLoopTile(partition_to_exec, loop_func_name);
+          exec_is_scheduled = true;
+        }
+      }
+      break;
+    case ExecForLoopSpaceTimeUnordered::RunnableStatus::kPrefretchGlobalIndexedDep:
+      {
+        LOG(FATAL) << "I can't yet deal with prefetching global dep";
+        *waiting_for_peers = true;
+      }
+      break;
+    case ExecForLoopSpaceTimeUnordered::RunnableStatus::kMissingDep:
+      *waiting_for_peers = true;
+      break;
+    default:
+      LOG(FATAL) << "unknown status code";
   }
   return exec_is_scheduled;
 }
@@ -147,35 +160,40 @@ Executor::ExecuteForLoopTile(AbstractDistArrayPartition* partition_to_exec,
 }
 
 void
-Executor::ExecForLoopSendResults() {
-  if (dynamic_cast<ExecForLoopSpaceTime*>(exec_for_loop_) != nullptr) {
-    ExecForLoopSpaceTime *exec_for_loop_space_time = dynamic_cast<ExecForLoopSpaceTime*>(
-        exec_for_loop_);
-    int32_t time_partition_id = 0, dest_executor_id = 0;
-    exec_for_loop_space_time->GetTimePartitionIdToSend(&time_partition_id,
-                                                       &dest_executor_id);
-    LOG(INFO) << __func__ << " dest_executor_id = " << dest_executor_id
-              << " my id = " << kId;
-    std::unordered_map<int32_t, AbstractDistArrayPartition*> time_partitions_to_send;
-    exec_for_loop_space_time->GetDistArrayTimePartitionsToSend(&time_partitions_to_send);
-    for (auto &partition_pair : time_partitions_to_send) {
-      auto dist_array_id = partition_pair.first;
-      auto *dist_array_partition = partition_pair.second;
-      auto buff_pair = dist_array_partition->Serialize();
-      auto* buff = buff_pair.first;
-      auto buff_size = buff_pair.second;
-      message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgPipelineTimePartition>(
-          &send_buff_, dist_array_id, time_partition_id, buff_size);
-      send_buff_.set_next_to_send(buff, buff_size, true);
-      Send(&peer_conn_[dest_executor_id], peer_[dest_executor_id].get());
-      send_buff_.clear_to_send();
-      send_buff_.reset_sent_sizes();
-      auto &dist_array = dist_arrays_.at(dist_array_id);
-      dist_array.DeletePartition(time_partition_id);
-    }
-  } else {
-    LOG(INFO) << "I don't yet support this";
+Executor::ExecForLoopSendResults(int32_t time_partition_id_to_send) {
+  if (dynamic_cast<ExecForLoopSpaceTimeUnordered*>(exec_for_loop_) == nullptr) {
+    LOG(FATAL) << "unsupported!";
   }
+
+  auto *exec_for_loop_space_time = dynamic_cast<ExecForLoopSpaceTimeUnordered*>(
+      exec_for_loop_);
+  int32_t dest_executor_id = exec_for_loop_space_time->GetDestExecutorId();
+  std::unordered_map<int32_t, AbstractDistArrayPartition*> time_partitions_to_send;
+  exec_for_loop_space_time->GetDistArrayTimePartitionsToSend(&time_partitions_to_send);
+  for (auto &partition_pair : time_partitions_to_send) {
+    auto dist_array_id = partition_pair.first;
+    auto *dist_array_partition = partition_pair.second;
+    auto buff_pair = dist_array_partition->Serialize();
+    auto* buff = buff_pair.first;
+    auto buff_size = buff_pair.second;
+    message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgPipelineTimePartition>(
+        &send_buff_, dist_array_id, time_partition_id_to_send, buff_size);
+    send_buff_.set_next_to_send(buff, buff_size, true);
+    Send(&peer_conn_[dest_executor_id], peer_[dest_executor_id].get());
+    send_buff_.clear_to_send();
+    send_buff_.reset_sent_sizes();
+    auto &dist_array = dist_arrays_.at(dist_array_id);
+    dist_array.DeletePartition(time_partition_id_to_send);
+  }
+}
+
+void
+Executor::RequestDistArrayData() {
+  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRequestExecForLoopDistArrayData>(
+      &send_buff_);
+  Send(&prt_poll_conn_, prt_pipe_conn_.get());
+  send_buff_.clear_to_send();
+  send_buff_.reset_sent_sizes();
 }
 
 }

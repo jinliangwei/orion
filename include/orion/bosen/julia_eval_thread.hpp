@@ -35,7 +35,6 @@ class JuliaEvalThread {
 
  private:
   void BlockNotifyExecutor(JuliaTask *task) {
-    LOG(INFO) << __func__;
     message::ExecuteMsgHelper::CreateMsg<
       message::ExecuteMsgJuliaEvalAck>(&send_buff_, task);
     bool sent = write_pipe_.Send(&send_buff_);

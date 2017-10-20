@@ -89,15 +89,11 @@ AbstractDistArrayPartition::LoadFromPosixFS(
     const std::string &file_path, int32_t partition_id,
     size_t num_executors, size_t partition_size,
     std::vector<char> *char_buff, size_t *begin, size_t *end) {
-  LOG(INFO) << __func__;
   FILE *data_file = fopen(file_path.c_str(), "r");
   CHECK(data_file) << file_path << " open failed";
   fseek(data_file, 0, SEEK_END);
   size_t file_size = ftell(data_file);
-  LOG(INFO) << "file size = " << file_size;
   size_t read_offset = partition_id * partition_size;
-  LOG(INFO) << "partition_id = " << partition_id
-            << " read_offset = " << read_offset;
 
   if (read_offset >= file_size) return false;
   size_t read_size = std::min(read_offset + partition_size * 2,

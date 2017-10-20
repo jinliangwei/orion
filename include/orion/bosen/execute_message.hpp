@@ -196,6 +196,38 @@ struct ExecuteMsgPipelineTimePartition {
   }
 };
 
+struct ExecuteMsgRequestExecForLoopDistArrayData {
+ private:
+  ExecuteMsgRequestExecForLoopDistArrayData() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init() { }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kRequestExecForLoopDistArrayData;
+  }
+};
+
+static_assert(std::is_pod<ExecuteMsgRequestExecForLoopDistArrayData>::value,
+              "ExecuteMsgRequestExecForLoopDistArray must be POD!");
+
+struct ExecuteMsgReplyExecForLoopDistArrayData {
+ public:
+  uint8_t *buff_vec_ptr;
+  size_t num_buffs;
+ private:
+  ExecuteMsgReplyExecForLoopDistArrayData() = default;
+  friend class DefaultMsgCreator;
+
+ public:
+  void Init(uint8_t* _buff_vec_ptr, size_t _num_buffs) {
+    buff_vec_ptr = _buff_vec_ptr;
+    num_buffs = _num_buffs;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kReplyExecForLoopDistArrayData;
+  }
+};
+
 class ExecuteMsgHelper {
  public:
   template<typename Msg,

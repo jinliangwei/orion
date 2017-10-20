@@ -28,7 +28,7 @@
 #include <orion/bosen/key.hpp>
 #include <orion/bosen/abstract_exec_for_loop.hpp>
 #include <orion/bosen/exec_for_loop_1d.hpp>
-#include <orion/bosen/exec_for_loop_space_time.hpp>
+#include <orion/bosen/exec_for_loop_space_time_unordered.hpp>
 
 namespace orion {
 namespace bosen {
@@ -240,11 +240,12 @@ class Executor {
   void RepartitionDistArraySend(int32_t dist_array_id, DistArray *dist_array);
   void CreateExecForLoop();
   void DefineJuliaDistArray(DistArray *dist_array);
-  bool CheckAndExecuteForLoop(bool* waiting_for_peers);
-  void CheckAndExecuteForLoopUntilNotRunnable();
+  bool CheckAndExecuteForLoop(bool* waiting_for_peers, bool *completed);
+  bool CheckAndExecuteForLoopUntilNotRunnable();
   void ExecuteForLoopTile(AbstractDistArrayPartition* partition_to_exec,
                           const std::string &loop_batch_func_name);
-  void ExecForLoopSendResults();
+  void ExecForLoopSendResults(int32_t time_partition_id_to_send);
+  void RequestDistArrayData();
 };
 
 Executor::Executor(const Config& config, int32_t index):
@@ -540,12 +541,10 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           send_buff_.clear_to_send();
           send_buff_.reset_sent_sizes();
           action_ = Action::kNone;
-          LOG(INFO) << "Ack CreateDistArray";
         }
         break;
       case Action::kDefineJuliaDistArray:
         {
-          LOG(INFO) << "DefineJuliaDistArray " << dist_array_under_operation_;
           auto &dist_array = dist_arrays_.at(dist_array_under_operation_);
           DefineJuliaDistArray(&dist_array);
           action_ = Action::kNone;
@@ -573,7 +572,6 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
             RepartitionDistArraySend(dist_array_under_operation_,
                                      &dist_array);
             action_ = Action::kNone;
-            LOG(INFO) << "RepartitionDistArraySend done!";
             event_handler_.SetToReadOnly(&prt_poll_conn_);
           } else {
             action_ = Action::kExecutorAck;
@@ -585,8 +583,8 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         {
           result_needed_ = false;
           CreateExecForLoop();
-          CheckAndExecuteForLoopUntilNotRunnable();
-          if (exec_for_loop_ == nullptr)
+          bool completed = CheckAndExecuteForLoopUntilNotRunnable();
+          if (completed)
             action_ = Action::kExecutorAck;
           else
             action_ = Action::kNone;
@@ -741,42 +739,34 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         event_handler_.Remove(&prt_poll_conn_);
       }
       break;
-    case message::ExecuteMsgType::kPipelineTimePartition:
+    case message::ExecuteMsgType::kReplyExecForLoopDistArrayData:
       {
         auto *msg = message::ExecuteMsgHelper::get_msg<
-          message::ExecuteMsgPipelineTimePartition>(recv_buff);
-        size_t expected_size = msg->data_size;
-        auto &pipe = prt_pipe_conn_->pipe;
-        bool received_next_msg =
-            ReceiveArbitraryBytes(pipe, &recv_buff,
-                                  &prt_recv_byte_buff_,
-                                  expected_size);
-        if (received_next_msg) {
-          auto dist_array_id = msg->dist_array_id;
-          auto partition_id = msg->time_partition_id;
-          auto *data_buff = prt_recv_byte_buff_.GetBytes();
-          size_t num_bytes = prt_recv_byte_buff_.GetSize();
+          message::ExecuteMsgReplyExecForLoopDistArrayData>(recv_buff);
+        PeerRecvDistArrayDataBuffer* buffer_vec
+            = reinterpret_cast<PeerRecvDistArrayDataBuffer*>(msg->buff_vec_ptr);
+        size_t num_buffs = msg->num_buffs;
+
+        for (size_t i = 0; i < num_buffs; i++) {
+          auto &buff = buffer_vec[i];
+          auto dist_array_id = buff.dist_array_id;
+          auto partition_id = buff.partition_id;
           auto& dist_array = dist_arrays_.at(dist_array_id);
           auto* dist_array_partition = dist_array.CreatePartition();
-          dist_array_partition->Deserialize(data_buff, num_bytes);
-          LOG(INFO) << "received PipelineTimePartition for dist_array " << dist_array
-                    << " partition_id = " << partition_id;
+          dist_array_partition->Deserialize(buff.data, buff.expected_size);
           dist_array.AddPartition(partition_id, dist_array_partition);
-
-          CheckAndExecuteForLoopUntilNotRunnable();
-
-          int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
-          CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
-
-          if (exec_for_loop_ == nullptr)
-            action_ = Action::kExecutorAck;
-          else
-            action_ = Action::kNone;
-          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-        } else {
-          action_ = Action::kNone;
-          ret = EventHandler<PollConn>::kNoAction;
+          delete[] buff.data;
         }
+        delete[] msg->buff_vec_ptr;
+        int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
+        CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
+
+        bool completed = CheckAndExecuteForLoopUntilNotRunnable();
+        if (completed)
+          action_ = Action::kExecutorAck;
+        else
+          action_ = Action::kNone;
+        ret = EventHandler<PollConn>::kClearOneMsg;
       }
       break;
     default:
@@ -806,7 +796,6 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
               break;
             case TaskLabel::kLoadDistArrayFromTextFile:
               {
-                LOG(INFO) << "LoadTextFile done";
                 action_ = Action::kTextFileLoadAck;
               }
               break;
@@ -832,8 +821,8 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
               break;
             case TaskLabel::kExecForLoopTile:
               {
-                CheckAndExecuteForLoopUntilNotRunnable();
-                if (exec_for_loop_ == nullptr)
+                bool completed = CheckAndExecuteForLoopUntilNotRunnable();
+                if (completed)
                   action_ = Action::kExecutorAck;
                 else
                   action_ = Action::kNone;
@@ -864,7 +853,6 @@ Executor::HandleExecuteMsg() {
   switch (msg_type) {
     case message::ExecuteMsgType::kCreateDistArray:
       {
-        LOG(INFO) << "Executor CreateDistArray";
         auto *msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgCreateDistArray>(
               recv_buff);
         size_t expected_size = msg->task_size;
@@ -888,8 +876,6 @@ Executor::HandleExecuteMsg() {
                                   &master_recv_byte_buff_,
                                   expected_size);
         if (received_next_msg) {
-          LOG(INFO) << "received DistArrayDims from master";
-
           std::vector<int64_t> dims(msg->num_dims, 0);
           memcpy(dims.data(), master_recv_byte_buff_.GetBytes(),
                  msg->num_dims*sizeof(int64_t));
@@ -910,9 +896,6 @@ Executor::HandleExecuteMsg() {
       size_t num_dims = msg->num_dims;
       int32_t *max_ids = msg->max_ids;
       int32_t dist_array_id = msg->dist_array_id;
-      LOG(INFO) << "Accum max partition ids for "
-                << "DistArray " << dist_array_id
-                << " num_dims = " << num_dims;
       auto &dist_array_meta = dist_arrays_.at(dist_array_id).GetMeta();
       dist_array_meta.ResetMaxPartitionIds();
       dist_array_meta.AccumMaxPartitionIds(max_ids, num_dims);
@@ -938,7 +921,6 @@ Executor::HandleDriverMsg() {
   switch (msg_type) {
     case message::DriverMsgType::kEvalExpr:
       {
-        LOG(INFO) << "handle driver EvalExpr";
         auto* msg = message::DriverMsgHelper::get_msg<
           message::DriverMsgEvalExpr>(recv_buff);
         size_t expected_size = msg->ast_size;
@@ -989,7 +971,6 @@ Executor::HandleDriverMsg() {
       break;
     case message::DriverMsgType::kExecForLoop:
       {
-        LOG(INFO) << "executor received ExecForLoop";
         auto *msg = message::DriverMsgHelper::get_msg<
           message::DriverMsgExecForLoop>(recv_buff);
         size_t expected_size = msg->task_size;
@@ -1079,6 +1060,7 @@ Executor::ClearBeforeExit() {
       &send_buff_);
   LOG(INFO) << "stopping peer recv thread";
   Send(&prt_poll_conn_, prt_pipe_conn_.get());
+  send_buff_.clear_to_send();
   prt_runner_.join();
 }
 
@@ -1140,7 +1122,6 @@ Executor::EvalExpr() {
 
 void
 Executor::CreateDistArray() {
-  LOG(INFO) << "Executor " << __func__;
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
       master_recv_byte_buff_.GetSize());
@@ -1157,7 +1138,6 @@ Executor::CreateDistArray() {
   auto parent_type = create_dist_array.parent_type();
   auto init_type = create_dist_array.init_type();
   std::string symbol = create_dist_array.symbol();
-  LOG(INFO) << __func__ << " symbol " << symbol;
   DistArrayMeta *parent_dist_array_meta_ptr = nullptr;
   if (parent_type == task::DIST_ARRAY) {
     int32_t parent_id = create_dist_array.parent_id();
@@ -1193,7 +1173,6 @@ Executor::CreateDistArray() {
                                   num_dims, mapper_func_module, mapper_func_name,
                                   &exec_cpp_func_task_.result_buff);
         exec_cpp_func_task_.func = cpp_func;
-        LOG(INFO) << "scheduling task CreateDistArray";
         exec_cpp_func_task_.label = TaskLabel::kLoadDistArrayFromTextFile;
         julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
       }
@@ -1213,10 +1192,6 @@ Executor::CreateDistArray() {
             : std::string();
         type::PrimitiveType random_init_type
             = static_cast<type::PrimitiveType>(create_dist_array.random_init_type());
-        LOG(INFO) << "CreateDistArray, random_init_type = "
-                  << static_cast<int>(random_init_type);
-
-        LOG(INFO) << "set Dims = " << num_dims;
         dist_array.SetDims(create_dist_array.dims().data(), num_dims);
         auto cpp_func = std::bind(&DistArray::RandomInit,
                                   &dist_array,
@@ -1227,7 +1202,6 @@ Executor::CreateDistArray() {
                                   mapper_func_name,
                                   random_init_type);
         exec_cpp_func_task_.func = cpp_func;
-        LOG(INFO) << "scheduling task CreateDistArray RandomInit";
         exec_cpp_func_task_.label = TaskLabel::kRandomInitDistArray;
         julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
         dist_array_under_operation_ = id;
@@ -1263,7 +1237,6 @@ Executor::DefineVar() {
 
 void
 Executor::RepartitionDistArray() {
-  LOG(INFO) << "Executor " << __func__;
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
       master_recv_byte_buff_.GetSize());
@@ -1333,8 +1306,6 @@ Executor::DefineJuliaDistArray(DistArray *dist_array) {
   auto value_type = dist_array->GetValueType();
   void *access_ptr = dist_array->GetAccessPtr();
   auto is_dense = meta.IsDense();
-
-  LOG(INFO) << __func__ << " symbol = " << symbol;
 
   auto cpp_func = std::bind(
       JuliaEvaluator::StaticDefineDistArray,

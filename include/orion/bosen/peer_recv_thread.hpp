@@ -118,6 +118,7 @@ class PeerRecvThread {
   Action action_ { Action::kNone };
 
   void *data_recv_buff_ { nullptr };
+  std::unique_ptr<PeerRecvExecForLoopDistArrayDataBuffer> exec_for_loop_data_buff_;
  public:
   PeerRecvThread(int32_t id,
                  const std::vector<conn::Socket> &peer_socks,
@@ -130,7 +131,7 @@ class PeerRecvThread {
   int HandleExecuteMsg(PollConn* poll_conn_ptr);
   int HandleExecutorMsg();
   int HandleClosedConnection(PollConn *poll_conn_ptr);
-
+  void ExecForLoopServeRequest();
   void SendToExecutor();
 };
 
@@ -257,6 +258,16 @@ PeerRecvThread::HandleExecutorMsg() {
         ret = EventHandler<PollConn>::kClearOneMsg | EventHandler<PollConn>::kExit;
       }
       break;
+    case message::ExecuteMsgType::kRequestExecForLoopDistArrayData:
+      {
+        if (exec_for_loop_data_buff_.get() == nullptr) {
+          exec_for_loop_data_buff_.reset(new PeerRecvExecForLoopDistArrayDataBuffer());
+        }
+        exec_for_loop_data_buff_->is_executor_expecting = true;
+        ExecForLoopServeRequest();
+        ret = EventHandler<PollConn>::kClearOneMsg;
+      }
+      break;
     default:
       LOG(FATAL) << "unknown exec msg " << static_cast<int>(exec_msg_type);
   }
@@ -356,16 +367,33 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         auto* msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgPipelineTimePartition>(
             recv_buff);
         size_t expected_size = msg->data_size;
+
+        if (exec_for_loop_data_buff_.get() == nullptr) {
+          exec_for_loop_data_buff_.reset(new PeerRecvExecForLoopDistArrayDataBuffer());
+        }
+
+        auto &incomplete_buffers = exec_for_loop_data_buff_->incomplete_buffers;
+        auto iter = incomplete_buffers.find(sender_id);
+        if (iter == incomplete_buffers.end()) {
+          auto iter_pair = incomplete_buffers.emplace(std::make_pair(
+              sender_id, PeerRecvDistArrayDataBuffer()));
+          iter = iter_pair.first;
+          iter->second.dist_array_id = msg->dist_array_id;
+          iter->second.partition_id = msg->time_partition_id;
+          iter->second.data = new uint8_t[expected_size];
+          iter->second.expected_size = expected_size;
+          iter->second.received_size = 0;
+        }
+
         bool received_next_msg = ReceiveArbitraryBytes(sock, &recv_buff,
-                                                       &(peer_recv_byte_buff_[sender_id]), expected_size);
+                                                       iter->second.data, &(iter->second.received_size),
+                                                       expected_size);
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kNone;
-          send_buff_.Copy(recv_buff);
-          send_buff_.set_next_to_send(peer_recv_byte_buff_[sender_id].GetBytes(),
-                                      peer_recv_byte_buff_[sender_id].GetSize());
-          SendToExecutor();
-          send_buff_.clear_to_send();
+          exec_for_loop_data_buff_->complete_buffers.emplace_back(iter->second);
+          incomplete_buffers.erase(iter);
+          ExecForLoopServeRequest();
         } else {
           ret = EventHandler<PollConn>::kNoAction;
           action_ = Action::kNone;
@@ -384,6 +412,29 @@ PeerRecvThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
   CHECK_EQ(ret, 0);
 
   return EventHandler<PollConn>::kNoAction;
+}
+
+void
+PeerRecvThread::ExecForLoopServeRequest() {
+  if (!exec_for_loop_data_buff_->is_executor_expecting) return;
+  if (exec_for_loop_data_buff_->complete_buffers.empty()) return;
+  auto& complete_buffers = exec_for_loop_data_buff_->complete_buffers;
+  size_t data_buff_size = complete_buffers.size() * sizeof(PeerRecvDistArrayDataBuffer);
+  uint8_t *data_buff_vec = new uint8_t[data_buff_size];
+  memcpy(data_buff_vec, complete_buffers.data(), data_buff_size);
+
+  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyExecForLoopDistArrayData>(
+      &send_buff_, data_buff_vec, complete_buffers.size());
+  complete_buffers.clear();
+  SendToExecutor();
+  send_buff_.clear_to_send();
+  send_buff_.reset_sent_sizes();
+
+  if (exec_for_loop_data_buff_->incomplete_buffers.empty()) {
+    exec_for_loop_data_buff_.reset();
+  } else {
+    exec_for_loop_data_buff_->is_executor_expecting = false;
+  }
 }
 
 void

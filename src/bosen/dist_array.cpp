@@ -25,6 +25,7 @@ DistArray::DistArray(
           is_dense, symbol) {
   if (num_dims > 0)
     dims_.resize(num_dims);
+  LOG(INFO) << "access = " << (void*) &access_;
 }
 
 DistArray::~DistArray() {

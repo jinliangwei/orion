@@ -51,7 +51,6 @@ void RandomInitAndRunMap(
       LOG(FATAL) << "not yet supported " << static_cast<int>(init_type);
   }
   CHECK(map_type != task::NO_MAP);
-  LOG(INFO) << "init_values[10] = " << init_values[10];
 
   julia_eval->RunMapGeneric(
       map_type,
@@ -310,8 +309,6 @@ DistArrayPartition<ValueType>::LoadTextFile(
     LOG(FATAL) << "Cannot parse the path specification " << path;
   }
   if (!read) return read;
-  LOG(INFO) << "partition_id = " << partition_id
-            << " read done; start parsing";
   if (map_type == task::MAP_VALUES_NEW_KEYS) {
     Blob value(type::SizeOf(kValueType));
     auto* parser_func = julia_eval->GetFunction(GetJlModule(mapper_func_module),
@@ -329,7 +326,6 @@ DistArrayPartition<ValueType>::LoadTextFile(
         }
         values_.push_back(*((ValueType*) value.data()));
       }
-      LOG(INFO) << "data loading and parsing done!";
 
       if (max_key != nullptr) {
         std::vector<int64_t> max_key_vec(num_dims, 0);
@@ -492,7 +488,6 @@ DistArrayPartition<ValueType>::RandomInit(
   }
 
   if (map_type == task::NO_MAP) {
-    LOG(INFO) << "no map!";
     CHECK(kValueType == type::PrimitiveType::kFloat32 || kValueType == type::PrimitiveType::kFloat64);
     switch (init_type) {
       case task::NORMAL_RANDOM:
@@ -570,10 +565,10 @@ DistArrayPartition<ValueType>::ReadRangeDense(
     int64_t key_begin,
     size_t num_elements,
     void *mem) {
-  CHECK_LE(key_start_, 0) << " need to build dense index first";
-  CHECK(key_begin >= key_start_ && num_elements < keys_.size());
+  //CHECK_GE(key_start_, 0) << " need to build dense index first";
+  //CHECK(key_begin >= key_start_ && num_elements < keys_.size());
   size_t offset = key_begin - key_start_;
-  memcpy(mem, values_.data() + offset, values_.size() * type::SizeOf(kValueType));
+  memcpy(mem, values_.data() + offset, num_elements * type::SizeOf(kValueType));
 }
 
 template<typename ValueType>
@@ -606,8 +601,8 @@ DistArrayPartition<ValueType>::WriteRangeDense(
     int64_t key_begin,
     size_t num_elements,
     void *mem) {
-  CHECK_LE(key_start_, 0) << " need to build dense index first";
-  CHECK(key_begin >= key_start_ && num_elements < keys_.size());
+  //CHECK_GE(key_start_, 0) << " need to build dense index first";
+  //CHECK(key_begin >= key_start_ && num_elements < keys_.size());
   size_t offset = key_begin - key_start_;
   memcpy(values_.data() + offset, mem, values_.size() * type::SizeOf(kValueType));
 }

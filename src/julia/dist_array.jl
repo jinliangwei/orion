@@ -474,7 +474,6 @@ function getindex(dist_array::DistArray, index...)
     dims = dist_array.dims
     ValueType = dist_array.ValueType
     access_ptr = dist_array.access_ptr
-
     if length(index) == 1
         value_array = Vector{ValueType}(1)
         ccall((:orion_dist_array_read, lib_path),
@@ -499,17 +498,12 @@ function getindex(dist_array::DistArray, index...)
         end
     end
 
-    println("result dims = ", result_dims)
-    array_size = reduce((x, y) -> x * y, 1, result_dims)
-    result_array = Vector{ValueType}(array_size)
-
     per_read_size = 1
     num_dims_per_read = 0
     # column major!!
     for i in eachindex(index)
         dim_i = index[i]
         if dim_i == Colon()
-            println(dim_i)
             per_read_size *= dims[i]
         else
             break
@@ -517,12 +511,8 @@ function getindex(dist_array::DistArray, index...)
         num_dims_per_read += 1
     end
 
-    println("per_read_size = ", per_read_size)
-    println("num_dims_per_read = ", num_dims_per_read)
-
     read_array = Vector{ValueType}(per_read_size)
     read_dims_begin = num_dims_per_read + 1
-    read_offset = 1
 
     num_reads_by_dim = Vector{Int64}()
     for i = read_dims_begin:length(dims)
@@ -540,17 +530,18 @@ function getindex(dist_array::DistArray, index...)
         end
     end
 
+    array_size = reduce((x, y) -> x * y, 1, result_dims)
+    read_offset = 1
+    result_array = Vector{ValueType}(array_size)
+
     num_reads = fld(array_size, per_read_size)
-    println("num_reads_by_dim = ", num_reads_by_dim)
     key_begin = Vector{Int64}(length(dims))
     fill!(key_begin, 1)
     key_begin_index = Vector{Int64}(length(dims))
     fill!(key_begin_index, 1)
-    println("num_reads = ", num_reads)
     for i = 1:num_reads
         for j = read_dims_begin:length(dims)
             index_this_dim = key_begin_index[j]
-            println("j = ", j, " index_this_dim = ", index_this_dim)
             if index[j] == Colon()
                 key_begin[j] = index_this_dim
             elseif isa(index[j], Vector)
@@ -563,12 +554,10 @@ function getindex(dist_array::DistArray, index...)
                 @assert false
             end
         end
-        println("key_begin = ", key_begin)
         key_begin_int64 = from_keys_to_int64(key_begin, dims)
         ccall((:orion_dist_array_read, lib_path),
               Void, (Ptr{Void}, Int64, UInt64, Ptr{Void}),
-              partition_ptr, key_begin_int64, per_read_size, read_array)
-
+              access_ptr, key_begin_int64, per_read_size, read_array)
         result_array[read_offset:(read_offset + per_read_size - 1)] = read_array
         read_offset += per_read_size
         if read_dims_begin <= length(dims)
@@ -598,27 +587,13 @@ function setindex!(dist_array::DistArray,
     dims = dist_array.dims
     ValueType = dist_array.ValueType
     value_array = reshape(values, (array_size,))
+    access_ptr = dist_array.access_ptr
 
     if length(index) == 1
         value_array = Vector{ValueType}(1)
         ccall((:orion_dist_array_write, lib_path),
               Void, (Ptr{Void}, Int64, UInt64, Ptr{Void}),
-              partition_ptr, index[1], 1, values)
-    end
-
-    @assert length(index) == length(dims)
-    for i in eachindex(index)
-        dim_i = index[i]
-        if isa(dim_i, Integer)
-        elseif isa(dim_i, Vector)
-            push!(result_dims, length(dim_i))
-        elseif dim_i == :
-            push!(result_dims, dims[i])
-        elseif isa(dim_i, UnitRange)
-            push!(result_dims, max(0, dim_i[end] - dim_i[1] + 1))
-        else
-            @assert false
-        end
+              access_ptr, index[1], 1, values)
     end
 
     per_write_size = 1
@@ -636,7 +611,7 @@ function setindex!(dist_array::DistArray,
     write_offset = 1
 
     num_writes_by_dim = Vector{Int64}()
-    for i = read_dims_begin:length(dims)
+    for i = write_dims_begin:length(dims)
         dim_i = index[i]
         if dim_i == :
             push!(num_writes_by_dim, dims[i])
@@ -677,12 +652,12 @@ function setindex!(dist_array::DistArray,
         key_begin_int64 = from_keys_to_int64(key_begin, dims)
         ccall((:orion_dist_array_write, lib_path),
               Void, (Ptr{Void}, Int64, UInt64, Ptr{Void}),
-              partition_ptr, key_begin_int64, per_write_size, write_array)
+              access_ptr, key_begin_int64, per_write_size, write_array)
         if write_dims_begin <= length(dims)
             key_begin_index[write_dims_begin] += 1
             j = write_dims_begin
             while j < length(dims)
-                if key_begin_index[j] == (num_reads_by_dim[j - num_dims_per_read] + 1)
+                if key_begin_index[j] == (num_writes_by_dim[j - num_dims_per_write] + 1)
                     key_begin_index[j] = 1
                     key_begin_index[j + 1] += 1
                 else

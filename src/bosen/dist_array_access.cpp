@@ -20,7 +20,7 @@ DistArrayAccess::GetAccessPartition() {
 }
 
 jl_value_t*
-DistArrayAccess::GetDims(int32_t dist_array_id) {
+DistArrayAccess::GetDims() {
   CHECK(access_partition_ != nullptr);
   jl_value_t *dim_array_type = jl_apply_array_type(jl_int64_type, 1);
 
@@ -32,18 +32,16 @@ DistArrayAccess::GetDims(int32_t dist_array_id) {
 }
 
 void
-DistArrayAccess::Read(int32_t dist_array_id,
-                      int32_t key_begin,
-                      size_t num_elements,
-                      void *mem) {
+DistArrayAccess::ReadRange(int32_t key_begin,
+                           size_t num_elements,
+                           void *mem) {
   CHECK(access_partition_ != nullptr);
   access_partition_->ReadRange(key_begin, num_elements, mem);
 }
 
 void
-DistArrayAccess::Write(int32_t dist_array_id,
-                       int64_t key_begin,
-                       size_t num_elements,
+DistArrayAccess::WriteRange(int64_t key_begin,
+                            size_t num_elements,
                        void *mem) {
   CHECK(access_partition_ != nullptr);
   access_partition_->WriteRange(key_begin, num_elements, mem);

@@ -7,23 +7,23 @@
 #include <orion/bosen/type.hpp>
 
 extern "C" {
-  void orion_dist_array_read(void *dist_array_partition,
+  void orion_dist_array_read(void *dist_array_access_ptr,
                              int64_t key_begin,
                              uint64_t num_elements,
                              void *array_mem) {
-    CHECK(dist_array_partition != nullptr);
-    auto *dist_array_partition_ptr = reinterpret_cast<
-                                     orion::bosen::AbstractDistArrayPartition*>(dist_array_partition);
-    dist_array_partition_ptr->ReadRange(key_begin, num_elements, array_mem);
+    CHECK(dist_array_access_ptr != nullptr);
+    auto *dist_array_access = reinterpret_cast<
+                              orion::bosen::DistArrayAccess*>(dist_array_access_ptr);
+    dist_array_access->ReadRange(key_begin, num_elements, array_mem);
   }
 
-  void orion_dist_array_write(void *dist_array_partition,
+  void orion_dist_array_write(void *dist_array_access_ptr,
                              int64_t key_begin,
                              uint64_t num_elements,
                              void *array_mem) {
-    CHECK(dist_array_partition != nullptr);
-    auto *dist_array_partition_ptr = reinterpret_cast<
-                                     orion::bosen::AbstractDistArrayPartition*>(dist_array_partition);
-    dist_array_partition_ptr->WriteRange(key_begin, num_elements, array_mem);
+    CHECK(dist_array_access_ptr != nullptr);
+    auto *dist_array_access = reinterpret_cast<
+                              orion::bosen::DistArrayAccess*>(dist_array_access_ptr);
+    dist_array_access->WriteRange(key_begin, num_elements, array_mem);
   }
 }

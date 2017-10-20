@@ -82,6 +82,6 @@ pb_test:
 	echo $(BOSEN_PROTO)
 
 bosen_clean:
-	rm -rf $(BOSEN_OBJ) $(BOSEN_COBJ)
-	rm -rf $(BOSEN_PROTO_OBJ) $(BOSEN_PROTO_CPP) $(BOSEN_PROTO_H)
+	rm -rf $(BOSEN_OBJ) $(BOSEN_COBJ) $(DRIVER_LIB_OBJ) $(DRIVER_LIB_COBJ)
+	rm -rf $(BOSEN_PROTO_OBJ) $(BOSEN_PROTO_CPP) $(BOSEN_PROTO_H) $(DRIVER_LIB_PROTO_OBJ)
 	rm -rf bin/bosen

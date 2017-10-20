@@ -6,7 +6,7 @@
     2 DepVecValue_none =
     3
 
-const default_tile_size = 100
+const default_tile_size = 1000
 
 function compute_dependence_vectors(par_for_context::ParForContext)
     dep_vecs = Set{Tuple}()

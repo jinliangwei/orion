@@ -17,17 +17,14 @@ class DistArrayAccess {
   void SetAccessPartition(AbstractDistArrayPartition *access_partition);
   AbstractDistArrayPartition* GetAccessPartition();
 
-  jl_value_t* GetDims(int32_t dist_array_id);
-  void Read(int32_t dist_array_id,
-            int32_t key_begin,
-            size_t num_elements,
-            void *mem);
-  void Write(int32_t dist_array_id,
-             int64_t key_begin,
-             size_t num_elements,
-             void *mem);
-  int32_t GetValueType(int32_t dist_array_id);
-
+  jl_value_t* GetDims();
+  void ReadRange(int32_t key_begin,
+                 size_t num_elements,
+                 void *mem);
+  void WriteRange(int64_t key_begin,
+                  size_t num_elements,
+                  void *mem);
+  //int32_t GetValueType();
 };
 
 }

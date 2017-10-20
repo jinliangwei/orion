@@ -806,7 +806,6 @@ void
 JuliaEvaluator::ExecForLoopTile(
     AbstractDistArrayPartition *iteration_space_partition,
     std::string exec_loop_func_name) {
-  return;
   auto& dims = iteration_space_partition->GetDims();
   auto& keys = iteration_space_partition->GetKeys();
   void* values = iteration_space_partition->GetValues();
