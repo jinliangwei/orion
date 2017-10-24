@@ -191,13 +191,13 @@ if __name__ == "__main__":
     print(cmd_master)
     print(cmd_worker)
 
-    master_proc = subprocess.Popen(cmd_master, shell=True)
-    time.sleep(5)
-#    while True:
-#        line = master_proc.stdout.readline()
-#        if line.decode("utf-8").strip() == "Master is ready!":
-#            print ("Master is ready; starting workers now!")
-#            break
+    master_proc = subprocess.Popen(cmd_master, stdout=subprocess.PIPE, shell=True)
+#    time.sleep(5)
+    while True:
+        line = master_proc.stdout.readline()
+        if line.decode("utf-8").strip() == "Master is ready to receive connection from executors!":
+            print ("Master is ready; starting workers now!")
+            break
 
     num_executors_per_worker = int(pargs['worker']['num_executors_per_worker'])
     if args.deploy_mode == 'local':
@@ -213,10 +213,20 @@ if __name__ == "__main__":
                                 + " --worker_id=" + str(worker_id) \
                                 + " --local_executor_index=" + str(i)
                 print(ssh_cmd_worker)
-                subprocess.Popen(["ssh", "-oStrictHostKeyChecking=no",
-                                  "-oUserKnownHostsFile=/dev/null",
-                                  "-oLogLevel=quiet",
-                                  "%s" % host,
-                                  ssh_cmd_worker], shell=False)
+                worker_proc = subprocess.Popen(["ssh", "-oStrictHostKeyChecking=no",
+                                                "-oUserKnownHostsFile=/dev/null",
+                                                "-oLogLevel=QUIET",
+                                                "%s" % host,
+                                                ssh_cmd_worker],
+                                               shell=False)
+                if (i + 1) % 10 == 0:
+                    time.sleep(1)
             worker_id += 1
+    while True:
+        line = master_proc.stdout.readline().decode("utf-8").strip()
+        if line == "Your Orion cluster is ready!":
+            print ("Your Orion cluster is ready!")
+            line = master_proc.stdout.readline().decode("utf-8").strip()
+            print (line)
+            break
     master_proc.wait()

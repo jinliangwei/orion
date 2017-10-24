@@ -108,7 +108,7 @@ Orion.check_and_repartition(H, H_dist_array_partition_info)
     W_grad = -2 * diff .* H_row
     H_grad = -2 * diff .* W_row
     W[:, x_idx] = W_row - step_size .* W_grad
-    H[:, y_idx] = H_row - step_size .*H_grad
+    H[:, y_idx] = H_row - step_size .* H_grad
 end
 
 @Orion.share function loop_batch_func(keys::Vector{Int64},

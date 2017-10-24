@@ -307,7 +307,6 @@ JuliaEvaluator::ParseString(
     (*key)[i] = jl_unbox_int64(key_ith);
   }
   value = jl_get_nth_field(ret_tuple, 1);
-  CHECK(jl_is_float32(value)) << "value ptr is " << (void*) value;
   UnboxValue(value, result_type, value_buff);
   JL_GC_POP();
 }

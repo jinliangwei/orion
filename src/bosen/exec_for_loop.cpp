@@ -32,18 +32,18 @@ Executor::CreateExecForLoop() {
 
   std::string loop_batch_func_name = exec_for_loop_task.loop_batch_func_name();
   bool is_ordered = exec_for_loop_task.is_ordered();
-  CHECK(exec_for_loop_ == nullptr);
+  CHECK(exec_for_loop_.get() == nullptr);
 
   switch (parallel_scheme) {
     case ForLoopParallelScheme::k1D:
       {
-        exec_for_loop_ = new ExecForLoop1D();
+        exec_for_loop_.reset(new ExecForLoop1D());
         break;
       }
     case ForLoopParallelScheme::kSpaceTime:
       {
         if (!is_ordered) {
-          exec_for_loop_ = new ExecForLoopSpaceTimeUnordered(
+          exec_for_loop_.reset(new ExecForLoopSpaceTimeUnordered(
               kId,
               kNumExecutors,
               iteration_space_id,
@@ -54,7 +54,7 @@ Executor::CreateExecForLoop() {
               global_indexed_dist_array_ids,
               num_global_indexed_dist_arrays,
               loop_batch_func_name.c_str(),
-              dist_arrays_);
+              dist_arrays_));
         } else {
           LOG(FATAL) << "unsupported!";
         }
@@ -82,6 +82,9 @@ Executor::CheckAndExecuteForLoopUntilNotRunnable() {
     event_handler_.SetToReadOnly(&prt_poll_conn_);
     RequestDistArrayData();
   }
+  if (completed) {
+    exec_for_loop_.reset();
+  }
   return completed;
 }
 
@@ -95,12 +98,12 @@ Executor::CheckAndExecuteForLoop(bool *waiting_for_peers, bool *completed) {
   *waiting_for_peers = false;
   *completed = false;
 
-  if (dynamic_cast<ExecForLoopSpaceTimeUnordered*>(exec_for_loop_) == nullptr) {
+  if (dynamic_cast<ExecForLoopSpaceTimeUnordered*>(exec_for_loop_.get()) == nullptr) {
     LOG(FATAL) << "I don't yet support this";
     return exec_is_scheduled;
   }
   auto *exec_for_loop_space_time
-      = dynamic_cast<ExecForLoopSpaceTimeUnordered*>(exec_for_loop_);
+      = dynamic_cast<ExecForLoopSpaceTimeUnordered*>(exec_for_loop_.get());
   int32_t space_id = 0, time_id = 0;
   AbstractDistArrayPartition* partition_to_exec = exec_for_loop_space_time->GetNextPartitionToExec(
       &space_id, &time_id);
@@ -161,12 +164,12 @@ Executor::ExecuteForLoopTile(AbstractDistArrayPartition* partition_to_exec,
 
 void
 Executor::ExecForLoopSendResults(int32_t time_partition_id_to_send) {
-  if (dynamic_cast<ExecForLoopSpaceTimeUnordered*>(exec_for_loop_) == nullptr) {
+  if (dynamic_cast<ExecForLoopSpaceTimeUnordered*>(exec_for_loop_.get()) == nullptr) {
     LOG(FATAL) << "unsupported!";
   }
 
   auto *exec_for_loop_space_time = dynamic_cast<ExecForLoopSpaceTimeUnordered*>(
-      exec_for_loop_);
+      exec_for_loop_.get());
   int32_t dest_executor_id = exec_for_loop_space_time->GetDestExecutorId();
   std::unordered_map<int32_t, AbstractDistArrayPartition*> time_partitions_to_send;
   exec_for_loop_space_time->GetDistArrayTimePartitionsToSend(&time_partitions_to_send);

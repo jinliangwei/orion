@@ -149,6 +149,7 @@ function check_for_unimodular_parallelization(dep_vecs::Set{Tuple}, num_dims)
     return par_dims
 end
 
+# Check whether a for loop is suitable for Naive, 1D or 2D parallelization
 function determine_parallelization_scheme(dep_vecs::Set{Tuple}, num_dims)
     if isempty(dep_vecs)
         return ForLoopParallelScheme_naive, nothing

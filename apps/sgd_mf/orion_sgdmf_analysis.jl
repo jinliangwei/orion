@@ -12,22 +12,7 @@ Orion.load_constants()
 # test library path
 Orion.helloworld()
 
-function define_dist_array(ValueType::DataType,
-                           symbol::AbstractString,
-                           dims::Vector,
-                           is_dense::Bool)
-    dist_array = Orion.create_dist_array_for_access(ValueType,
-                                                    symbol,
-                                                    dims,
-                                                    is_dense)
-    dist_array_symbol = Symbol(symbol)
-    println(dist_array_symbol)
-    eval(:(global $dist_array_symbol = $dist_array))
-end
 @Orion.dist_array ratings = Orion.DistArray{Float32}()
-define_dist_array(Float32, "good", [10, 19], false)
-
-println(good.dims)
 
 W = Orion.DistArray{Float32}()
 H = Orion.DistArray{Float32}()
@@ -37,24 +22,23 @@ H.id = 2
 W.num_dims = 2
 H.num_dims = 2
 ratings.dims = [6000, 4000]
-W.dims = [6000, 100]
-H.dims = [4000, 100]
-
-exit(0)
+W.dims = [100, 6000]
+H.dims = [100, 4000]
 
 for i = 1:num_iterations
     Orion.@parallel_for for rating in ratings
-	x_idx = rating[1][1]
-	y_idx = rating[1][2]
-	rv = rating[2]
-        W_row = W[x_idx, :]
-	H_row = H[y_idx, :]
-	pred = dot(W_row, H_row)
-	diff = rv - pred
-	W_grad = -2 * diff .* H_row
-	H_grad = -2 * diff .* W_row
-	W[x_idx, :] = W_row - step_size .* W_grad
-	H[y_idx, :] = H_row - step_size .*H_grad .* K
+        x_idx = rating[1][1]
+        y_idx = rating[1][2]
+        rv = rating[2]
+
+        W_row = W[:, x_idx]
+        H_row = H[:, y_idx]
+        pred = dot(W_row, H_row)
+        diff = rv - pred
+        W_grad = -2 * diff .* H_row
+        H_grad = -2 * diff .* W_row
+        W[:, x_idx] = W_row - step_size .* W_grad
+        H[:, y_idx] = H_row - step_size .* H_grad
     end
     step_size = step_size * 0.9
 end

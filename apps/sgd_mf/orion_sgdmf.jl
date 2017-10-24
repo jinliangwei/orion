@@ -10,7 +10,7 @@ Orion.helloworld()
 const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 2
+const num_executors = 4
 
 # initialize logging of the runtime library
 Orion.glog_init()
@@ -20,7 +20,7 @@ Orion.init(master_ip, master_port, comm_buff_capacity, num_executors)
 #const data_path = "file:///home/ubuntu/data/ml-10M100K/ratings.csv"
 const data_path = "file:///users/jinlianw/ratings.csv"
 const K = 100
-const num_iterations = 1
+const num_iterations = 2
 const step_size = 0.001
 
 Orion.@share function parse_line(line::AbstractString)
@@ -28,7 +28,7 @@ Orion.@share function parse_line(line::AbstractString)
     @assert length(tokens) == 3
     key_tuple = (parse(Int64, String(tokens[1])),
                  parse(Int64, String(tokens[2])) )
-    value = parse(Float64, String(tokens[3]))
+    value = parse(Float32, String(tokens[3]))
     return (key_tuple, value)
 end
 
@@ -42,28 +42,28 @@ dim_x, dim_y = size(ratings)
 
 println((dim_x, dim_y))
 
-Orion.@dist_array W = Orion.randn(dim_x, K)
+Orion.@dist_array W = Orion.randn(K, dim_x)
 Orion.@dist_array W = Orion.map_value(W, map_init_param)
 Orion.materialize(W)
 
-Orion.@dist_array H = Orion.randn(dim_y, K)
+Orion.@dist_array H = Orion.randn(K, dim_y)
 Orion.@dist_array H = Orion.map_value(H, map_init_param)
 Orion.materialize(H)
 
 for i = 1:num_iterations
     Orion.@parallel_for for rating in ratings
-	x_idx = rating[1][1]
-	y_idx = rating[1][2]
-	rv = rating[2]
+        x_idx = rating[1][1]
+        y_idx = rating[1][2]
+        rv = rating[2]
 
-        W_row = W[x_idx, :]
-	H_row = H[y_idx, :]
-	pred = dot(W_row, H_row)
-	diff = rv - pred
-	W_grad = -2 * diff .* H_row
-	H_grad = -2 * diff .* W_row
-	W[x_idx, :] = W_row - step_size .* W_grad
-	H[y_idx, :] = H_row - step_size .*H_grad
+        W_row = W[:, x_idx]
+        H_row = H[:, y_idx]
+        pred = dot(W_row, H_row)
+        diff = rv - pred
+        W_grad = -2 * diff .* H_row
+        H_grad = -2 * diff .* W_row
+        W[:, x_idx] = W_row - step_size .* W_grad
+        H[:, y_idx] = H_row - step_size .* H_grad
     end
 end
 
