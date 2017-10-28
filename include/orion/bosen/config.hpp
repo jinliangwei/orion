@@ -9,7 +9,9 @@ namespace bosen {
 struct Config {
  public:
   const size_t kNumExecutors;
+  const size_t kNumServers;
   const size_t kNumExecutorsPerWorker;
+  const size_t kNumServersPerWorker;
   const std::string kMasterIp;
   const uint16_t kMasterPort;
   const std::string kWorkerIp;
@@ -22,7 +24,9 @@ struct Config {
   const std::string kOrionHome;
 
   Config(size_t num_executors,
+         size_t num_servers,
          size_t num_executors_per_worker,
+         size_t num_servers_per_worker,
          const std::string master_ip,
          uint16_t master_port,
          const std::string &worker_ip,
@@ -34,7 +38,9 @@ struct Config {
          const std::string &hdfs_name_node,
          const std::string &orion_home):
       kNumExecutors(num_executors),
+      kNumServers(num_servers),
       kNumExecutorsPerWorker(num_executors_per_worker),
+      kNumServersPerWorker(num_servers_per_worker),
       kMasterIp(master_ip),
       kMasterPort(master_port),
       kWorkerIp(worker_ip),

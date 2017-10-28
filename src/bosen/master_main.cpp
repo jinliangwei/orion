@@ -5,6 +5,8 @@
 
 DEFINE_int32(num_executors, 1, "number of executors");
 
+DEFINE_int32(num_servers, 1, "total nmber of servers");
+
 DEFINE_string(master_ip, "127.0.0.1",
               "IP address that the master thread listens to for "
               "incoming connections");
@@ -21,7 +23,10 @@ main(int argc, char *argv[]) {
   google::InitGoogleLogging(argv[0]);
   google::InstallFailureSignalHandler();
   LOG(INFO) << "hello!";
-  orion::bosen::Config config(FLAGS_num_executors, 0, FLAGS_master_ip,
+  orion::bosen::Config config(FLAGS_num_executors,
+                              FLAGS_num_servers,
+                              0, 0,
+                              FLAGS_master_ip,
                               FLAGS_master_port, "", 0, FLAGS_comm_buff_capacity,
                               0, 0, 0, "", "");
   orion::bosen::Master master(config);

@@ -41,7 +41,8 @@ class Executor {
         master = 1,
         compute = 2,
         peer = 3,
-        peer_recv_thr = 4
+        peer_recv_thr = 4,
+        server = 5
     };
     void* conn;
     ConnType type;
@@ -49,7 +50,8 @@ class Executor {
     bool Receive() {
       if (type == ConnType::listen
           || type == ConnType::master
-          || type == ConnType::peer) {
+          || type == ConnType::peer
+          || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.Recv(&(sock_conn->recv_buff));
       } else {
@@ -61,7 +63,8 @@ class Executor {
     bool Send() {
       if (type == ConnType::listen
           || type == ConnType::master
-          || type == ConnType::peer) {
+          || type == ConnType::peer
+          || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.Send(&(sock_conn->send_buff));
       } else {
@@ -73,7 +76,8 @@ class Executor {
     conn::RecvBuffer& get_recv_buff() {
       if (type == ConnType::listen
           || type == ConnType::master
-          || type == ConnType::peer) {
+          || type == ConnType::peer
+          || type == ConnType::server) {
         return reinterpret_cast<conn::SocketConn*>(conn)->recv_buff;
       } else {
         return reinterpret_cast<conn::PipeConn*>(conn)->recv_buff;
@@ -83,7 +87,8 @@ class Executor {
     conn::SendBuffer& get_send_buff() {
       if (type == ConnType::listen
           || type == ConnType::master
-          || type == ConnType::peer) {
+          || type == ConnType::peer
+          || type == ConnType::server) {
         return reinterpret_cast<conn::SocketConn*>(conn)->send_buff;
       } else {
         return reinterpret_cast<conn::PipeConn*>(conn)->send_buff;
@@ -97,7 +102,8 @@ class Executor {
     int get_read_fd() const {
       if (type == ConnType::listen
           || type == ConnType::master
-          || type == ConnType::peer) {
+          || type == ConnType::peer
+          || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.get_fd();
       } else {
@@ -109,7 +115,8 @@ class Executor {
     int get_write_fd() const {
       if (type == ConnType::listen
           || type == ConnType::master
-          || type == ConnType::peer) {
+          || type == ConnType::peer
+          || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.get_fd();
       } else {
@@ -146,7 +153,10 @@ class Executor {
   const uint16_t kListenPort;
   const size_t kThreadPoolSize;
   const int32_t kId;
+  const int32_t kExecutorId;
+  const int32_t kServerId;
   const Config kConfig;
+  const bool kIsServer;
 
   EventHandler<PollConn> event_handler_;
   Blob master_send_mem_;
@@ -166,6 +176,12 @@ class Executor {
   std::vector<std::unique_ptr<conn::SocketConn>> peer_;
   std::vector<PollConn> peer_conn_;
   std::vector<conn::Socket> peer_socks_;
+
+  Blob server_send_mem_;
+  Blob server_recv_mem_;
+  std::vector<std::unique_ptr<conn::SocketConn>> server_;
+  std::vector<PollConn> server_conn_;
+  std::vector<conn::Socket> server_socks_;
 
   Blob thread_pool_recv_mem_;
   Blob thread_pool_send_mem_;
@@ -207,10 +223,10 @@ class Executor {
   bool result_needed_ { true };
   //std::unordered_map<int32_t, Blob> repartition_send_buff_;
   bool connected_to_peers_ { false };
-  AbstractExecForLoop *exec_for_loop_ {nullptr};
+  std::unique_ptr<AbstractExecForLoop> exec_for_loop_;
 
  public:
-  Executor(const Config& config, int32_t id);
+  Executor(const Config& config, int32_t id, bool is_server);
   ~Executor();
   DISALLOW_COPY(Executor);
   void operator() ();
@@ -234,7 +250,7 @@ class Executor {
   void Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn);
   void Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn);
   void EvalExpr();
-  void CreateDistArray();
+  bool CreateDistArray();
   void DefineVar();
   void RepartitionDistArray();
   void RepartitionDistArraySend(int32_t dist_array_id, DistArray *dist_array);
@@ -248,7 +264,9 @@ class Executor {
   void RequestDistArrayData();
 };
 
-Executor::Executor(const Config& config, int32_t index):
+Executor::Executor(const Config& config,
+                   int32_t index,
+                   bool is_server):
     kCommBuffCapacity(config.kCommBuffCapacity),
     kNumExecutors(config.kNumExecutors),
     kNumLocalExecutors(config.kNumExecutorsPerWorker),
@@ -257,8 +275,12 @@ Executor::Executor(const Config& config, int32_t index):
     kListenIp(config.kWorkerIp),
     kListenPort(config.kWorkerPort + index * kPortSpan),
     kThreadPoolSize(config.kExecutorThreadPoolSize),
-    kId(config.kWorkerId*config.kNumExecutorsPerWorker + index),
+    kId(config.kWorkerId * (config.kNumExecutorsPerWorker
+                            + config.kNumServersPerWorker) + index),
+    kExecutorId(config.kWorkerId * config.kNumExecutorsPerWorker + index),
+    kServerId(config.kWorkerId * config.kNumServersPerWorker + (index - config.kNumExecutorsPerWorker)),
     kConfig(config),
+    kIsServer(is_server),
     master_send_mem_(kCommBuffCapacity),
     master_recv_mem_(kCommBuffCapacity),
     master_(conn::Socket(),
@@ -278,6 +300,11 @@ Executor::Executor(const Config& config, int32_t index):
     peer_(config.kNumExecutors),
     peer_conn_(config.kNumExecutors),
     peer_socks_(config.kNumExecutors),
+    server_send_mem_(is_server ? 0 : config.kCommBuffCapacity*config.kNumServers),
+    server_recv_mem_(is_server ? 0 : config.kCommBuffCapacity*config.kNumServers),
+    server_(is_server ? 0 : config.kNumServers),
+    server_conn_(is_server ? 0 : config.kNumServers),
+    server_socks_(is_server ? 0 : config.kNumServers),
     thread_pool_recv_mem_(kCommBuffCapacity*kThreadPoolSize),
     thread_pool_send_mem_(kCommBuffCapacity*kThreadPoolSize),
     compute_(kThreadPoolSize),
@@ -286,7 +313,7 @@ Executor::Executor(const Config& config, int32_t index):
     julia_eval_recv_mem_(kCommBuffCapacity),
     julia_eval_send_mem_(kCommBuffCapacity),
     julia_eval_thread_(kCommBuffCapacity, config.kOrionHome),
-    host_info_(kNumExecutors),
+    host_info_(kNumExecutors + config.kNumServers),
     prt_send_mem_(kCommBuffCapacity),
     prt_recv_mem_(kCommBuffCapacity) { }
 
@@ -311,8 +338,13 @@ Executor::operator() () {
     CHECK_NE(ret, 0);
     host_info.port = kListenPort;
 
-    message::Helper::CreateMsg<
-      message::ExecutorIdentity>(&send_buff_, kId, host_info);
+    if (kIsServer) {
+      message::Helper::CreateMsg<
+        message::ServerIdentity>(&send_buff_, kServerId, host_info);
+    } else {
+      message::Helper::CreateMsg<
+        message::ExecutorIdentity>(&send_buff_, kExecutorId, host_info);
+    }
     Send(&master_poll_conn_, &master_);
     send_buff_.clear_to_send();
   }
@@ -357,8 +389,13 @@ Executor::InitPeerRecvThread() {
   peer_recv_thr_.reset(
       new PeerRecvThread(
           kId,
+          kExecutorId,
+          kServerId,
+          kIsServer,
           peer_socks_,
+          server_socks_,
           kCommBuffCapacity));
+
   auto prt_pipe = peer_recv_thr_->GetExecutorPipe();
   prt_pipe_conn_.reset(
       new conn::PipeConn(
@@ -384,8 +421,17 @@ Executor::HandleConnection(PollConn* poll_conn_ptr) {
   peer_socks_[num_connected_peers_] = accepted;
   num_connected_peers_++;
 
-  if (kId > 0 && num_connected_peers_ == kId && connected_to_peers_)
-    InitPeerRecvThread();
+  if (kIsServer) {
+    if (num_connected_peers_ == kNumExecutors) {
+      InitPeerRecvThread();
+    }
+  } else {
+    CHECK(kExecutorId != 0);
+    if (num_connected_peers_ == kExecutorId
+        && connected_to_peers_) {
+      InitPeerRecvThread();
+    }
+  }
 }
 
 int
@@ -394,7 +440,8 @@ Executor::HandleClosedConnection(PollConn *poll_conn_ptr) {
   auto type = poll_conn_ptr->type;
   if (type == PollConn::ConnType::listen
       || type == PollConn::ConnType::compute
-      || type == PollConn::ConnType::peer) {
+      || type == PollConn::ConnType::peer
+      || type == PollConn::ConnType::server) {
     int ret = event_handler_.Remove(poll_conn_ptr);
     CHECK_EQ(ret, 0);
   } else {
@@ -415,7 +462,8 @@ Executor::HandleWriteEvent(PollConn* poll_conn_ptr) {
   if (sent) {
     auto &send_buff = poll_conn_ptr->get_send_buff();
     send_buff.clear_to_send();
-    if (poll_conn_ptr->type == PollConn::ConnType::peer)
+    if (poll_conn_ptr->type == PollConn::ConnType::peer
+        || poll_conn_ptr->type == PollConn::ConnType::server)
       event_handler_.Remove(poll_conn_ptr);
     else
       event_handler_.SetToReadOnly(poll_conn_ptr);
@@ -439,7 +487,8 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
     ret = HandleMasterMsg();
   } else if (poll_conn_ptr->type == PollConn::ConnType::peer_recv_thr) {
     ret = HandlePeerRecvThrMsg(poll_conn_ptr);
-  } else if (poll_conn_ptr->type == PollConn::ConnType::peer) {
+  } else if (poll_conn_ptr->type == PollConn::ConnType::peer
+             || poll_conn_ptr->type == PollConn::ConnType::server) {
     LOG(FATAL) << "Should not receive peer msgs";
   } else {
     ret = HandlePipeMsg(poll_conn_ptr);
@@ -450,16 +499,26 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
     switch (action_) {
       case Action::kConnectToPeers:
         {
-          ConnectToPeers();
-          connected_to_peers_ = true;
-          if (kNumExecutors == 1 || kId == 0) {
-            action_ = Action::kAckConnectToPeers;
-            InitPeerRecvThread();
-          } else if (num_connected_peers_ == kId) {
-            CHECK(peer_recv_thr_.get() == nullptr);
-            action_ = Action::kNone;
-            InitPeerRecvThread();
-          } else action_ = Action::kNone;
+          if (!kIsServer) {
+            ConnectToPeers();
+            connected_to_peers_ = true;
+            if (kNumExecutors == 1 || kExecutorId == 0) {
+              // if I don't expect to receive connections,
+              // go ahead initialize peer recv threads
+              action_ = Action::kAckConnectToPeers;
+              InitPeerRecvThread();
+            } else if (num_connected_peers_ == kExecutorId) {
+              // I might receive connections before told so by driver
+              CHECK(peer_recv_thr_.get() == nullptr);
+              action_ = Action::kNone;
+              InitPeerRecvThread();
+            } else action_ = Action::kNone;
+          } else {
+            if (num_connected_peers_ == kNumExecutors) {
+              action_ = Action::kNone;
+              InitPeerRecvThread();
+            } else action_ = Action::kNone;
+          }
         }
         break;
       case Action::kAckConnectToPeers:
@@ -482,8 +541,12 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
       case Action::kCreateDistArray:
         {
           task_type_ = TaskType::kExecCppFunc;
-          CreateDistArray();
-          action_ = Action::kNone;
+          bool server_ack = CreateDistArray();
+          if (server_ack) {
+            action_ = Action::kCreateDistArrayAck;
+          } else {
+            action_ = Action::kNone;
+          }
         }
         break;
       case Action::kExecutorAck:
@@ -562,7 +625,6 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           task_type_ = TaskType::kExecCppFunc;
           RepartitionDistArray();
           action_ = Action::kNone;
-          result_needed_ = false;
         }
         break;
       case Action::kRepartitionDistArraySend:
@@ -575,13 +637,11 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
             event_handler_.SetToReadOnly(&prt_poll_conn_);
           } else {
             action_ = Action::kExecutorAck;
-            result_needed_ = false;
           }
         }
         break;
       case Action::kCreateExecForLoop:
         {
-          result_needed_ = false;
           CreateExecForLoop();
           bool completed = CheckAndExecuteForLoopUntilNotRunnable();
           if (completed)
@@ -611,7 +671,8 @@ Executor::HandleMasterMsg() {
       {
         auto *msg = message::Helper::get_msg<message::ExecutorConnectToPeers>(
               recv_buff);
-        size_t expected_size = msg->num_executors*sizeof(HostInfo);
+        size_t expected_size = (msg->num_executors + msg->num_servers) * sizeof(HostInfo);
+        //size_t expected_size = (msg->num_executors) * sizeof(HostInfo);
         bool received_next_msg =
             ReceiveArbitraryBytes(sock, &recv_buff,
                                   reinterpret_cast<uint8_t*>(host_info_.data()),
@@ -787,11 +848,11 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
           message::ExecuteMsgJuliaEvalAck>(
               recv_buff);
         if (auto *task = dynamic_cast<ExecCppFuncTask*>(msg->task)) {
+          LOG(INFO) << "task->label = " << static_cast<int>(task->label);
           switch (task->label) {
             case TaskLabel::kNone:
               {
                 action_ = Action::kExecutorAck;
-                result_needed_ = false;
               }
               break;
             case TaskLabel::kLoadDistArrayFromTextFile:
@@ -931,6 +992,7 @@ Executor::HandleDriverMsg() {
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kEvalExpr;
+          LOG(INFO) << __func__ << " EvalExpr";
         } else {
           ret = EventHandler<PollConn>::kNoAction;
           action_ = Action::kNone;
@@ -1004,10 +1066,28 @@ Executor::ConnectToPeers() {
   message::Helper::CreateMsg<
     message::ExecutorIdentity>(&send_buff_, kId, host_info);
 
-  for (int i = kId + 1; i < kNumExecutors; i++) {
+  for (int32_t i = kNumExecutors; i < kNumExecutors + kConfig.kNumServers; i++) {
+    LOG(INFO) << __func__ << " " << i;
     uint32_t ip = host_info_[i].ip;
     uint16_t port = host_info_[i].port;
-    conn::Socket peer_sock;
+    int32_t server_id = i - kNumExecutors;
+    conn::Socket &server_sock = server_socks_[server_id];
+    ret = server_sock.Connect(ip, port);
+    CHECK(ret == 0) << "executor failed connecting to server " << server_id
+                    << " ip = " << ip << " port = " << port;
+    server_[server_id].reset(new conn::SocketConn(server_sock,
+                                                  server_recv_mem_.data() + kCommBuffCapacity * server_id,
+                                                  server_send_mem_.data() + kCommBuffCapacity * server_id,
+                                                  kCommBuffCapacity));
+    server_conn_[server_id].conn = server_[server_id].get();
+    server_conn_[server_id].type = PollConn::ConnType::server;
+    Send(&server_conn_[server_id], server_[server_id].get());
+  }
+
+  for (int32_t i = kExecutorId + 1; i < kNumExecutors; i++) {
+    uint32_t ip = host_info_[i].ip;
+    uint16_t port = host_info_[i].port;
+    conn::Socket &peer_sock = peer_socks_[i];
     ret = peer_sock.Connect(ip, port);
     CHECK(ret == 0) << "executor failed connecting to peer " << i
                     << " ip = " << ip << " port = " << port;
@@ -1017,10 +1097,7 @@ Executor::ConnectToPeers() {
                                         kCommBuffCapacity));
     peer_conn_[i].conn = peer_[i].get();
     peer_conn_[i].type = PollConn::ConnType::peer;
-    peer_socks_[i] = peer_sock;
     Send(&peer_conn_[i], peer_[i].get());
-    //int ret = event_handler_.SetToReadOnly(&peer_conn_[i]);
-    //CHECK_EQ(ret, 0);
   }
   send_buff_.clear_to_send();
 }
@@ -1079,7 +1156,8 @@ Executor::Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn) {
 
   if (!sent) {
     send_buff.CopyAndMoveNextToSend(&send_buff_);
-    if (poll_conn_ptr->type == PollConn::ConnType::peer)
+    if (poll_conn_ptr->type == PollConn::ConnType::peer
+        || poll_conn_ptr->type == PollConn::ConnType::server)
       event_handler_.SetToWriteOnly(poll_conn_ptr);
     else
       event_handler_.SetToReadWrite(poll_conn_ptr);
@@ -1120,7 +1198,7 @@ Executor::EvalExpr() {
   julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&eval_julia_expr_task_));
 }
 
-void
+bool
 Executor::CreateDistArray() {
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
@@ -1151,6 +1229,13 @@ Executor::CreateDistArray() {
                             num_dims, parent_type, init_type,
                             parent_dist_array_meta_ptr, is_dense,
                             symbol));
+  if (kIsServer) {
+    if (parent_type != task::TEXT_FILE)
+      return true;
+    else
+      return false;
+  }
+
   auto &dist_array = iter_pair.first->second;
 
   task::DistArrayMapType map_type = create_dist_array.map_type();
@@ -1210,7 +1295,7 @@ Executor::CreateDistArray() {
     default:
       LOG(FATAL) << "unknown!" << static_cast<int>(parent_type);
   }
-
+  return false;
 }
 
 void

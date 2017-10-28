@@ -20,14 +20,16 @@ class PeerRecvThread {
   struct PollConn {
     enum class ConnType {
       peer = 1,
-        executor = 2
+        executor = 2,
+        server = 3
     };
     void* conn;
     ConnType type;
     int32_t id;
 
     bool Receive() {
-      if (type == ConnType::peer) {
+      if (type == ConnType::peer
+          || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.Recv(&(sock_conn->recv_buff));
       } else {
@@ -37,7 +39,8 @@ class PeerRecvThread {
     }
 
     bool Send() {
-      if (type == ConnType::peer) {
+      if (type == ConnType::peer
+          || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.Send(&(sock_conn->send_buff));
       } else {
@@ -47,7 +50,8 @@ class PeerRecvThread {
     }
 
     conn::RecvBuffer& get_recv_buff() {
-      if (type == ConnType::peer) {
+      if (type == ConnType::peer
+          || type == ConnType::server) {
         return reinterpret_cast<conn::SocketConn*>(conn)->recv_buff;
       } else {
         return reinterpret_cast<conn::PipeConn*>(conn)->recv_buff;
@@ -55,7 +59,8 @@ class PeerRecvThread {
     }
 
     conn::SendBuffer& get_send_buff() {
-      if (type == ConnType::peer) {
+      if (type == ConnType::peer
+          || type == ConnType::server) {
         return reinterpret_cast<conn::SocketConn*>(conn)->send_buff;
       } else {
         return reinterpret_cast<conn::PipeConn*>(conn)->send_buff;
@@ -67,7 +72,8 @@ class PeerRecvThread {
     }
 
     int get_read_fd() const {
-      if (type == ConnType::peer) {
+      if (type == ConnType::peer
+          || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.get_fd();
       } else {
@@ -77,7 +83,8 @@ class PeerRecvThread {
     }
 
     int get_write_fd() const {
-      if (type == ConnType::peer) {
+      if (type == ConnType::peer
+          || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.get_fd();
       } else {
@@ -94,7 +101,11 @@ class PeerRecvThread {
             };
 
   const int32_t kId;
+  const int32_t kExecutorId;
+  const int32_t kServerId;
+  const bool kIsServer;
   const size_t kNumExecutors;
+  const size_t kNumServers;
   const size_t kCommBuffCapacity;
 
   EventHandler<PollConn> event_handler_;
@@ -109,6 +120,14 @@ class PeerRecvThread {
   std::vector<int> peer_sock_fds_;
   std::vector<ByteBuffer> peer_recv_byte_buff_;
 
+  Blob server_send_mem_;
+  Blob server_recv_mem_;
+  std::vector<std::unique_ptr<conn::SocketConn>> server_;
+  std::vector<PollConn> server_conn_;
+  std::vector<conn::Socket> server_socks_;
+  std::vector<int> server_sock_fds_;
+  std::vector<ByteBuffer> server_recv_byte_buff_;
+
   conn::Pipe executor_pipe_[2];
   Blob executor_recv_mem_;
   Blob executor_send_mem_;
@@ -121,7 +140,11 @@ class PeerRecvThread {
   std::unique_ptr<PeerRecvExecForLoopDistArrayDataBuffer> exec_for_loop_data_buff_;
  public:
   PeerRecvThread(int32_t id,
+                 int32_t executor_id,
+                 int32_t server_id,
+                 bool is_server,
                  const std::vector<conn::Socket> &peer_socks,
+                 const std::vector<conn::Socket> &server_socks,
                  size_t buff_capacity);
   void operator() ();
   conn::Pipe GetExecutorPipe();
@@ -137,20 +160,35 @@ class PeerRecvThread {
 
 PeerRecvThread::PeerRecvThread(
     int32_t id,
+    int32_t executor_id,
+    int32_t server_id,
+    bool is_server,
     const std::vector<conn::Socket> &peer_socks,
+    const std::vector<conn::Socket> &server_socks,
     size_t buff_capacity):
     kId(id),
+    kExecutorId(executor_id),
+    kServerId(server_id),
+    kIsServer(is_server),
     kNumExecutors(peer_socks.size()),
+    kNumServers(server_socks.size()),
     kCommBuffCapacity(buff_capacity),
     send_mem_(kCommBuffCapacity),
     send_buff_(send_mem_.data(), kCommBuffCapacity),
     peer_send_mem_(buff_capacity * kNumExecutors),
     peer_recv_mem_(buff_capacity * kNumExecutors),
-    peer_(peer_socks.size()),
-    peer_conn_(peer_socks.size()),
+    peer_(kNumExecutors),
+    peer_conn_(kNumExecutors),
     peer_socks_(peer_socks),
-    peer_sock_fds_(peer_socks.size()),
-    peer_recv_byte_buff_(peer_socks.size()),
+    peer_sock_fds_(kNumExecutors),
+    peer_recv_byte_buff_(kNumExecutors),
+    server_send_mem_(buff_capacity * kNumServers),
+    server_recv_mem_(buff_capacity * kNumServers),
+    server_(kNumServers),
+    server_conn_(kNumServers),
+    server_socks_(server_socks),
+    server_sock_fds_(kNumServers),
+    server_recv_byte_buff_(kNumServers),
     executor_recv_mem_(buff_capacity),
     executor_send_mem_(buff_capacity),
     num_identified_peers_(0) {
@@ -180,25 +218,47 @@ PeerRecvThread::operator() () {
 
   event_handler_.SetToReadOnly(&executor_conn_);
 
-  for (size_t num_peers = 0; num_peers < kNumExecutors; num_peers++) {
-    if (num_peers == kId) continue;
-    auto &sock = peer_socks_[num_peers];
+  for (size_t peer_index = 0; peer_index < kNumExecutors; peer_index++) {
+    if (!kIsServer && peer_index == kExecutorId) continue;
+    auto &sock = peer_socks_[peer_index];
     uint8_t *recv_mem = peer_recv_mem_.data()
-                        + kCommBuffCapacity * num_peers;
+                        + kCommBuffCapacity * peer_index;
 
     uint8_t *send_mem = peer_send_mem_.data()
-                        + kCommBuffCapacity * num_peers;
+                        + kCommBuffCapacity * peer_index;
 
     auto *sock_conn = new conn::SocketConn(
         sock, recv_mem, send_mem, kCommBuffCapacity);
-    auto &curr_poll_conn = peer_conn_[num_peers];
+    auto &curr_poll_conn = peer_conn_[peer_index];
     curr_poll_conn.conn = sock_conn;
     curr_poll_conn.type = PollConn::ConnType::peer;
-    curr_poll_conn.id = num_peers;
+    curr_poll_conn.id = peer_index;
     int ret = event_handler_.SetToReadOnly(&curr_poll_conn);
     CHECK_EQ(ret, 0) << "errno = " << errno << " fd = " << sock.get_fd()
-                     << " i = " << num_peers
+                     << " i = " << peer_index
                      << " id = " << kId;
+  }
+
+  if (!kIsServer) {
+    for (size_t server_index = 0; server_index < kNumServers; server_index++) {
+      auto &sock = server_socks_[server_index];
+      uint8_t *recv_mem = server_recv_mem_.data()
+                          + kCommBuffCapacity * server_index;
+
+      uint8_t *send_mem = server_send_mem_.data()
+                          + kCommBuffCapacity * server_index;
+
+      auto *sock_conn = new conn::SocketConn(
+          sock, recv_mem, send_mem, kCommBuffCapacity);
+      auto &curr_poll_conn = server_conn_[server_index];
+      curr_poll_conn.conn = sock_conn;
+      curr_poll_conn.type = PollConn::ConnType::server;
+      curr_poll_conn.id = server_index;
+      int ret = event_handler_.SetToReadOnly(&curr_poll_conn);
+      CHECK_EQ(ret, 0) << "errno = " << errno << " fd = " << sock.get_fd()
+                       << " i = " << server_index
+                       << " id = " << kId;
+    }
   }
 
   while (true) {
@@ -248,7 +308,8 @@ PeerRecvThread::HandleExecutorMsg() {
   auto &recv_buff = executor_->recv_buff;
 
   auto msg_type = message::Helper::get_type(recv_buff);
-  CHECK(msg_type == message::Type::kExecuteMsg);
+  CHECK(msg_type == message::Type::kExecuteMsg)
+      << " type = " << static_cast<int>(msg_type);
   auto exec_msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
   int ret = EventHandler<PollConn>::kNoAction;
   switch (exec_msg_type) {
@@ -289,8 +350,18 @@ PeerRecvThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
         peer_sock_fds_[msg->executor_id] = sock_conn->sock.get_fd();
         poll_conn_ptr->id = msg->executor_id;
         num_identified_peers_++;
-        if (num_identified_peers_ == kId) {
-          action_ = Action::kAckConnectToPeers;
+        if (kIsServer) {
+          if (num_identified_peers_ == kNumExecutors) {
+            action_ = Action::kAckConnectToPeers;
+          } else {
+            action_ = Action::kNone;
+          }
+        } else {
+          if (num_identified_peers_ == kExecutorId) {
+            action_ = Action::kAckConnectToPeers;
+          } else {
+            action_ = Action::kNone;
+          }
         }
         ret = EventHandler<PollConn>::kClearOneMsg;
       }

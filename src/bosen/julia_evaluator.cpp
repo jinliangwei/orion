@@ -252,6 +252,7 @@ JuliaEvaluator::EvalExpr(const std::string &serialized_expr,
   size_t result_array_length = jl_array_len(serialized_result_array);
   uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
   result_buff->resize(result_array_length);
+  LOG(INFO) << __func__ << " result_array_length = " << result_array_length;
   memcpy(result_buff->data(), array_bytes, result_array_length);
   JL_GC_POP();
   CHECK(!jl_exception_occurred()) << "julia exception occurs: "
@@ -830,6 +831,8 @@ JuliaEvaluator::ExecForLoopTile(
       keys_array_type_jl, keys.data(), keys.size(), 0));
   values_vec_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       values_array_type_jl, values, keys.size(), 0));
+
+  //LOG(INFO) << __func__;
 
   jl_function_t *exec_loop_func
       = GetFunction(jl_main_module, exec_loop_func_name.c_str());

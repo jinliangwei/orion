@@ -118,6 +118,10 @@ class Driver {
       std::bind(&Driver::HandleClosedConnection, this,
                std::placeholders::_1));
     jl_init(NULL);
+    LOG(INFO) << "master_recv_buff = "
+              << &master_.recv_buff
+              << " temp_recv_buff = "
+              << &master_recv_temp_buff_;
   }
   ~Driver() { }
 
@@ -209,6 +213,7 @@ Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
         auto *response_msg = message::DriverMsgHelper::get_msg<
           message::DriverMsgMasterResponse>(recv_buff);
         size_t expected_size = response_msg->result_bytes;
+        LOG(INFO) << "expected size = " << expected_size;
         if (expected_size == 0) {
             received_from_master_ = true;
             ret = EventHandler<PollConn>::kClearOneMsg;
@@ -217,6 +222,7 @@ Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
           bool received_next_msg =
               ReceiveArbitraryBytes(master_.sock, &recv_buff, &result_buff_,
                                     expected_size);
+          LOG(INFO) << "result_buff size = " << result_buff_.GetSize();
           if (received_next_msg) {
             received_from_master_ = true;
             ret = EventHandler<PollConn>::kClearOneAndNextMsg;
@@ -225,6 +231,7 @@ Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
             ret = EventHandler<PollConn>::kNoAction;
           }
         }
+        LOG(INFO) << "received from master = " << received_from_master_;
       }
       break;
     default:

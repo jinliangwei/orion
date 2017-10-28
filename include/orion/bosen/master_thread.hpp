@@ -32,7 +32,8 @@ class MasterThread {
     enum class ConnType {
       listen = 0,
         executor = 1,
-        driver = 2,
+        server = 2,
+        driver = 3,
     };
 
     conn::SocketConn *conn;
@@ -72,13 +73,15 @@ class MasterThread {
     kNone = 0,
       kExit = 1,
       kExecutorConnectToPeers = 2,
-      kForwardDriverMsgToAll = 3,
+      kForwardDriverMsgToAllExecutors = 3,
+      kForwardDriverMsgToAllExecutorsAndServers = 4,
       kCreateDistArray = 6,
       kRespondToDriver = 7,
       kWaitingExecutorResponse = 40
   };
 
   const size_t kNumExecutors;
+  const size_t kNumServers;
   const size_t kCommBuffCapacity;
   const std::string kMasterIp;
   const uint16_t kMasterPort;
@@ -94,12 +97,18 @@ class MasterThread {
   conn::SocketConn driver_;
   PollConn driver_poll_conn_;
 
-  Blob executor_recv_mem_;
-  Blob executor_send_mem_;
-  std::vector<std::unique_ptr<conn::SocketConn>> executors_;
-  std::vector<PollConn> executor_poll_conn_;
-  std::unordered_map<conn::SocketConn*, int32_t> executor_sock_conn_to_id_;
+  Blob executor_server_recv_mem_;
+  Blob executor_server_send_mem_;
+  std::vector<PollConn> executor_server_poll_conn_;
+  std::unordered_map<int32_t, PollConn*> executor_id_to_poll_conn_ptr_;
+  std::unordered_map<int32_t, PollConn*> server_id_to_poll_conn_ptr_;
+  std::unordered_map<conn::SocketConn*, int32_t> sock_conn_to_id_;
   std::unordered_map<int32_t, ByteBuffer> executor_byte_buff_;
+  std::unordered_map<int32_t, ByteBuffer> server_byte_buff_;
+
+  std::vector<std::unique_ptr<conn::SocketConn>> executors_;
+  std::vector<std::unique_ptr<conn::SocketConn>> servers_;
+
   TaskType task_type_ {TaskType::kNone};
 
   size_t num_expected_executor_acks_ {0};
@@ -121,9 +130,9 @@ class MasterThread {
   ByteBuffer driver_send_byte_buff_;
   int32_t executor_in_action_ {0};
 
-  size_t num_accepted_executors_ {0};
+  size_t num_accepted_executors_and_servers_ {0};
   size_t num_identified_executors_ {0};
-  size_t num_ready_executors_ {0};
+  size_t num_identified_servers_ {0};
   size_t num_closed_conns_ {0};
   bool stopped_all_ {false};
 
@@ -149,14 +158,17 @@ class MasterThread {
   int HandleDriverMsg(PollConn *poll_conn_ptr);
   int HandleExecutorMsg(PollConn *poll_conn_ptr);
   int HandleExecuteMsg(PollConn *poll_conn_ptr);
-  void ConstructDriverResponse(int32_t executor_id, size_t result_size);
+  void ConstructDriverResponse(int32_t executor_id, size_t num_responses, size_t result_size);
+  void BroadcastToAllExecutorsAndServers();
   void BroadcastToAllExecutors();
+  void BroadcastToAllServers();
   void SendToExecutor(int executor_index);
   void SendToDriver();
 };
 
 MasterThread::MasterThread(const Config &config):
     kNumExecutors(config.kNumExecutors),
+    kNumServers(config.kNumServers),
     kCommBuffCapacity(config.kCommBuffCapacity),
     kMasterIp(config.kMasterIp),
     kMasterPort(config.kMasterPort),
@@ -172,13 +184,16 @@ MasterThread::MasterThread(const Config &config):
             driver_recv_mem_.data(),
             driver_send_mem_.data(),
             config.kCommBuffCapacity),
-    executor_recv_mem_(config.kCommBuffCapacity*config.kNumExecutors),
-    executor_send_mem_(config.kCommBuffCapacity*config.kNumExecutors),
+    executor_server_recv_mem_(config.kCommBuffCapacity
+                              * (config.kNumExecutors + config.kNumServers)),
+    executor_server_send_mem_(config.kCommBuffCapacity
+                              * (config.kNumExecutors + config.kNumServers)),
+    executor_server_poll_conn_(config.kNumExecutors + config.kNumServers),
     executors_(config.kNumExecutors),
-    executor_poll_conn_(config.kNumExecutors),
+    servers_(config.kNumServers),
     send_mem_(config.kCommBuffCapacity),
     send_buff_(send_mem_.data(), config.kCommBuffCapacity),
-    host_info_(config.kNumExecutors) { }
+    host_info_(config.kNumExecutors + config.kNumServers) { }
 
 MasterThread::~MasterThread() { }
 
@@ -233,18 +248,18 @@ MasterThread::HandleConnection(PollConn *poll_conn_ptr) {
   LOG(INFO) << __func__;
   conn::Socket accepted;
   listen_.sock.Accept(&accepted);
-  if (num_accepted_executors_ < kNumExecutors) {
-    uint8_t *recv_mem = executor_recv_mem_.data()
-                        + num_accepted_executors_*kCommBuffCapacity;
-    uint8_t *send_mem = executor_send_mem_.data()
-                        + num_accepted_executors_*kCommBuffCapacity;
+  if (num_accepted_executors_and_servers_ < kNumExecutors + kNumServers) {
+    uint8_t *recv_mem = executor_server_recv_mem_.data()
+                        + num_accepted_executors_and_servers_*kCommBuffCapacity;
+    uint8_t *send_mem = executor_server_send_mem_.data()
+                        + num_accepted_executors_and_servers_*kCommBuffCapacity;
     auto *sock_conn = new conn::SocketConn(
         accepted, recv_mem, send_mem, kCommBuffCapacity);
     auto &curr_poll_conn
-        = executor_poll_conn_[num_accepted_executors_];
+        = executor_server_poll_conn_[num_accepted_executors_and_servers_];
     curr_poll_conn = {sock_conn, PollConn::ConnType::executor};
     event_handler_.SetToReadOnly(&curr_poll_conn);
-    num_accepted_executors_++;
+    num_accepted_executors_and_servers_++;
   } else {
     LOG(INFO) << "driver is connected";
     driver_.sock = accepted;
@@ -261,7 +276,7 @@ MasterThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
     if (!stopped_all_) {
       LOG(INFO) << "Command executors to stop";
       message::Helper::CreateMsg<message::ExecutorStop>(&send_buff_);
-      BroadcastToAllExecutors();
+      BroadcastToAllExecutorsAndServers();
       stopped_all_ = true;
     }
     driver_.sock.Close();
@@ -283,7 +298,8 @@ MasterThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
 int
 MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
   int ret = EventHandler<PollConn>::kNoAction;
-  if (poll_conn_ptr->type == PollConn::ConnType::executor) {
+  if (poll_conn_ptr->type == PollConn::ConnType::executor
+      || poll_conn_ptr->type == PollConn::ConnType::server) {
     ret = HandleExecutorMsg(poll_conn_ptr);
   } else {
     ret = HandleDriverMsg(poll_conn_ptr);
@@ -295,16 +311,32 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
     switch (action_) {
       case Action::kExecutorConnectToPeers:
         {
+          LOG(INFO) << "ConnectToPeers!";
           message::Helper::CreateMsg<message::ExecutorConnectToPeers>(
-              &send_buff_, kNumExecutors);
+              &send_buff_, kNumExecutors, kNumServers);
           send_buff_.set_next_to_send(host_info_.data(),
-                                      kNumExecutors*sizeof(HostInfo));
-          BroadcastToAllExecutors();
+                                      (kNumExecutors + kNumServers) * sizeof(HostInfo));
+          BroadcastToAllExecutorsAndServers();
           send_buff_.clear_to_send();
+          num_expected_executor_acks_ = kNumExecutors + kNumServers;
+          num_recved_executor_acks_ = 0;
           action_ = Action::kWaitingExecutorResponse;
         }
         break;
-      case Action::kForwardDriverMsgToAll:
+      case Action::kForwardDriverMsgToAllExecutorsAndServers:
+        {
+          LOG(INFO) << "forwarding to workers";
+          send_buff_.Copy(driver_poll_conn_.conn->recv_buff);
+          send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
+                                      driver_recv_byte_buff_.GetSize());
+          BroadcastToAllExecutorsAndServers();
+          send_buff_.clear_to_send();
+          num_expected_executor_acks_ = kNumExecutors + kNumServers;
+          num_recved_executor_acks_ = 0;
+          action_ = Action::kWaitingExecutorResponse;
+        }
+        break;
+      case Action::kForwardDriverMsgToAllExecutors:
         {
           LOG(INFO) << "forwarding to workers";
           send_buff_.Copy(driver_poll_conn_.conn->recv_buff);
@@ -325,10 +357,8 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
                                       driver_recv_byte_buff_.GetSize());
           LOG(INFO) << "send buff size = " << send_buff_.get_size();
-          BroadcastToAllExecutors();
+          BroadcastToAllExecutorsAndServers();
           send_buff_.clear_to_send();
-          num_expected_executor_acks_ = kNumExecutors;
-          num_recved_executor_acks_ = 0;
 
           task::CreateDistArray create_dist_array;
           std::string task_buff(
@@ -340,6 +370,13 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           int32_t id = create_dist_array.id();
           size_t num_dims = create_dist_array.num_dims();
           auto parent_type = create_dist_array.parent_type();
+          if (parent_type == task::TEXT_FILE) {
+            num_expected_executor_acks_ = kNumExecutors;
+          } else {
+            num_expected_executor_acks_ = kNumExecutors + kNumServers;
+          }
+          num_recved_executor_acks_ = 0;
+
           auto init_type = create_dist_array.init_type();
           DistArrayMeta *parent_dist_array_meta_ptr = nullptr;
           auto symbol = create_dist_array.symbol();
@@ -368,15 +405,19 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
               &send_buff_, accum_result_size_);
           LOG(INFO) << "accum_result_size = " << accum_result_size_;
           if (accum_result_size_ > 0) {
-            if (num_expected_executor_acks_ == kNumExecutors) {
-              ConstructDriverResponse(-1, accum_result_size_);
+            if (num_expected_executor_acks_ == kNumExecutors
+                || num_expected_executor_acks_ == kNumServers + kNumExecutors) {
+              ConstructDriverResponse(-1, num_expected_executor_acks_, accum_result_size_);
             } else {
               ConstructDriverResponse(executor_in_action_,
+                                      num_expected_executor_acks_,
                                       accum_result_size_);
             }
+            LOG(INFO) << "driver_send_byte_buff_.size = "
+                      << driver_send_byte_buff_.GetSize();
             send_buff_.set_next_to_send(driver_send_byte_buff_.GetBytes(),
                                         driver_send_byte_buff_.GetSize());
-            msg->result_bytes += sizeof(size_t)*num_expected_executor_acks_;
+            msg->result_bytes += sizeof(size_t) * num_expected_executor_acks_;
           }
 
           SendToDriver();
@@ -430,7 +471,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
           LOG(INFO) << "msg receive is completed";
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kForwardDriverMsgToAll;
+          action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
         } else ret = EventHandler<PollConn>::kNoAction;
 
       }
@@ -464,7 +505,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         if (received_next_msg) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kForwardDriverMsgToAll;
+          action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -480,7 +521,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         if (received_next_msg) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kForwardDriverMsgToAll;
+          action_ = Action::kForwardDriverMsgToAllExecutors;
 
           task::RepartitionDistArray repartition_task;
           std::string task_buff(
@@ -510,7 +551,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         if (received_next_msg) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kForwardDriverMsgToAll;
+          action_ = Action::kForwardDriverMsgToAllExecutors;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -533,16 +574,43 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
       {
         auto *msg = message::Helper::get_msg<message::ExecutorIdentity>(recv_buff);
         int32_t executor_id = msg->executor_id;
-        host_info_[msg->executor_id] = msg->host_info;
+        host_info_[executor_id] = msg->host_info;
         auto* sock_conn = poll_conn_ptr->conn;
         executors_[executor_id].reset(sock_conn);
-        executor_sock_conn_to_id_[executors_[executor_id].get()] = executor_id;
-        LOG(INFO) << "set " << (void*) executors_[executor_id].get()
-                  << " to " << executor_id;
+        sock_conn_to_id_[sock_conn] = executor_id;
         executor_byte_buff_.emplace(std::make_pair(executor_id, ByteBuffer()));
+        executor_id_to_poll_conn_ptr_[executor_id] = poll_conn_ptr;
         num_identified_executors_++;
+        LOG(INFO) << "num_identified_executors = " << num_identified_executors_
+                  << " NumExecutors = " << kNumExecutors
+                  << " NumServer = " << kNumServers;
         if (state_ == State::kInitialization
-            && (num_identified_executors_ == kNumExecutors)) {
+            && (num_identified_executors_ == kNumExecutors
+                && num_identified_servers_ == kNumServers)) {
+          action_ = Action::kExecutorConnectToPeers;
+        }
+        ret = EventHandler<PollConn>::kClearOneMsg;
+      }
+      break;
+    case message::Type::kServerIdentity:
+      {
+        LOG(INFO) << "received server identity";
+        auto *msg = message::Helper::get_msg<message::ServerIdentity>(recv_buff);
+        int32_t server_id = msg->server_id;
+        host_info_[kNumExecutors + server_id] = msg->host_info;
+        auto* sock_conn = poll_conn_ptr->conn;
+        LOG(INFO) << "before reset " << " server id = " << server_id;
+        LOG(INFO) << (void*) servers_[server_id].get();
+        servers_[server_id].reset(sock_conn);
+        sock_conn_to_id_[sock_conn] = server_id;
+        server_byte_buff_.emplace(std::make_pair(server_id, ByteBuffer()));
+        server_id_to_poll_conn_ptr_[server_id] = poll_conn_ptr;
+        poll_conn_ptr->type = PollConn::ConnType::server;
+        num_identified_servers_++;
+        LOG(INFO) << "num_identified_servers = " << num_identified_servers_;
+        if (state_ == State::kInitialization
+            && (num_identified_executors_ == kNumExecutors
+                && num_identified_servers_ == kNumServers)) {
           action_ = Action::kExecutorConnectToPeers;
         }
         ret = EventHandler<PollConn>::kClearOneMsg;
@@ -550,8 +618,9 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
       break;
     case message::Type::kExecutorConnectToPeersAck:
       {
-        num_ready_executors_++;
-        if (num_ready_executors_ == kNumExecutors) {
+        LOG(INFO) << "connect to peers ack! " << num_recved_executor_acks_;
+        num_recved_executor_acks_++;
+        if (num_recved_executor_acks_ == num_expected_executor_acks_) {
           std::cout << "Your Orion cluster is ready!" << std::endl;
           std::cout << "Connect your client application to "
                     << kMasterIp << ":" << kMasterPort << std::endl;
@@ -587,27 +656,38 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         auto *ack_msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgExecutorAck>(recv_buff);
         size_t expected_size = ack_msg->result_size;
-        int32_t executor_id = executor_sock_conn_to_id_[poll_conn_ptr->conn];
+        int32_t executor_id = sock_conn_to_id_[poll_conn_ptr->conn];
         LOG(INFO) << "received ExecutorAck from "
-                  << executor_id << " recv_buff = " << &recv_buff;
+                  << executor_id << " recv_buff = " << &recv_buff
+                  << " is_servre = " << static_cast<int>(poll_conn_ptr->type);
 
         executor_in_action_ = executor_id;
+
+        ByteBuffer &result_byte_buff
+            = poll_conn_ptr->type == PollConn::ConnType::executor
+            ? executor_byte_buff_[executor_id] : server_byte_buff_[executor_id];
 
         if (expected_size > 0) {
           bool received_next_msg =
               ReceiveArbitraryBytes(poll_conn_ptr->conn->sock, &recv_buff,
-                                    &executor_byte_buff_[executor_id], expected_size);
+                                    &result_byte_buff, expected_size);
           if (received_next_msg) {
             ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+            CHECK_EQ(num_recved_executor_acks_ * expected_size, accum_result_size_);
             num_recved_executor_acks_++;
             accum_result_size_ += expected_size;
+            LOG(INFO) << "accum_result_size = " << accum_result_size_;
           }
         } else {
+          if (num_recved_executor_acks_ > 0)
+            CHECK_EQ(accum_result_size_, 0);
+          LOG(INFO) << "set accum_result_size to 0";
           num_recved_executor_acks_++;
           ret = EventHandler<PollConn>::kClearOneMsg;
           accum_result_size_ = 0;
         }
-
+        LOG(INFO) << "ExecutorAck, num_recved_acks = " << num_recved_executor_acks_
+                  << " num_expected_acks = " << num_expected_executor_acks_;
         if (num_recved_executor_acks_ == num_expected_executor_acks_) {
           action_ = Action::kRespondToDriver;
         }
@@ -618,7 +698,7 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         auto *ack_msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgTextFileLoadAck>(recv_buff);
         size_t expected_size = ack_msg->num_dims * sizeof(int64_t);
-        int32_t executor_id = executor_sock_conn_to_id_[poll_conn_ptr->conn];
+        int32_t executor_id = sock_conn_to_id_[poll_conn_ptr->conn];
         int32_t dist_array_id = ack_msg->dist_array_id;
         auto &dist_array_meta = dist_array_metas_.at(dist_array_id);
         LOG(INFO) << "TextFileLoadAck received! from " << executor_id
@@ -726,19 +806,49 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
 
 void
 MasterThread::ConstructDriverResponse(int32_t executor_id,
+                                      size_t num_responses,
                                       size_t result_size) {
   if (result_size == 0) return;
   LOG(INFO) << __func__;
   if (executor_id < 0) {
-    driver_send_byte_buff_.Reset(result_size + sizeof(size_t)*kNumExecutors);
-    for (auto &byte_buff_iter : executor_byte_buff_) {
-      *reinterpret_cast<size_t*>(driver_send_byte_buff_.GetAvailMem())
-          = byte_buff_iter.second.GetSize();
+    if (num_responses == kNumExecutors) {
+      driver_send_byte_buff_.Reset(result_size + sizeof(size_t)*kNumExecutors);
+      for (auto &byte_buff_iter : executor_byte_buff_) {
+        *reinterpret_cast<size_t*>(driver_send_byte_buff_.GetAvailMem())
+            = byte_buff_iter.second.GetSize();
 
-      memcpy(driver_send_byte_buff_.GetAvailMem() + sizeof(size_t),
-             byte_buff_iter.second.GetBytes(),
-             byte_buff_iter.second.GetSize());
-      driver_send_byte_buff_.IncSize(byte_buff_iter.second.GetSize() + sizeof(size_t));
+        memcpy(driver_send_byte_buff_.GetAvailMem() + sizeof(size_t),
+               byte_buff_iter.second.GetBytes(),
+               byte_buff_iter.second.GetSize());
+        driver_send_byte_buff_.IncSize(byte_buff_iter.second.GetSize() + sizeof(size_t));
+      }
+    } else if (num_responses == kNumServers + kNumExecutors) {
+      driver_send_byte_buff_.Reset(result_size
+                                   + sizeof(size_t)*(kNumExecutors + kNumServers));
+      for (auto &byte_buff_iter : executor_byte_buff_) {
+        *reinterpret_cast<size_t*>(driver_send_byte_buff_.GetAvailMem())
+            = byte_buff_iter.second.GetSize();
+        LOG(INFO) << "executor response size = "
+                  << byte_buff_iter.second.GetSize();
+        memcpy(driver_send_byte_buff_.GetAvailMem() + sizeof(size_t),
+               byte_buff_iter.second.GetBytes(),
+               byte_buff_iter.second.GetSize());
+        driver_send_byte_buff_.IncSize(byte_buff_iter.second.GetSize() + sizeof(size_t));
+      }
+
+      for (auto &byte_buff_iter : server_byte_buff_) {
+        *reinterpret_cast<size_t*>(driver_send_byte_buff_.GetAvailMem())
+            = byte_buff_iter.second.GetSize();
+        LOG(INFO) << "server response size = "
+                  << byte_buff_iter.second.GetSize();
+
+        memcpy(driver_send_byte_buff_.GetAvailMem() + sizeof(size_t),
+               byte_buff_iter.second.GetBytes(),
+               byte_buff_iter.second.GetSize());
+        driver_send_byte_buff_.IncSize(byte_buff_iter.second.GetSize() + sizeof(size_t));
+      }
+    } else {
+      LOG(FATAL) << "unexpected number of responses";
     }
   } else {
     auto &byte_buff = executor_byte_buff_.at(executor_id);
@@ -750,6 +860,12 @@ MasterThread::ConstructDriverResponse(int32_t executor_id,
            byte_buff.GetSize());
     driver_send_byte_buff_.IncSize(byte_buff.GetSize() + sizeof(size_t));
   }
+}
+
+void
+MasterThread::BroadcastToAllExecutorsAndServers() {
+  BroadcastToAllExecutors();
+  BroadcastToAllServers();
 }
 
 void
@@ -769,7 +885,30 @@ MasterThread::BroadcastToAllExecutors() {
     bool sent = executors_[i]->sock.Send(&send_buff_);
     if (!sent) {
       send_buff.CopyAndMoveNextToSend(&send_buff_);
-      event_handler_.SetToReadWrite(&executor_poll_conn_[i]);
+      event_handler_.SetToReadWrite(executor_id_to_poll_conn_ptr_[i]);
+    }
+    send_buff_.reset_sent_sizes();
+  }
+}
+
+void
+MasterThread::BroadcastToAllServers() {
+  for (int i = 0; i < kNumServers; ++i) {
+    LOG(INFO) << "sending to " << i;
+    conn::SendBuffer& send_buff = servers_[i]->send_buff;
+    if (send_buff.get_remaining_to_send_size() > 0
+        || send_buff.get_remaining_next_to_send_size() > 0) {
+      LOG(INFO) << "blocked sending to " << i;
+      bool sent = servers_[i]->sock.Send(&send_buff);
+      while (!sent) {
+        sent = servers_[i]->sock.Send(&send_buff);
+      }
+      send_buff.clear_to_send();
+    }
+    bool sent = servers_[i]->sock.Send(&send_buff_);
+    if (!sent) {
+      send_buff.CopyAndMoveNextToSend(&send_buff_);
+      event_handler_.SetToReadWrite(executor_id_to_poll_conn_ptr_[i]);
     }
     send_buff_.reset_sent_sizes();
   }
@@ -790,7 +929,7 @@ MasterThread::SendToExecutor(int executor_index) {
   bool sent = executor->sock.Send(&send_buff_);
   if (!sent) {
     send_buff.CopyAndMoveNextToSend(&send_buff_);
-    event_handler_.SetToReadWrite(&executor_poll_conn_[executor_index]);
+    event_handler_.SetToReadWrite(executor_id_to_poll_conn_ptr_[executor_index]);
   }
 }
 

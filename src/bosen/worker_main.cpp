@@ -2,9 +2,12 @@
 #include <gflags/gflags.h>
 #include <orion/bosen/executor.hpp>
 
-DEFINE_int32(num_executors, 1, "number of executors");
+DEFINE_int32(num_executors, 1, "number of total executors");
+
+DEFINE_int32(num_servers, 1, "number of total servers");
 
 DEFINE_int32(num_executors_per_worker, 1, "number of executors per worker");
+DEFINE_int32(num_servers_per_worker, 1, "number of servers per worker");
 
 DEFINE_string(master_ip, "127.0.0.1",
               "IP address that the master thread listens to for "
@@ -37,6 +40,8 @@ DEFINE_string(orion_home, "", "Orion home directory");
 DEFINE_string(hdfs_name_node, "hdfs://localhost:9000",
               "name node URL of HDFS");
 
+DEFINE_bool(is_server, false, "the worker serves as a server");
+
 int main(int argc, char *argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
   google::InitGoogleLogging(argv[0]);
@@ -44,14 +49,19 @@ int main(int argc, char *argv[]) {
   LOG(INFO) << "worker " << FLAGS_worker_id << " started!";
 
   orion::bosen::Config config(FLAGS_num_executors,
-                              FLAGS_num_executors_per_worker, FLAGS_master_ip,
+                              FLAGS_num_servers,
+                              FLAGS_num_executors_per_worker,
+                              FLAGS_num_servers_per_worker,
+                              FLAGS_master_ip,
                               FLAGS_master_port, FLAGS_worker_ip, FLAGS_worker_port,
                               FLAGS_comm_buff_capacity, FLAGS_worker_id,
                               FLAGS_executor_thread_pool_size,
                               FLAGS_partition_size_mb,
                               FLAGS_hdfs_name_node,
                               FLAGS_orion_home);
-  orion::bosen::Executor executor(config, FLAGS_local_executor_index);
+  orion::bosen::Executor executor(config,
+                                  FLAGS_local_executor_index,
+                                  FLAGS_is_server);
   executor.operator()();
 
   return 0;

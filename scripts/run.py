@@ -46,6 +46,7 @@ def get_default_config():
     config['worker'] = {
         'port' : "11000",
         'num_executors_per_worker' : "1",
+        'num_servers_per_worker' : "1",
         'executor_thread_pool_size' : "4",
         'julia_bin' : "/home/ubuntu/julia-0.5.1/usr/bin",
         'partition_size_mb' : "1",
@@ -98,16 +99,19 @@ def get_env_str(pargs):
 def get_arg_strs(args, pargs):
     hosts = []
     num_executors_total = pargs['worker']['num_executors_per_worker']
+    num_servers_total = pargs['worker']['num_servers_per_worker']
     if args.deploy_mode == "cluster":
         with open(args.machine_file, 'r') as fobj:
             for line in fobj:
                 hosts.append(line)
         num_executors_total = int(pargs['worker']['num_executors_per_worker']) * len(hosts)
+        num_servers_total = int(pargs['worker']['num_servers_per_worker']) * len(hosts)
 
     master_args = {
         'master_ip' : pargs['master']['ip'],
         'master_port' : pargs['master']['port'],
         'num_executors' : num_executors_total,
+        'num_servers' : num_servers_total,
         'comm_buff_capacity' : pargs['master']['comm_buff_capacity']
     }
 
@@ -116,7 +120,9 @@ def get_arg_strs(args, pargs):
         'master_port' : pargs['master']['port'],
         'comm_buff_capacity' : pargs['master']['comm_buff_capacity'],
         'num_executors_per_worker' : pargs['worker']['num_executors_per_worker'],
+        'num_servers_per_worker' : pargs['worker']['num_servers_per_worker'],
         'num_executors' : num_executors_total,
+        'num_servers' : num_servers_total,
         'worker_port' : pargs['worker']['port'],
         'executor_thread_pool_size' : pargs['worker']['executor_thread_pool_size'],
         'partition_size_mb' : pargs['worker']['partition_size_mb'],
@@ -188,8 +194,8 @@ if __name__ == "__main__":
     else:
         print ("Warning: profiling in cluster mode might not work")
 
-    print(cmd_master)
-    print(cmd_worker)
+#    print(cmd_master)
+#    print(cmd_worker)
 
     master_proc = subprocess.Popen(cmd_master, stdout=subprocess.PIPE, shell=True)
 #    time.sleep(5)
@@ -200,18 +206,28 @@ if __name__ == "__main__":
             break
 
     num_executors_per_worker = int(pargs['worker']['num_executors_per_worker'])
+    num_servers_per_worker = int(pargs['worker']['num_servers_per_worker'])
     if args.deploy_mode == 'local':
-        for i in range(0, num_executors_per_worker):
-            curr_cmd_worker = cmd_worker + " --local_executor_index=" + str(i)
+        for i in range(0, num_executors_per_worker + num_servers_per_worker):
+            is_server = "false"
+            if i >= num_executors_per_worker:
+                is_server = "true"
+            curr_cmd_worker = cmd_worker + " --local_executor_index=" + str(i) \
+                               + " --is_server=" + is_server
             subprocess.Popen(curr_cmd_worker, shell=True)
     else:
         worker_id = 0
         for host in hosts:
-            for i in range(0, num_executors_per_worker):
+            for i in range(0, num_executors_per_worker + num_servers_per_worker):
                 print("starting %d-th executor on worker %d" % (i, worker_id))
-                ssh_cmd_worker = "cd " + project_dir + "; " + cmd_worker + " --worker_ip=" + host.strip() \
+                is_server = "false"
+                if i >= num_executors_per_worker:
+                    is_server = "true"
+                ssh_cmd_worker = "cd " + project_dir + "; " + cmd_worker \
+                                 + " --worker_ip=" + host.strip() \
                                 + " --worker_id=" + str(worker_id) \
-                                + " --local_executor_index=" + str(i)
+                                + " --local_executor_index=" + str(i) \
+                                + " --is_server=" + is_server
                 print(ssh_cmd_worker)
                 worker_proc = subprocess.Popen(["ssh", "-oStrictHostKeyChecking=no",
                                                 "-oUserKnownHostsFile=/dev/null",

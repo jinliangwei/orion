@@ -18,6 +18,7 @@ enum class Type {
     kExecutorIdentity = 4,
     kExecutorReady = 5,
     kExecuteMsg = 6,
+    kServerIdentity = 7,
     kExecutorStop = 10
 };
 
@@ -40,12 +41,15 @@ static_assert(std::is_pod<Header>::value, "Header must be POD!");
 struct ExecutorConnectToPeers {
  public:
   size_t num_executors;
+  size_t num_servers;
  private:
   ExecutorConnectToPeers() = default;
   friend class DefaultMsgCreator;
  public:
-  void Init(size_t _num_executors) {
+  void Init(size_t _num_executors,
+            size_t _num_servers) {
     num_executors = _num_executors;
+    num_servers = _num_servers;
   }
   static constexpr Type get_type() { return Type::kExecutorConnectToPeers; }
 };
@@ -91,6 +95,22 @@ struct ExecutorIdentity {
 };
 
 static_assert(std::is_pod<ExecutorIdentity>::value, "ExecutorIdentity must be POD!");
+
+struct ServerIdentity {
+  int32_t server_id;
+  HostInfo host_info;
+ private:
+  ServerIdentity() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(int32_t _server_id, HostInfo _host_info) {
+    server_id = _server_id;
+    host_info = _host_info;
+  }
+  static constexpr Type get_type() { return Type::kServerIdentity; }
+};
+
+static_assert(std::is_pod<ServerIdentity>::value, "ServerIdentity must be POD!");
 
 enum class DriverMsgType {
   kStop = 0,

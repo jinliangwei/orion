@@ -23,8 +23,8 @@ ReceiveArbitraryBytes(Conn &conn, conn::RecvBuffer* recv_buff,
     recv_buff->set_next_expected_size(expected_size);
     byte_buff->Reset(expected_size);
     if (recv_buff->get_size() > recv_buff->get_expected_size()) {
-      size_t size_to_copy = recv_buff->get_size()
-                            - recv_buff->get_expected_size();
+      size_t size_to_copy = std::min(expected_size,
+                                     recv_buff->get_size() - recv_buff->get_expected_size());
       memcpy(byte_buff->GetAvailMem(),
              recv_buff->get_curr_msg_end_mem(),
              size_to_copy);
@@ -51,8 +51,8 @@ ReceiveArbitraryBytes(Conn &conn, conn::RecvBuffer* recv_buff,
   } else {
     recv_buff->set_next_expected_size(expected_size);
     if (recv_buff->get_size() > recv_buff->get_expected_size()) {
-      size_t size_to_copy = recv_buff->get_size()
-                            - recv_buff->get_expected_size();
+      size_t size_to_copy = std::min(expected_size,
+                                     recv_buff->get_size() - recv_buff->get_expected_size());
       memcpy(byte_buff,
              recv_buff->get_curr_msg_end_mem(),
              size_to_copy);
