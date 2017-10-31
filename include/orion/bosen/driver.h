@@ -10,8 +10,7 @@ extern "C" {
   void orion_init(
       const char *master_ip,
       uint16_t master_port,
-      size_t comm_buff_capacity,
-      size_t num_executors);
+      size_t comm_buff_capacity);
 
   void orion_connect_to_master();
 

@@ -55,6 +55,7 @@ function eval_expr_on_all(ex, eval_module::Symbol)
     if length(result_array) > 0
         println("typeof(result[1]) = ", typeof(result_array[1]))
     end
+    return result_array
 end
 
 function create_accumulator(var::Symbol, init_val)

@@ -21,16 +21,13 @@ class DriverConfig {
   const std::string kMasterIp;
   const uint16_t kMasterPort;
   const size_t kCommBuffCapacity;
-  const size_t kNumExecutors;
   DriverConfig(
       const char* master_ip,
       uint16_t master_port,
-      size_t comm_buff_capacity,
-      size_t num_executors):
+      size_t comm_buff_capacity):
       kMasterIp(master_ip),
       kMasterPort(master_port),
-      kCommBuffCapacity(comm_buff_capacity),
-      kNumExecutors(num_executors) { }
+      kCommBuffCapacity(comm_buff_capacity) { }
 };
 
 class Driver {
@@ -65,7 +62,6 @@ class Driver {
   const size_t kCommBuffCapacity;
   const std::string kMasterIp;
   const uint16_t kMasterPort;
-  const size_t kNumExecutors;
 
   Blob master_recv_mem_;
   Blob master_send_mem_;
@@ -96,7 +92,6 @@ class Driver {
       kCommBuffCapacity(driver_config.kCommBuffCapacity),
       kMasterIp(driver_config.kMasterIp),
       kMasterPort(driver_config.kMasterPort),
-      kNumExecutors(driver_config.kNumExecutors),
       master_recv_mem_(kCommBuffCapacity),
       master_send_mem_(kCommBuffCapacity),
       master_(conn::Socket(),
@@ -314,7 +309,9 @@ Driver::EvalExprOnAll(
     JL_GC_PUSH4(&serialized_result_array, &serialized_result_buff,
                 &deserialized_result, &result_array);
     result_array = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(result_array_type, 0));
-    for (size_t i = 0; i < kNumExecutors; i++) {
+    size_t num_responses = *reinterpret_cast<const size_t*>(cursor);
+    cursor += sizeof(size_t);
+    for (size_t i = 0; i < num_responses; i++) {
       size_t curr_result_size = *reinterpret_cast<const size_t*>(cursor);
       serialized_result_array = reinterpret_cast<jl_value_t*>(
           jl_ptr_to_array_1d(
@@ -442,6 +439,7 @@ Driver::RepartitionDistArray(
     const char *partition_func_name,
     int32_t partition_scheme,
     int32_t index_type) {
+  LOG(INFO) << __func__;
   task::RepartitionDistArray repartition_dist_array_task;
   repartition_dist_array_task.set_id(id);
   repartition_dist_array_task.set_partition_func_name(partition_func_name);

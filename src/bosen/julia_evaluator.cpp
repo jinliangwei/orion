@@ -835,6 +835,8 @@ JuliaEvaluator::GetVarValue(
               serialized_result_array);
   symbol_jl = jl_symbol(symbol.c_str());
   value_jl = jl_get_global(jl_main_module, symbol_jl);
+  int64_t cnt_value = jl_unbox_int64(value_jl);
+  LOG(INFO) << "cnt value = " << cnt_value;
   jl_function_t *io_buffer_func
       = GetFunction(jl_base_module, "IOBuffer");
   CHECK(io_buffer_func != nullptr);
@@ -871,9 +873,7 @@ JuliaEvaluator::SetVarValue(
     const std::string &symbol,
     uint8_t *serialized_value,
     size_t value_size) {
-  LOG(INFO) << __func__
-            << " symbol = " << symbol
-            << " value size = " << value_size;
+
   jl_sym_t *symbol_jl = nullptr;
   jl_value_t *serialized_value_array = nullptr,
         *serialized_value_array_type = nullptr,
@@ -900,6 +900,10 @@ JuliaEvaluator::SetVarValue(
       = GetFunction(jl_base_module, "deserialize");
   CHECK(deserialize_func != nullptr);
   value_jl = jl_call1(deserialize_func, serialized_value_buff);
+  LOG(INFO) << __func__
+            << " symbol = " << symbol
+            << " value size = " << value_size
+            << " value = " << jl_unbox_int64(value_jl);
   symbol_jl = jl_symbol(symbol.c_str());
   jl_set_global(jl_main_module, symbol_jl, value_jl);
   JL_GC_POP();
@@ -943,6 +947,11 @@ JuliaEvaluator::CombineVarValue(
   original_value_jl = jl_get_global(jl_main_module, symbol_jl);
   jl_function_t *combiner_func = GetFunction(jl_base_module, combiner.c_str());
   new_value_jl = jl_call2(combiner_func, original_value_jl, value_to_combine_jl);
+  LOG(INFO) << __func__
+            << " symbol = " << symbol
+            << " original_value = " << jl_unbox_int64(original_value_jl)
+            << " to_combine = " << jl_unbox_int64(value_to_combine_jl)
+            << " new_value = " << jl_unbox_int64(new_value_jl);
   jl_set_global(jl_main_module, symbol_jl, new_value_jl);
   JL_GC_POP();
   CHECK(!jl_exception_occurred());

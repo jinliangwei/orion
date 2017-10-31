@@ -140,7 +140,8 @@ class Executor {
       kRepartitionDistArraySend = 12,
       kCreateExecForLoop = 13,
       kDefineJuliaDistArray = 14,
-      kGetAccumulatorValue = 15
+      kGetAccumulatorValue = 15,
+      kRepartitionDistArrayAck = 16
             };
 
   static const int32_t kPortSpan = 100;
@@ -618,6 +619,7 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         break;
       case Action::kRepartitionDistArray:
         {
+          LOG(INFO) << "RepartitionDistArray";
           task_type_ = TaskType::kExecCppFunc;
           RepartitionDistArray();
           action_ = Action::kNone;
@@ -632,7 +634,7 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
             action_ = Action::kNone;
             event_handler_.SetToReadOnly(&prt_poll_conn_);
           } else {
-            action_ = Action::kExecutorAck;
+            action_ = Action::kRepartitionDistArrayAck;
           }
         }
         break;
@@ -649,6 +651,25 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
       case Action::kGetAccumulatorValue:
         {
           GetAccumulatorValue();
+          action_ = Action::kNone;
+        }
+        break;
+      case Action::kRepartitionDistArrayAck:
+        {
+          int32_t dist_array_id = dist_array_under_operation_;
+          auto &dist_array = dist_arrays_.at(dist_array_id);
+          auto &max_ids = dist_array.GetMeta().GetMaxPartitionIds();
+
+          auto *ack_msg = message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayAck>(
+            &send_buff_,
+            dist_array_id,
+            max_ids.size());
+          for (size_t i = 0; i < max_ids.size(); i++) {
+            ack_msg->max_ids[i] = max_ids[i];
+          }
+          Send(&master_poll_conn_, &master_);
+          send_buff_.clear_to_send();
+          send_buff_.reset_sent_sizes();
           action_ = Action::kNone;
         }
         break;
@@ -786,20 +807,9 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         }
         delete partition_recv_buff;
         dist_array.CheckAndBuildIndex();
-
-        auto &max_ids = dist_array.GetMeta().GetMaxPartitionIds();
-        auto *ack_msg = message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayAck>(
-            &send_buff_,
-            dist_array_id,
-            max_ids.size());
-         for (size_t i = 0; i < max_ids.size(); i++) {
-          ack_msg->max_ids[i] = max_ids[i];
-        }
-        Send(&master_poll_conn_, &master_);
-        send_buff_.clear_to_send();
-        send_buff_.reset_sent_sizes();
-        action_ = Action::kNone;
+        dist_array_under_operation_ = dist_array_id;
         event_handler_.Remove(&prt_poll_conn_);
+        action_ = Action::kRepartitionDistArrayAck;
       }
       break;
     case message::ExecuteMsgType::kReplyExecForLoopDistArrayData:
