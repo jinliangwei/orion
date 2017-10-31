@@ -55,14 +55,6 @@ class JuliaEvaluator {
       type::PrimitiveType result_type,
       Blob *value);
 
-  void DefineVar(std::string var_name,
-                 std::string var_value);
-
-  static void StaticDefineVar(
-      JuliaEvaluator *julia_eval,
-      std::string var_name,
-      std::string var_value);
-
   void DefineDistArray(std::string *symbol,
                        type::PrimitiveType value_type,
                        std::vector<int64_t> *dims,
@@ -156,6 +148,26 @@ class JuliaEvaluator {
       JuliaEvaluator *julia_evaluator,
       AbstractDistArrayPartition *iteration_space_partition,
       std::string exec_loop_func_name);
+
+  void GetVarValue(
+      const std::string &symbol,
+      Blob *result_buff);
+
+  static void StaticGetVarValue(
+      JuliaEvaluator *julia_evaluator,
+      std::string symbol,
+      Blob *result_buff);
+
+  void SetVarValue(
+      const std::string &symbol,
+      uint8_t *serialized_value,
+      size_t value_size);
+
+  void CombineVarValue(
+      const std::string &symbol,
+      uint8_t *serialized_value_to_combine,
+      size_t value_size,
+      const std::string &combiner);
 };
 
 }

@@ -20,7 +20,7 @@ Orion.init(master_ip, master_port, comm_buff_capacity, num_executors)
 #const data_path = "file:///home/ubuntu/data/ml-10M100K/ratings.csv"
 const data_path = "file:///users/jinlianw/ratings.csv"
 const K = 100
-const num_iterations = 2
+const num_iterations = 1
 const step_size = 0.001
 
 Orion.@share function parse_line(line::AbstractString)
@@ -50,6 +50,9 @@ Orion.@dist_array H = Orion.randn(K, dim_y)
 Orion.@dist_array H = Orion.map_value(H, map_init_param)
 Orion.materialize(H)
 
+Orion.@accumulator error = 0
+Orion.@accumulator cnt = 0
+
 for i = 1:num_iterations
     Orion.@parallel_for for rating in ratings
         x_idx = rating[1][1]
@@ -64,8 +67,16 @@ for i = 1:num_iterations
         H_grad = -2 * diff .* W_row
         W[:, x_idx] = W_row - step_size .* W_grad
         H[:, y_idx] = H_row - step_size .* H_grad
+        cnt += 1
     end
+    sleep(1)
+    cnt = Orion.get_aggregated_value(:cnt, :+)
+    println("cnt = ", cnt)
+#    Orion.reset_accumulator(:cnt, 0)
 end
+
+cnt = Orion.get_aggregated_value(:cnt, :+)
+println("cnt = ", cnt)
 
 #H.save_as_text_file("/home/ubuntu/model/H")
 #W.save_as_text_file("/home/ubuntu/model/W")

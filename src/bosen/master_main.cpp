@@ -15,6 +15,8 @@ DEFINE_int32(master_port, 10000,
              "port that the master thread listens to for "
              "incoming connections");
 
+DEFINE_string(orion_home, "", "Orion home directory");
+
 DEFINE_uint64(comm_buff_capacity, 1024 * 4, "communication buffer capacity");
 
 int
@@ -28,7 +30,7 @@ main(int argc, char *argv[]) {
                               0, 0,
                               FLAGS_master_ip,
                               FLAGS_master_port, "", 0, FLAGS_comm_buff_capacity,
-                              0, 0, 0, "", "");
+                              0, 0, 0, "", FLAGS_orion_home);
   orion::bosen::Master master(config);
   master.Run();
   master.WaitUntilExit();

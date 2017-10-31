@@ -266,6 +266,16 @@ function parallelize_2d(par_for_context::ParForContext,
                                            $loop_batch_func_name_str,
                                            $(par_for_context.is_ordered)))
     push!(parallelized_loop.args, exec_loop_stmt)
+
+#    for (var, var_info) in par_for_scope.inherited_var
+#        println(var, var_info)
+#        if var in keys(accumulator_info_dict)
+#            var_str = string(var)
+#            get_accumulator_value_expr = :(esc(var) = Orion.get_accumulator_value(Symbol($(var_str))))
+            #push!(parallelized_loop.args, get_accumulator_value_expr)
+#            println("get accumulator value for ", var)
+#        end
+#    end
     return parallelized_loop
 end
 

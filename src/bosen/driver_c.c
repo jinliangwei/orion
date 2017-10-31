@@ -71,14 +71,6 @@ extern "C" {
         static_cast<orion::bosen::JuliaModule>(module));
   }
 
-  void orion_define_var(
-      const char *var_name,
-      const uint8_t *var_value,
-      size_t value_size) {
-    driver->DefineVariable(
-        var_name, var_value, value_size);
-  }
-
   void orion_repartition_dist_array(
       int32_t id,
       const char *partition_func_name,
@@ -111,6 +103,14 @@ extern "C" {
         num_global_indexed_dist_arrays,
         loop_batch_func_name,
         is_ordered);
+  }
+
+  jl_value_t* orion_get_accumulator_value(
+      const char *symbol,
+      const char *combiner) {
+    return driver->GetAccumulatorValue(
+        symbol,
+        combiner);
   }
 
   void orion_stop() {

@@ -135,12 +135,12 @@ class Executor {
       kCreateDistArray = 6,
       kTextFileLoadAck = 7,
       kCreateDistArrayAck = 8,
-      kDefineVar = 9,
       kExecutorAck = 10,
       kRepartitionDistArray = 11,
       kRepartitionDistArraySend = 12,
       kCreateExecForLoop = 13,
-      kDefineJuliaDistArray = 14
+      kDefineJuliaDistArray = 14,
+      kGetAccumulatorValue = 15
             };
 
   static const int32_t kPortSpan = 100;
@@ -251,7 +251,6 @@ class Executor {
   void Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn);
   void EvalExpr();
   bool CreateDistArray();
-  void DefineVar();
   void RepartitionDistArray();
   void RepartitionDistArraySend(int32_t dist_array_id, DistArray *dist_array);
   void CreateExecForLoop();
@@ -262,6 +261,8 @@ class Executor {
                           const std::string &loop_batch_func_name);
   void ExecForLoopSendResults(int32_t time_partition_id_to_send);
   void RequestDistArrayData();
+  void GetAccumulatorValue();
+  void ReplyGetAccumulatorValue();
 };
 
 Executor::Executor(const Config& config,
@@ -347,6 +348,7 @@ Executor::operator() () {
     }
     Send(&master_poll_conn_, &master_);
     send_buff_.clear_to_send();
+    send_buff_.reset_sent_sizes();
   }
 
   event_handler_.SetConnectEventHandler(
@@ -528,6 +530,7 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           message::Helper::CreateMsg<message::ExecutorConnectToPeersAck>(&send_buff_);
           Send(&master_poll_conn_, &master_);
           send_buff_.clear_to_send();
+          send_buff_.reset_sent_sizes();
           action_ = Action::kNone;
         }
         break;
@@ -613,13 +616,6 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           action_ = Action::kNone;
         }
         break;
-      case Action::kDefineVar:
-        {
-          task_type_ = TaskType::kExecCppFunc;
-          DefineVar();
-          action_ = Action::kNone;
-        }
-        break;
       case Action::kRepartitionDistArray:
         {
           task_type_ = TaskType::kExecCppFunc;
@@ -648,6 +644,12 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
             action_ = Action::kExecutorAck;
           else
             action_ = Action::kNone;
+        }
+        break;
+      case Action::kGetAccumulatorValue:
+        {
+          GetAccumulatorValue();
+          action_ = Action::kNone;
         }
         break;
       case Action::kExit:
@@ -889,6 +891,11 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
                   action_ = Action::kNone;
               }
               break;
+            case TaskLabel::kGetAccumulatorValue:
+              {
+                ReplyGetAccumulatorValue();
+              }
+              break;
             default:
               LOG(FATAL) << "unknown task label";
           }
@@ -999,22 +1006,6 @@ Executor::HandleDriverMsg() {
         }
       }
       break;
-    case message::DriverMsgType::kDefineVar:
-      {
-        auto *msg = message::DriverMsgHelper::get_msg<
-          message::DriverMsgDefineVar>(recv_buff);
-        size_t expected_size = msg->var_info_size;
-        bool received_next_msg =
-            ReceiveArbitraryBytes(master_.sock,
-                                  &recv_buff,
-                                  &master_recv_byte_buff_,
-                                  expected_size);
-        if (received_next_msg) {
-          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kDefineVar;
-        } else ret = EventHandler<PollConn>::kNoAction;
-      }
-      break;
     case message::DriverMsgType::kRepartitionDistArray:
       {
         auto *msg = message::DriverMsgHelper::get_msg<
@@ -1044,6 +1035,22 @@ Executor::HandleDriverMsg() {
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kCreateExecForLoop;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::DriverMsgType::kGetAccumulatorValue:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgGetAccumulatorValue>(recv_buff);
+        size_t expected_size = msg->task_size;
+        bool received_next_msg =
+            ReceiveArbitraryBytes(master_.sock,
+                                  &recv_buff,
+                                  &master_recv_byte_buff_,
+                                  expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kGetAccumulatorValue;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -1299,28 +1306,6 @@ Executor::CreateDistArray() {
 }
 
 void
-Executor::DefineVar() {
-  LOG(INFO) << "Executor " << __func__;
-  std::string task_str(
-      reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
-      master_recv_byte_buff_.GetSize());
-
-  task::DefineVar define_var_task;
-  define_var_task.ParseFromString(task_str);
-
-  std::string var_name = define_var_task.var_name();
-  std::string var_value = define_var_task.var_value();
-  auto cpp_func = std::bind(
-      JuliaEvaluator::StaticDefineVar,
-      std::placeholders::_1,
-      var_name,
-      var_value);
-  exec_cpp_func_task_.func = cpp_func;
-  exec_cpp_func_task_.label = TaskLabel::kDefineVar;
-  julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
-}
-
-void
 Executor::RepartitionDistArray() {
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
@@ -1404,6 +1389,39 @@ Executor::DefineJuliaDistArray(DistArray *dist_array) {
   exec_cpp_func_task_.func = cpp_func;
   exec_cpp_func_task_.label = TaskLabel::kDefineJuliaDistArray;
   julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+}
+
+void
+Executor::GetAccumulatorValue() {
+  std::string task_str(
+      reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
+      master_recv_byte_buff_.GetSize());
+
+  task::GetAccumulatorValue get_accumulator_value_task;
+  get_accumulator_value_task.ParseFromString(task_str);
+  std::string symbol = get_accumulator_value_task.symbol();
+
+  auto cpp_func = std::bind(
+      JuliaEvaluator::StaticGetVarValue,
+      std::placeholders::_1,
+      symbol,
+      &(exec_cpp_func_task_.result_buff));
+
+  exec_cpp_func_task_.func = cpp_func;
+  exec_cpp_func_task_.label = TaskLabel::kGetAccumulatorValue;
+  julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+}
+
+void
+Executor::ReplyGetAccumulatorValue() {
+  size_t result_size = exec_cpp_func_task_.result_buff.size();
+  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyGetAccumulatorValue>(
+      &send_buff_, result_size);
+  send_buff_.set_next_to_send(exec_cpp_func_task_.result_buff.data(),
+                              exec_cpp_func_task_.result_buff.size());
+  Send(&master_poll_conn_, &master_);
+  send_buff_.clear_to_send();
+  send_buff_.reset_sent_sizes();
 }
 
 }

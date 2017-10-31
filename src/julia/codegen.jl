@@ -401,11 +401,29 @@ function gen_loop_body_function(func_name::Symbol,
     remap_ssa_vars(loop_body, ssa_defs)
     #rewrite_dist_array_access(loop_body)
 
+    new_loop_body = quote end
+
+    for (var, var_info) in par_for_scope.inherited_var
+        if var_info.is_assigned_to &&
+            !var_info.is_marked_local &&
+            !var_info.is_marked_global
+            push!(new_loop_body.args, :(global $var))
+        end
+    end
+
+    if length(new_loop_body.args) > 0
+        new_loop_body.args = [new_loop_body.args; loop_body.args]
+    else
+        new_loop_body = loop_body
+    end
+
     loop_body_func = :(
         function $func_name($iteration_var)
-        $loop_body
+        $new_loop_body
         end
     )
+
+    println(loop_body_func)
 
     batch_loop_stmt = :(
     for i in 1:length(keys)

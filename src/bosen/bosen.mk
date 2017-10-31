@@ -30,6 +30,7 @@ BOSEN_MAIN_EXE := $(filter-out $(BOSEN_TEST_EXE),$(BOSEN_MAIN_EXE))
 BOSEN_PROTO_SRC := $(shell find src/bosen/protobuf -type f -name "*.proto")
 BOSEN_PROTO_CPP := $(BOSEN_PROTO_SRC:.proto=.pb.cc)
 BOSEN_PROTO_H := $(patsubst src/bosen/protobuf/%.proto,include/orion/bosen/%.pb.h,$(BOSEN_PROTO_SRC))
+BOSEN_SRC_PROTO_H := $(patsubst src/bosen/protobuf/%.proto,src/bosen/protobuf/%.pb.h,$(BOSEN_PROTO_SRC))
 BOSEN_PROTO_OBJ := $(BOSEN_PROTO_SRC:.proto=.pb.o)
 BOSEN_PROTO := $(patsubst src/bosen/protobuf/%.proto,protobuf/%,$(BOSEN_PROTO_SRC))
 
@@ -75,13 +76,14 @@ $(BOSEN_PROTO): protobuf/%: src/bosen/protobuf/%.proto
 	protoc -I=src/bosen/protobuf --cpp_out=src/bosen/protobuf src/bosen/$@.proto
 
 $(BOSEN_PROTO_CPP): src/bosen/protobuf/%.pb.cc : protobuf/%
-$(BOSEN_PROTO_H): include/orion/bosen/%.pb.h : protobuf/%
-	cp src/bosen/protobuf/$*.pb.h $@
+$(BOSEN_SRC_PROTO_H): src/bosen/protobuf/%.pb.h : protobuf/%
+$(BOSEN_PROTO_H): include/orion/bosen/%.pb.h : src/bosen/protobuf/%.pb.h
+	cp $< $@
 
 pb_test:
 	echo $(BOSEN_PROTO)
 
 bosen_clean:
 	rm -rf $(BOSEN_OBJ) $(BOSEN_COBJ) $(DRIVER_LIB_OBJ) $(DRIVER_LIB_COBJ)
-	rm -rf $(BOSEN_PROTO_OBJ) $(BOSEN_PROTO_CPP) $(BOSEN_PROTO_H) $(DRIVER_LIB_PROTO_OBJ)
+	rm -rf $(BOSEN_PROTO_OBJ) $(BOSEN_PROTO_CPP) $(BOSEN_PROTO_H) $(BOSEN_SRC_PROTO_H) $(DRIVER_LIB_PROTO_OBJ)
 	rm -rf bin/bosen

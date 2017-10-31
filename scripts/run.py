@@ -112,7 +112,8 @@ def get_arg_strs(args, pargs):
         'master_port' : pargs['master']['port'],
         'num_executors' : num_executors_total,
         'num_servers' : num_servers_total,
-        'comm_buff_capacity' : pargs['master']['comm_buff_capacity']
+        'comm_buff_capacity' : pargs['master']['comm_buff_capacity'],
+        'orion_home' : pargs['worker']['orion_home']
     }
 
     worker_args = {

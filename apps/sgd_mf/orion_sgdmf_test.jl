@@ -19,8 +19,8 @@ Orion.init(master_ip, master_port, comm_buff_capacity, num_executors)
 
 #const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
 #const data_path = "file:///home/ubuntu/data/ml-10M100K/ratings.csv"
-#const data_path = "file:///users/jinlianw/ratings.csv"
-const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
+const data_path = "file:///users/jinlianw/ratings.csv"
+#const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
 const K = 100
 const num_iterations = 1
 const step_size = 0.001
@@ -53,7 +53,7 @@ loop_partition_func = Orion.gen_2d_partition_function(loop_partition_func_name,
                                                       2,
                                                       x_tile_size,
                                                       y_tile_size)
-
+println("to define loop partition func")
 Orion.eval_expr_on_all(loop_partition_func, :Main)
 dist_array_partition_info = Orion.DistArrayPartitionInfo(Orion.DistArrayPartitionType_2d,
                                                          loop_partition_func_name,
@@ -63,14 +63,16 @@ Orion.check_and_repartition(ratings, dist_array_partition_info)
 
 W_param_partition_func_name = Orion.gen_unique_symbol()
 W_param_partition_func = Orion.gen_1d_partition_function(W_param_partition_func_name,
-                                                       2,
-                                                       x_tile_size)
+                                                         2,
+                                                         x_tile_size)
+println("to define W param partition func")
 Orion.eval_expr_on_all(W_param_partition_func, :Main)
 
 H_param_partition_func_name = Orion.gen_unique_symbol()
 H_param_partition_func = Orion.gen_1d_partition_function(H_param_partition_func_name,
-                                                       2,
-                                                       y_tile_size)
+                                                         2,
+                                                         y_tile_size)
+println("to define H param partition func")
 Orion.eval_expr_on_all(H_param_partition_func, :Main)
 
 
@@ -96,7 +98,14 @@ Orion.materialize(H)
 Orion.check_and_repartition(W, W_dist_array_partition_info)
 Orion.check_and_repartition(H, H_dist_array_partition_info)
 
+println("to define function iteration_func")
+
+@Orion.accumulator cnt = 0 +
+
+println("cnt = ", cnt)
+
 @Orion.share function iteration_func(rating)
+    global cnt
     x_idx = rating[1][1]
     y_idx = rating[1][2]
     rv = rating[2]
@@ -109,7 +118,10 @@ Orion.check_and_repartition(H, H_dist_array_partition_info)
     H_grad = -2 * diff .* W_row
     W[:, x_idx] = W_row - step_size .* W_grad
     H[:, y_idx] = H_row - step_size .* H_grad
+    cnt += 1
 end
+
+println("to define function loop_batch_func")
 
 @Orion.share function loop_batch_func(keys::Vector{Int64},
                                       values::Vector{Float32},
@@ -123,7 +135,10 @@ end
     end
 end
 
+println("to define global variable")
+
 Orion.define_vars(Set([:step_size]))
+
 
 @time Orion.exec_for_loop(ratings.id,
                     Orion.ForLoopParallelScheme_2d,
@@ -131,5 +146,8 @@ Orion.define_vars(Set([:step_size]))
                     Vector{Int32}(), "loop_batch_func", false)
 #H.save_as_text_file("/home/ubuntu/model/H")
 #W.save_as_text_file("/home/ubuntu/model/W")
+
+cnt = Orion.get_accumulator_value(:cnt)
+println("cnt = ", cnt)
 
 Orion.stop()

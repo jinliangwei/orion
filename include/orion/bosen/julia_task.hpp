@@ -16,8 +16,8 @@ enum class TaskLabel {
     kDefineVar = 3,
     kComputeRepartition = 4,
     kDefineJuliaDistArray = 5,
-    kExecForLoopTile = 6
-
+    kExecForLoopTile = 6,
+    kGetAccumulatorValue = 7
 };
 
 class JuliaEvaluator;

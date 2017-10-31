@@ -97,6 +97,18 @@ struct DriverMsgExecForLoop {
   }
 };
 
+struct DriverMsgGetAccumulatorValue {
+  size_t task_size;
+ private:
+  DriverMsgGetAccumulatorValue() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _task_size) { task_size = _task_size; }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kGetAccumulatorValue;
+  }
+};
+
 class DriverMsgHelper {
  public:
   template<typename Msg,

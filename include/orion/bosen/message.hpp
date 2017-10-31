@@ -123,7 +123,8 @@ enum class DriverMsgType {
     kMasterResponse = 9,
     kDefineVar = 10,
     kRepartitionDistArray = 11,
-    kExecForLoop = 12
+    kExecForLoop = 12,
+    kGetAccumulatorValue = 13
 };
 
 struct DriverMsg {
@@ -153,7 +154,8 @@ enum class ExecuteMsgType {
       kRepartitionDistArrayMaxPartitionIds = 13,
       kPipelineTimePartition = 14,
       kRequestExecForLoopDistArrayData = 15,
-      kReplyExecForLoopDistArrayData = 16
+      kReplyExecForLoopDistArrayData = 16,
+      kReplyGetAccumulatorValue = 17
 };
 
 struct ExecuteMsg {

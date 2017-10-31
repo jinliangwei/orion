@@ -15,13 +15,18 @@ macro ordered_parallel_for(expr::Expr)
     return parallelize_for_loop(expr, true)
 end
 
-macro accumulator(expr::Expr, combiner::Symbol)
+macro accumulator(expr::Expr)
     @assert is_variable_definition(expr)
     var = assignment_get_assigned_to(expr)
     @assert isa(var, Symbol)
     accumulator_info_dict[var] = AccumulatorInfo(var,
-                                                 eval(assignment_get_assignment_from(expr)),
-                                                 combiner)
+                                                 eval(assignment_get_assigned_from(expr)))
+    ret = quote end
+    push!(ret.args, esc(expr))
+    var_str = string(var)
+    define_var_expr = :(Orion.define_var(Symbol($var_str)))
+    push!(ret.args, define_var_expr)
+    return ret
 end
 
 function parallelize_for_loop(loop_stmt, is_ordered::Bool)
@@ -47,51 +52,6 @@ function parallelize_for_loop(loop_stmt, is_ordered::Bool)
                                              flow_graph_context, ssa_context)
     println(parallelized_loop)
     return parallelized_loop
-end
-
-function transform_loop(expr::Expr, context::ScopeContext)
-
-#    print(scope_context)
-
-
-    #push!(ret.args, define_static_bc_vars_stmt)
-
-
-    return
-    push!(ret.args, loop_transformed)
-
-
-    #println(eval(current_module(), :num_iterations))
-    #ret = :(for i = 1:$(esc(:num_iterations)) println(i) end)
-    # TODO: generate and insert stmts for dynamic broadcast variables
-
-    # parallelization
-   # par_for_index = 1
-   # for curr_par_for_context in scope_context.par_for_context
-    #    parallelized_for_loop = static_parallelize(curr_par_for_context,
-     #                                              scope_context.par_for_scope[par_for_index])
-      #  print(scope_context)
-       # par_for_index += 1
-    #end
-
-    #bc_expr_array = Array{Array{Expr, 1}, 1}()
-#    for dynamic_bc_var in dynamic_bc_var_array
-#        bc_expr_array = gen_stmt_broadcast_var(dynamic_bc_var)
-        #push!(bc_expr_array, expr_array)
-#        for bc_expr in bc_expr_array
-#            push!(iterative_body.args, bc_expr)
-#        end
-#    end
-
- #   push!(ret.args,
- #         Expr(expr.head,
- #              esc(expr.args[1]),
- #              iterative_body
- #              )
-    #         )
-
-    #dump(ret)
-    return ret
 end
 
 macro objective(expr::Expr)

@@ -22,7 +22,8 @@
 #include <orion/bosen/recv_arbitrary_bytes.hpp>
 #include <orion/bosen/task_type.hpp>
 #include <orion/bosen/dist_array_meta.hpp>
-
+#include <orion/bosen/julia_evaluator.hpp>
+#include <orion/bosen/accumulator.hpp>
 namespace orion {
 namespace bosen {
 
@@ -142,7 +143,10 @@ class MasterThread {
   std::unordered_map<int32_t, DistArrayMeta> dist_array_metas_;
 
   std::string lib_path_;
+  JuliaEvaluator julia_eval_;
 
+  Accumulator accumulator_;
+  const std::string kOrionHome;
  public:
   MasterThread(const Config &config);
   ~MasterThread();
@@ -158,7 +162,9 @@ class MasterThread {
   int HandleDriverMsg(PollConn *poll_conn_ptr);
   int HandleExecutorMsg(PollConn *poll_conn_ptr);
   int HandleExecuteMsg(PollConn *poll_conn_ptr);
-  void ConstructDriverResponse(int32_t executor_id, size_t num_responses, size_t result_size);
+  void ConstructDriverResponse(int32_t executor_id, size_t num_responses,
+                               size_t result_size);
+  void InitializeAccumulator();
   void BroadcastToAllExecutorsAndServers();
   void BroadcastToAllExecutors();
   void BroadcastToAllServers();
@@ -193,12 +199,15 @@ MasterThread::MasterThread(const Config &config):
     servers_(config.kNumServers),
     send_mem_(config.kCommBuffCapacity),
     send_buff_(send_mem_.data(), config.kCommBuffCapacity),
-    host_info_(config.kNumExecutors + config.kNumServers) { }
+    host_info_(config.kNumExecutors + config.kNumServers),
+    kOrionHome(config.kOrionHome) { }
 
 MasterThread::~MasterThread() { }
 
 void
 MasterThread::operator() () {
+  julia_eval_.Init(kOrionHome);
+
   InitListener();
   listen_poll_conn_ = {&listen_, PollConn::ConnType::listen};
   event_handler_.SetToReadOnly(&listen_poll_conn_);
@@ -222,6 +231,7 @@ MasterThread::operator() () {
     event_handler_.WaitAndHandleEvent();
     if (action_ == Action::kExit) break;
   }
+  julia_eval_.AtExitHook();
   LOG(INFO) << "master exiting!";
 }
 
@@ -492,23 +502,6 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
-    case message::DriverMsgType::kDefineVar:
-      {
-        LOG(INFO) << "master received DefineVarMsg";
-        auto *msg = message::DriverMsgHelper::get_msg<
-          message::DriverMsgDefineVar>(recv_buff);
-        size_t expected_size = msg->var_info_size;
-        bool received_next_msg
-            = ReceiveArbitraryBytes(driver_.sock, &recv_buff,
-                                    &driver_recv_byte_buff_,
-                                    expected_size);
-        if (received_next_msg) {
-          executor_in_action_ = -1;
-          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
-        } else ret = EventHandler<PollConn>::kNoAction;
-      }
-      break;
     case message::DriverMsgType::kRepartitionDistArray:
       {
         auto *msg = message::DriverMsgHelper::get_msg<
@@ -552,6 +545,23 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kForwardDriverMsgToAllExecutors;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::DriverMsgType::kGetAccumulatorValue:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgGetAccumulatorValue>(recv_buff);
+        size_t expected_size = msg->task_size;
+        bool received_next_msg
+            = ReceiveArbitraryBytes(driver_.sock, &recv_buff,
+                                    &driver_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          executor_in_action_ = -1;
+          InitializeAccumulator();
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -798,6 +808,48 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         }
       }
       break;
+    case message::ExecuteMsgType::kReplyGetAccumulatorValue:
+      {
+        auto *reply_msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgReplyGetAccumulatorValue>(recv_buff);
+        size_t expected_size = reply_msg->result_size;
+        int32_t executor_id = sock_conn_to_id_[poll_conn_ptr->conn];
+        bool received_next_msg =
+            ReceiveArbitraryBytes(poll_conn_ptr->conn->sock, &recv_buff,
+                                  &executor_byte_buff_[executor_id], expected_size);
+
+        action_ = Action::kNone;
+        if (received_next_msg) {
+          const auto &symbol = accumulator_.symbol;
+          if (accumulator_.num_accumulated == 0) {
+            julia_eval_.SetVarValue(symbol,
+                                    executor_byte_buff_[executor_id].GetBytes(),
+                                    executor_byte_buff_[executor_id].GetSize());
+          } else {
+            julia_eval_.CombineVarValue(symbol,
+                                      executor_byte_buff_[executor_id].GetBytes(),
+                                      executor_byte_buff_[executor_id].GetSize(),
+                                      accumulator_.combiner);
+          }
+          accumulator_.num_accumulated += 1;
+          if (accumulator_.num_accumulated == kNumExecutors + kNumServers) {
+            Blob var_blob;
+            julia_eval_.GetVarValue(symbol, &var_blob);
+            driver_send_byte_buff_.Reset(var_blob.size());
+            memcpy(driver_send_byte_buff_.GetBytes(), var_blob.data(), var_blob.size());
+            driver_send_byte_buff_.IncSize(var_blob.size());
+            message::DriverMsgHelper::CreateMsg<message::DriverMsgMasterResponse>(
+                &send_buff_, var_blob.size());
+            send_buff_.set_next_to_send(driver_send_byte_buff_.GetBytes(),
+                                        driver_send_byte_buff_.GetSize());
+            SendToDriver();
+            send_buff_.reset_sent_sizes();
+            send_buff_.clear_to_send();
+          }
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
     default:
       LOG(FATAL) << "unknown message type";
   }
@@ -860,6 +912,18 @@ MasterThread::ConstructDriverResponse(int32_t executor_id,
            byte_buff.GetSize());
     driver_send_byte_buff_.IncSize(byte_buff.GetSize() + sizeof(size_t));
   }
+}
+
+void
+MasterThread::InitializeAccumulator() {
+  task::GetAccumulatorValue get_accumulator_value_task;
+  std::string task_buff(
+      reinterpret_cast<const char*>(driver_recv_byte_buff_.GetBytes()),
+      driver_recv_byte_buff_.GetSize());
+  get_accumulator_value_task.ParseFromString(task_buff);
+  accumulator_.symbol = get_accumulator_value_task.symbol();
+  accumulator_.combiner = get_accumulator_value_task.combiner();
+  accumulator_.num_accumulated = 0;
 }
 
 void

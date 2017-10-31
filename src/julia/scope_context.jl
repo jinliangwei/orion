@@ -61,8 +61,7 @@ end
 
 type AccumulatorInfo
     sym::Symbol
-    initializer
-    combiner_func::Symbol
+    init_value
 end
 
 accumulator_info_dict = Dict{Symbol, AccumulatorInfo}()

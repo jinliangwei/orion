@@ -1,10 +1,22 @@
-include("/home/ubuntu/orion/src/julia/orion_worker.jl")
+include("/users/jinlianw/orion.git/src/julia/orion.jl")
 
-OrionWorker.set_lib_path("/home/ubuntu/orion/lib/liborion.so")
-#OrionWorker.helloworld()
-OrionWorker.load_constants()
-ret = OrionWorker.dist_array_read(Ptr{Void}(0), (1,))
-println(ret)
+Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
+Orion.helloworld()
 
-ret = OrionWorker.dist_array_read(Ptr{Void}(0), (:, 2:4))
-println(ret)
+const master_ip = "127.0.0.1"
+#const master_ip = "10.117.1.14"
+const master_port = 10000
+const comm_buff_capacity = 1024
+const num_executors = 4
+
+Orion.glog_init()
+Orion.init(master_ip, master_port, comm_buff_capacity, num_executors)
+
+@Orion.accumulator cnt = 0 +
+println("cnt = ", cnt)
+
+cnt = Orion.get_accumulator_value(:cnt)
+
+println("cnt = ", cnt)
+
+Orion.stop()

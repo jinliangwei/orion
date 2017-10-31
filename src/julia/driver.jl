@@ -68,14 +68,9 @@ function define_var(var::Symbol)
 
     expr = :($var = $value)
 
+    println("to define var ", var,
+            " value = ", value)
     eval_expr_on_all(expr, :Main)
-
-    #buff = IOBuffer()
-    #serialize(buff, value)
-    #buff_array = takebuf_array(buff)
-    #ccall((:orion_define_var, lib_path),
-     #     Void, (Cstring, Ptr{UInt8}, UInt64),
-     #     string(var), buff_array, length(buff_array))
 end
 
 function define_vars(var_set::Set{Symbol})
@@ -101,4 +96,25 @@ function exec_for_loop(iteration_space_id::Integer,
           time_partitioned_dist_array_ids, length(time_partitioned_dist_array_ids),
           global_indexed_dist_array_ids, length(global_indexed_dist_array_ids),
           loop_batch_func_name, is_ordered)
+end
+
+function get_aggregated_value(var_sym::Symbol, combiner_func::Symbol)
+    @assert which(combiner_func) == Base
+    combiner_str = string(combiner_func)
+    println("get_accumulator_value, sym = ", var_sym,
+            " combiner_str = ", combiner_str)
+    value = ccall((:orion_get_accumulator_value, lib_path),
+                  Any, (Cstring, Cstring),
+                  string(var_sym), combiner_str)
+
+    return value
+end
+
+function reset_accumulator(var_sym::Symbol, value)
+    expr = :($var_sym = $value)
+    eval_expr_on_all(expr, :Main)
+end
+
+function reset_accumulator(var_sym::Symbol)
+    reset_accumulator(var_sym, accumulator_info_dict[var_sym].init_value)
 end

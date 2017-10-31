@@ -223,11 +223,22 @@ JuliaEvaluator::EvalExpr(const std::string &serialized_expr,
       = GetFunction(jl_base_module, "IOBuffer");
   CHECK(io_buffer_func != nullptr);
   serialized_expr_buff = jl_call1(io_buffer_func,
-                                 reinterpret_cast<jl_value_t*>(serialized_expr_array));
+                                  reinterpret_cast<jl_value_t*>(serialized_expr_array));
   jl_function_t *deserialize_func
       = GetFunction(jl_base_module, "deserialize");
   CHECK(deserialize_func != nullptr);
   expr = jl_call1(deserialize_func, serialized_expr_buff);
+
+    jl_value_t* exception_jl = jl_exception_occurred();
+  if (exception_jl) {
+    jl_function_t *show_error_func
+        = GetFunction(jl_base_module, "showerror");
+    jl_call2(show_error_func, jl_stdout_obj(), exception_jl);
+    LOG(FATAL) << "julia exception occurs: " << jl_typeof_str(exception_jl)
+               << " " << jl_typename_str(exception_jl);
+  }
+  CHECK(!jl_exception_occurred());
+
   if (jl_exception_occurred())
         LOG(INFO) << "julia exception occurs: " << jl_typeof_str(jl_exception_occurred());
   jl_function_t *eval_func
@@ -331,55 +342,6 @@ JuliaEvaluator::ParseStringValueOnly(
   CHECK(jl_is_float64(value)) << "value ptr is " << (void*) value;
   UnboxValue(value, result_type, value_buff);
   JL_GC_POP();
-}
-
-void
-JuliaEvaluator::DefineVar(std::string var_name,
-                          std::string var_value) {
-  LOG(INFO) << __func__ << " var_name = " << var_name
-            << " var_value.size = " << var_value.size();
-
-  jl_value_t *array_type = nullptr,
-  *serialized_value_buff = nullptr,
-                           *var_value_jl = nullptr,
-                           *var_name_jl = nullptr;
-  jl_array_t *serialized_value_array = nullptr;
-  JL_GC_PUSH5(&array_type, &serialized_value_buff, &var_name_jl,
-              &var_value_jl, &serialized_value_array);
-
-  jl_function_t *define_setter_func
-      = GetFunction(jl_main_module, "orion_define_setter");
-  var_name_jl = jl_cstr_to_string(var_name.c_str());
-  jl_call1(define_setter_func, var_name_jl);
-
-  array_type = jl_apply_array_type(jl_uint8_type, 1);
-  std::vector<uint8_t> temp_serialized_value(var_value.size());
-  memcpy(temp_serialized_value.data(), var_value.data(),
-         var_value.size());
-  serialized_value_array = jl_ptr_to_array_1d(array_type,
-                                              temp_serialized_value.data(),
-                                              temp_serialized_value.size(), 0);
-  jl_function_t *io_buffer_func
-      = GetFunction(jl_base_module, "IOBuffer");
-  serialized_value_buff = jl_call1(io_buffer_func,
-                                   reinterpret_cast<jl_value_t*>(serialized_value_array));
-
-  jl_function_t *deserialize_func
-      = GetFunction(jl_base_module, "deserialize");
-  var_value_jl = jl_call1(deserialize_func, serialized_value_buff);
-
-  jl_function_t *setter_func
-      = GetFunction(jl_main_module, (std::string("orion_set_") + var_name).c_str());
-  jl_call1(setter_func, var_value_jl);
-  JL_GC_POP();
-}
-
-void
-JuliaEvaluator::StaticDefineVar(
-    JuliaEvaluator *julia_eval,
-    std::string var_name,
-    std::string var_value) {
-  julia_eval->DefineVar(var_name, var_value);
 }
 
 void
@@ -856,6 +818,134 @@ JuliaEvaluator::StaticExecForLoopTile(
   julia_eval->ExecForLoopTile(iteration_space_partition,
                           exec_loop_func_name);
 
+}
+
+void
+JuliaEvaluator::GetVarValue(
+    const std::string &symbol,
+    Blob *result_buff) {
+  jl_sym_t *symbol_jl = nullptr;
+  jl_value_t *value_jl = nullptr,
+                 *buff = nullptr,
+*serialized_result_array = nullptr;
+
+  JL_GC_PUSH4(reinterpret_cast<jl_value_t*>(symbol_jl),
+              value_jl,
+              buff,
+              serialized_result_array);
+  symbol_jl = jl_symbol(symbol.c_str());
+  value_jl = jl_get_global(jl_main_module, symbol_jl);
+  jl_function_t *io_buffer_func
+      = GetFunction(jl_base_module, "IOBuffer");
+  CHECK(io_buffer_func != nullptr);
+  buff = jl_call0(io_buffer_func);
+
+  jl_function_t *serialize_func
+      = GetFunction(jl_base_module, "serialize");
+  CHECK(serialize_func != nullptr);
+  jl_call2(serialize_func, buff, value_jl);
+
+  jl_function_t *takebuff_array_func
+      = GetFunction(jl_base_module, "takebuf_array");
+  serialized_result_array = jl_call1(takebuff_array_func, buff);
+  size_t result_array_length = jl_array_len(serialized_result_array);
+  uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
+  result_buff->resize(result_array_length);
+  LOG(INFO) << __func__
+            << " symbol = " << symbol
+            << " result_array_length = " << result_array_length;
+  memcpy(result_buff->data(), array_bytes, result_array_length);
+  JL_GC_POP();
+}
+
+void
+JuliaEvaluator::StaticGetVarValue(
+    JuliaEvaluator *julia_evaluator,
+    std::string symbol,
+    Blob *result_buff) {
+  julia_evaluator->GetVarValue(symbol, result_buff);
+}
+
+void
+JuliaEvaluator::SetVarValue(
+    const std::string &symbol,
+    uint8_t *serialized_value,
+    size_t value_size) {
+  LOG(INFO) << __func__
+            << " symbol = " << symbol
+            << " value size = " << value_size;
+  jl_sym_t *symbol_jl = nullptr;
+  jl_value_t *serialized_value_array = nullptr,
+        *serialized_value_array_type = nullptr,
+                           *value_jl = nullptr,
+              *serialized_value_buff = nullptr;
+  JL_GC_PUSH5(reinterpret_cast<jl_value_t*>(symbol_jl),
+              value_jl,
+              serialized_value_buff,
+              serialized_value_array,
+              serialized_value_array_type);
+  serialized_value_array_type = jl_apply_array_type(jl_uint8_type, 1);
+
+  serialized_value_array = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(serialized_value_array_type,
+                         serialized_value,
+                         value_size, 0));
+  jl_function_t *io_buffer_func
+      = GetFunction(jl_base_module, "IOBuffer");
+  CHECK(io_buffer_func != nullptr);
+  serialized_value_buff = jl_call1(io_buffer_func,
+                                   reinterpret_cast<jl_value_t*>(serialized_value_array));
+
+  jl_function_t *deserialize_func
+      = GetFunction(jl_base_module, "deserialize");
+  CHECK(deserialize_func != nullptr);
+  value_jl = jl_call1(deserialize_func, serialized_value_buff);
+  symbol_jl = jl_symbol(symbol.c_str());
+  jl_set_global(jl_main_module, symbol_jl, value_jl);
+  JL_GC_POP();
+  CHECK(!jl_exception_occurred());
+}
+
+void
+JuliaEvaluator::CombineVarValue(
+    const std::string &symbol,
+    uint8_t *serialized_value_to_combine,
+    size_t value_size,
+    const std::string &combiner) {
+  LOG(INFO) << __func__ << " "
+            << symbol << " " << combiner
+            << " " << value_size;
+  jl_value_t **jl_values;
+  JL_GC_PUSHARGS(jl_values, 7);
+  jl_sym_t *&symbol_jl = reinterpret_cast<jl_sym_t*&>(jl_values[0]);
+  jl_value_t *&serialized_value_array = jl_values[1],
+        *&serialized_value_array_type = jl_values[2],
+                           *&value_to_combine_jl = jl_values[3],
+              *&serialized_value_buff = jl_values[4],
+                  *&original_value_jl = jl_values[5],
+                       *&new_value_jl = jl_values[6];
+  serialized_value_array_type = jl_apply_array_type(jl_uint8_type, 1);
+  serialized_value_array = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(serialized_value_array_type,
+                         serialized_value_to_combine,
+                         value_size, 0));
+  jl_function_t *io_buffer_func
+      = GetFunction(jl_base_module, "IOBuffer");
+  CHECK(io_buffer_func != nullptr);
+  serialized_value_buff = jl_call1(io_buffer_func,
+                                   reinterpret_cast<jl_value_t*>(serialized_value_array));
+
+  jl_function_t *deserialize_func
+      = GetFunction(jl_base_module, "deserialize");
+  CHECK(deserialize_func != nullptr);
+  value_to_combine_jl = jl_call1(deserialize_func, serialized_value_buff);
+  symbol_jl = jl_symbol(symbol.c_str());
+  original_value_jl = jl_get_global(jl_main_module, symbol_jl);
+  jl_function_t *combiner_func = GetFunction(jl_base_module, combiner.c_str());
+  new_value_jl = jl_call2(combiner_func, original_value_jl, value_to_combine_jl);
+  jl_set_global(jl_main_module, symbol_jl, new_value_jl);
+  JL_GC_POP();
+  CHECK(!jl_exception_occurred());
 }
 
 }

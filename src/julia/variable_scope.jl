@@ -122,7 +122,7 @@ function get_vars_to_broadcast(scope_context::ScopeContext)
     for (var, info) in scope_context.inherited_var
         if !isdefined(current_module(), var) ||
             isa(eval(current_module(), var), DistArray) ||
-            is_var_accumulator(scope_context, var)
+            var in keys(accumulator_info_dict)
             continue
         end
 

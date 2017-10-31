@@ -37,11 +37,6 @@ extern "C" {
       bool is_dense,
       const char* symbol);
 
-  void orion_define_var(
-      const char *var_name,
-      const uint8_t *var_value,
-      size_t value_size);
-
   void orion_repartition_dist_array(
       int32_t id,
       const char *partition_func_name,
@@ -59,6 +54,10 @@ extern "C" {
       size_t num_global_indexed_dist_arrays,
       const char *loop_batch_func_name,
       bool is_ordered);
+
+  jl_value_t* orion_get_accumulator_value(
+      const char *symbol,
+      const char *combiner);
 
   void orion_stop();
 

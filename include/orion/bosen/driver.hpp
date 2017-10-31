@@ -149,10 +149,6 @@ class Driver {
       bool is_dense,
       const char* symbol);
 
-  void DefineVariable(const char *var_name,
-                      const uint8_t *var_value,
-                      size_t value_size);
-
   void RepartitionDistArray(
       int32_t id,
       const char *partition_func_name,
@@ -170,6 +166,11 @@ class Driver {
       size_t num_gloabl_indexed_dist_arrays,
       const char* loop_batch_func_name,
       bool is_ordered);
+
+  jl_value_t* GetAccumulatorValue(
+      const char *symbol,
+      const char *combiner);
+
   void Stop();
 };
 
@@ -436,28 +437,6 @@ Driver::Stop() {
 }
 
 void
-Driver::DefineVariable(const char *var_name,
-                       const uint8_t *var_value,
-                       size_t value_size) {
-  task::DefineVar define_var_task;
-  define_var_task.set_var_name(var_name);
-  define_var_task.set_var_value(var_value, value_size);
-  define_var_task.SerializeToString(&msg_buff_);
-  message::DriverMsgHelper::CreateMsg<message::DriverMsgDefineVar>(
-      &master_.send_buff, msg_buff_.size());
-  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
-  BlockSendToMaster();
-  master_.send_buff.clear_to_send();
-  master_.send_buff.reset_sent_sizes();
-  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
-  received_from_master_ = false;
-  BlockRecvFromMaster();
-  message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
-      master_recv_temp_buff_);
-  master_recv_temp_buff_.ClearOneMsg();
-}
-
-void
 Driver::RepartitionDistArray(
     int32_t id,
     const char *partition_func_name,
@@ -529,6 +508,58 @@ Driver::ExecForLoop(
   message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
       master_recv_temp_buff_);
   master_recv_temp_buff_.ClearOneMsg();
+}
+
+jl_value_t*
+Driver::GetAccumulatorValue(
+    const char *symbol,
+    const char *combiner) {
+  task::GetAccumulatorValue get_accumulator_value_task;
+  get_accumulator_value_task.set_symbol(symbol);
+  get_accumulator_value_task.set_combiner(combiner);
+  get_accumulator_value_task.SerializeToString(&msg_buff_);
+
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgGetAccumulatorValue>(
+      &master_.send_buff, msg_buff_.size());
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  received_from_master_ = false;
+  BlockRecvFromMaster();
+  auto *msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  size_t result_size = msg->result_bytes;
+  CHECK_GE(result_size, 0);
+
+  uint8_t *cursor = result_buff_.GetBytes();
+  jl_value_t *bytes_array_type = jl_apply_array_type(jl_uint8_type, 1);
+
+  jl_function_t *io_buffer_func
+      = GetFunction(jl_base_module, "IOBuffer");
+  jl_function_t *deserialize_func
+      = GetFunction(jl_base_module, "deserialize");
+
+  jl_value_t *serialized_result_array = nullptr,
+              *serialized_result_buff = nullptr,
+                 *deserialized_result = nullptr;
+  JL_GC_PUSH3(&serialized_result_array,
+              &serialized_result_buff,
+              &deserialized_result);
+  serialized_result_array = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(
+          bytes_array_type,
+          cursor,
+          result_size, 0));
+  serialized_result_buff = jl_call1(io_buffer_func,
+                                    reinterpret_cast<jl_value_t*>(serialized_result_array));
+  deserialized_result = jl_call1(deserialize_func, serialized_result_buff);
+
+  CHECK(!jl_exception_occurred());
+  JL_GC_POP();
+  master_recv_temp_buff_.ClearOneAndNextMsg();
+  return deserialized_result;
 }
 
 }

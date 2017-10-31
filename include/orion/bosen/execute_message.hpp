@@ -228,6 +228,21 @@ struct ExecuteMsgReplyExecForLoopDistArrayData {
   }
 };
 
+struct ExecuteMsgReplyGetAccumulatorValue {
+ public:
+  size_t result_size;
+ private:
+  ExecuteMsgReplyGetAccumulatorValue() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _result_size) {
+    result_size = _result_size;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kReplyGetAccumulatorValue;
+  }
+};
+
 class ExecuteMsgHelper {
  public:
   template<typename Msg,
