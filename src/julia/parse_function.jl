@@ -15,6 +15,7 @@ function parse_map_function(
 #        error("Not all types are concrete: $arg_types")
 #    end
     rettype_array = Base.return_types(func, arg_types)
+    println(length(rettype_array))
     @assert length(rettype_array) == 1
     rettype = first(rettype_array)
     local flatten_results = false

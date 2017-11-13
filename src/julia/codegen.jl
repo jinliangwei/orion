@@ -7,7 +7,7 @@ end
 sp_symbol_counter = 0
 function gen_unique_sp_symbol()::Symbol
     global sp_symbol_counter += 1
-    return Symbol("!oriongen_", string(sp_symbol_counter))
+    return Symbol("oriongen_sp_", string(sp_symbol_counter))
 end
 
 function gen_2d_partition_function(func_name::Symbol,
@@ -382,9 +382,9 @@ function gen_dist_array_write_func_call(dist_array_id::Integer,
     return :(OrionWorker.dist_array_write($dist_array_id, $(subscripts), $source))
 end
 
+
 # this is a very incomplete version, just to make MF and LDA work
 function gen_loop_body_function(func_name::Symbol,
-                                batch_func_name::Symbol,
                                 loop_body,
                                 par_for_context::ParForContext,
                                 par_for_scope::ScopeContext,
@@ -398,33 +398,29 @@ function gen_loop_body_function(func_name::Symbol,
     iteration_var = par_for_context.iteration_var
     iteration_var_string = string(iteration_var)
 
-    remap_ssa_vars(loop_body, ssa_defs)
-    #rewrite_dist_array_access(loop_body)
-
-    new_loop_body = quote end
+    #
 
     for (var, var_info) in par_for_scope.inherited_var
         if var_info.is_assigned_to &&
             !var_info.is_marked_local &&
             !var_info.is_marked_global
-            push!(new_loop_body.args, :(global $var))
+            push!(loop_body.args, :(global $var))
         end
-    end
-
-    if length(new_loop_body.args) > 0
-        new_loop_body.args = [new_loop_body.args; loop_body.args]
-    else
-        new_loop_body = loop_body
     end
 
     loop_body_func = :(
         function $func_name($iteration_var)
-        $new_loop_body
+        $loop_body
         end
     )
 
     println(loop_body_func)
+    return loop_body_func
+end
 
+function gen_loop_body_batch_function(batch_func_name::Symbol,
+                                      func_name::Symbol,
+                                      iter_space_value_type::DataType)
     batch_loop_stmt = :(
     for i in 1:length(keys)
         key = keys[i]
@@ -443,29 +439,161 @@ function gen_loop_body_function(func_name::Symbol,
         $(batch_loop_stmt)
     end
     )
-
-    #eval(batch_func)
-    #println(batch_func)
-    return loop_body_func, batch_func
+    return batch_func
 end
 
-function gen_parallelized_loop(expr::Expr,
-                              par_for_scope::ScopeContext,
-                              par_for_context::ParForContext,
-                              flow_graph::BasicBlock,
-                              flow_graph_context::FlowGraphContext,
-                              ssa_context::SsaContext)
-    parallelized_loop = quote end
-    bc_vars = get_vars_to_broadcast(par_for_scope)
-    define_dynamic_bc_vars_stmt = :(Orion.define_vars($bc_vars))
-    push!(parallelized_loop.args, define_dynamic_bc_vars_stmt)
-    par_for_context.dist_array_access_dict =
-        get_dist_array_access(flow_graph, par_for_context.iteration_var, ssa_context)
-    exec_loop_stmts = static_parallelize(par_for_context, par_for_scope, ssa_context)
+function gen_loop_body_batch_function_iter_dims(batch_func_name::Symbol,
+                                                func_name::Symbol,
+                                                iter_space_value_type::DataType,
+                                                iterate_dims_length::Int64)
 
-    if exec_loop_stmts == nothing
-        error("loop not parallelizable")
+    batch_loop_stmt = quote
+        if length(keys) == 0
+          return
+        end
+        first_key = keys[1]
+        first_dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+        prefix = first_dim_keys[(end - $iterate_dims_length):end]
+        dim_keys_vec = Vector{Vector{Int64}}()
+        value_vec = Vector{$iter_space_value_type}()
+        for i in 1:length(keys)
+          key = keys[i]
+          value = values[i]
+          dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+          curr_prefix = dim_keys[(end - $iterate_dims_length):end]
+
+          if curr_prefix == prefix
+            push!(dim_keys_vec, dim_keys)
+            push!(value_vec, value)
+          else
+            key_value = (dim_keys_vec, value_vec)
+            $(func_name)(key_value)
+            dim_keys_vec = [dim_keys]
+            value_vec = [value]
+            prefix = curr_prefix
+          end
+        end
     end
-    push!(parallelized_loop.args, exec_loop_stmts)
-    return parallelized_loop
+
+    batch_func = :(
+    function $batch_func_name(keys::Vector{Int64},
+                              values::Vector{$iter_space_value_type},
+                              dims::Vector{Int64})
+        $(batch_loop_stmt)
+    end
+    )
+
+    return batch_func
+end
+
+function gen_prefetch_function(prefetch_func_name::Symbol,
+                               iterate_var::Symbol,
+                               prefetch_stmts::Expr)
+    prefetch_func = :(
+        function $prefetch_func_name($iterate_var,
+                                     oriongen_prefetch_point_dict::Dict{Int64, Set{Int64}},
+                                     oriongen_prefetch_point_dict::Dict{Int64, Set{Tuple{Int64, Int64}}})
+            $prefetch_stmts
+        end
+    )
+    return prefetch_func
+end
+
+function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
+                                     prefetch_func_name::Symbol,
+                                     iter_space_value_type::DataType)
+        prefetch_batch_func = :(
+            function $prefetch_batch_func_name(keys::Vector{Int64},
+                                               values::Vector{$iter_space_value_type},
+                                               dims::Vector{Int64},
+                                               global_indexed_dist_array_ids::Vector{Int64})::Tuple{Vector{Vector{Int64}},
+                                                                                                    Vector{Vector{Tuple{Int64, Int64}}}}
+            prefetch_point_dict = Dict{Int64, Set{Int64}}()
+            prefetch_range_dict = Dict{Int64, Set{Tuple{Int64, Int64}}}()
+            for id in global_indexed_dist_array_ids
+                prefetch_point_dict[id] = Set{Int64}()
+                prefetch_range_dict[id] = Set{Tuple{Int64, Int64}}()
+            end
+
+            for i in 1:length(keys)
+                key = keys[i]
+                value = values[i]
+                dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+
+                key_value = (dim_keys, value)
+                $(prefetch_func_name)(key_value, prefetch_point_dict, prefetch_range_dict)
+            end
+
+            prefetch_point_array = Vector{Vector{Int64}}()
+            prefetch_range_array = Vector{Vector{Tuple{Int64, Int64}}}()
+            for id in global_indexed_dist_array_ids
+                point_set = prefetch_point_dict[id]
+                push!(prefetch_point_array, collect(point_set))
+                range_set = prefetch_range_dict[id]
+                push!(prefetch_range_array, collect(range_set))
+            end
+            return (prefetch_point_array, prefetch_range_array)
+        end
+    )
+
+
+    return prefetch_batch_func
+end
+
+
+function gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name::Symbol,
+                                               prefetch_func_name::Symbol,
+                                               iter_space_value_type::DataType,
+                                               iterate_dims_length::Int64)
+        prefetch_batch_func = :(
+            function $prefetch_batch_func_name(keys::Vector{Int64},
+                                               values::Vector{$iter_space_value_type},
+                                               dims::Vector{Int64},
+                                               global_indexed_dist_array_ids::Vector{Int64})::Tuple{Vector{Vector{Int64}},
+                                                                                                    Vector{Vector{Tuple{Int64, Int64}}}}
+            prefetch_point_dict = Dict{Int64, Set{Int64}}()
+            prefetch_range_dict = Dict{Int64, Set{Tuple{Int64, Int64}}}()
+            for id in global_indexed_dist_array_ids
+                prefetch_point_dict[id] = Set{Int64}()
+                prefetch_range_dict[id] = Set{Tuple{Int64, Int64}}()
+            end
+
+            if length(keys) > 0
+                first_key = keys[1]
+                first_dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+                prefix = first_dim_keys[(end - $iterate_dims_length):end]
+                dim_keys_vec = Vector{Vector{Int64}}()
+                value_vec = Vector{$iter_space_value_type}()
+                for i in 1:length(keys)
+                    key = keys[i]
+                    value = values[i]
+                    dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+                    curr_prefix = dim_keys[(end - $iterate_dims_length):end]
+
+                    if curr_prefix == prefix
+                        push!(dim_keys_vec, dim_keys)
+                        push!(value_vec, value)
+                    else
+                        key_value = (dim_keys_vec, value_vec)
+                        $(prefetch_func_name)(key_value, prefetch_point_dict, prefetch_range_dict)
+                        dim_keys_vec = [dim_keys]
+                        value_vec = [value]
+                        prefix = curr_prefix
+                    end
+                end
+            end
+
+            prefetch_point_array = Vector{Vector{Int64}}()
+            prefetch_range_array = Vector{Vector{Tuple{Int64, Int64}}}()
+            for id in global_indexed_dist_array_ids
+                point_set = prefetch_point_dict[id]
+                push!(prefetch_point_array, collect(point_set))
+                range_set = prefetch_range_dict[id]
+                push!(prefetch_range_array, collect(range_set))
+            end
+            return (prefetch_point_array, prefetch_range_array)
+        end
+    )
+
+    return prefetch_batch_func
 end

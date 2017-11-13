@@ -57,6 +57,10 @@ end
     return ref_expr.args[1]
 end
 
+@inline function is_assignment(expr::Expr)
+    return expr.head in Set([:(=), :(+=), :(-=), :(*=), :(/=), :(.*=), :(./=)])
+end
+
 @inline function assignment_get_assigned_to(expr::Expr)
     return expr.args[1]
 end
@@ -136,4 +140,8 @@ end
 @inline function is_dist_array(sym::Symbol)::Bool
     return isdefined(current_module(), sym) &&
         typeof(eval(current_module(), sym)) <: DistArray
+end
+
+@inline function is_keyword(sym::Symbol)::Bool
+    return sym in Set([:end, :(:)])
 end

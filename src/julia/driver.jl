@@ -2,6 +2,7 @@ export helloworld, local_helloworld, glog_init
 
 function helloworld()
     ccall((:orion_helloworld, lib_path), Void, ())
+    global const num_executors = 4
 end
 
 function local_helloworld()
@@ -111,11 +112,11 @@ function get_aggregated_value(var_sym::Symbol, combiner_func::Symbol)
     return value
 end
 
-function reset_accumulator(var_sym::Symbol, value)
+function reset_var_value(var_sym::Symbol, value)
     expr = :($var_sym = $value)
     eval_expr_on_all(expr, :Main)
 end
 
 function reset_accumulator(var_sym::Symbol)
-    reset_accumulator(var_sym, accumulator_info_dict[var_sym].init_value)
+    reset_var_value(var_sym, accumulator_info_dict[var_sym].init_value)
 end

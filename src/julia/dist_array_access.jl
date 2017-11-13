@@ -1,3 +1,20 @@
+type GetDistArrayAccessContext
+    iteration_var::Symbol
+    ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}}
+    access_dict::Dict{Symbol, Vector{DistArrayAccess}}
+    stmt_access_dict::Dict{Symbol, Vector{DistArrayAccess}}
+
+    GetDistArrayAccessContext(iteration_var,
+                              ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}}) =
+                                  new(iteration_var,
+                                      ssa_defs,
+                                      Dict{Symbol, Vector{DistArrayAccess}}(),
+                                      Dict{Symbol, Vector{DistArrayAccess}}())
+end
+
+# bb_id -> (stmt_index -> stmt_dist_array_access)
+bb_dist_array_access_dict = Dict{Int64, Dict{Int64, Dict{Symbol, Vector{DistArrayAccess}}}}()
+
 function get_dist_array_access_visit(expr,
                                      context::GetDistArrayAccessContext,
                                      top_level::Integer,
@@ -14,6 +31,7 @@ function get_dist_array_access_visit(expr,
                     if referenced_var in keys(ssa_defs)
                         referenced_var = ssa_defs[referenced_var][1]
                     end
+                    println("referencing ", referenced_var)
                     if isdefined(current_module(), referenced_var) &&
                         isa(eval(current_module(), referenced_var), DistArray)
                         da_access = DistArrayAccess(referenced_var, false)
@@ -28,10 +46,15 @@ function get_dist_array_access_visit(expr,
                             context.access_dict[referenced_var] = Vector{DistArrayAccess}()
                         end
                         push!(context.access_dict[referenced_var], da_access)
+                        if !(referenced_var in keys(context.stmt_access_dict))
+                            context.stmt_access_dict[referenced_var] = Vector{DistArrayAccess}()
+                        end
+                        push!(context.stmt_access_dict[referenced_var], da_access)
                         if head != :(=)
                             da_access = copy(da_access)
                             da_access.is_read = true
                             push!(context.access_dict[referenced_var], da_access)
+                            push!(context.stmt_access_dict[referenced_var], da_access)
                         end
                     end
                     subscripts = ref_get_subscripts(assigned_to)
@@ -67,6 +90,10 @@ function get_dist_array_access_visit(expr,
                         context.access_dict[referenced_var] = Vector{DistArrayAccess}()
                     end
                     push!(context.access_dict[referenced_var], da_access)
+                    if !(referenced_var in keys(context.stmt_access_dict))
+                        context.stmt_access_dict[referenced_var] = Vector{DistArrayAccess}()
+                    end
+                    push!(context.stmt_access_dict[referenced_var], da_access)
                 end
                 subscripts = ref_get_subscripts(expr)
                 for sub in subscripts
@@ -86,8 +113,17 @@ end
 
 function get_dist_array_access_bb(bb::BasicBlock,
                                   context::GetDistArrayAccessContext)
-    for stmt in bb.stmts
+    stmt_access_dict = Dict{Int64, Dict{Symbol, Vector{DistArrayAccess}}}()
+    for idx in eachindex(bb.stmts)
+        stmt = bb.stmts[idx]
         AstWalk.ast_walk(stmt, get_dist_array_access_visit, context)
+        if !isempty(context.stmt_access_dict)
+            stmt_access_dict[idx] = context.stmt_access_dict
+            context.stmt_access_dict = Dict{Symbol, Vector{DistArrayAccess}}()
+        end
+    end
+    if !isempty(stmt_access_dict)
+        bb_dist_array_access_dict[bb.id] = stmt_access_dict
     end
 end
 
@@ -99,69 +135,4 @@ function get_dist_array_access(par_for_loop_entry::BasicBlock,
     traverse_for_loop(par_for_loop_entry, get_dist_array_access_bb,
                       context)
     return context.access_dict
-end
-
-function rewrite_dist_array_access_visit(expr,
-                                         cbdata,
-                                         top_level::Integer,
-                                         is_top_level::Bool,
-                                         read::Bool)
-    if isa(expr, Expr)
-        head = expr.head
-        if head in Set([:(=), :(+=), :(-=), :(.*=), :(./=)])
-            assigned_to = assignment_get_assigned_to(expr)
-            assigned_from = assignment_get_assigned_from(expr)
-            if is_ref(assigned_to)
-                referenced_var = ref_get_referenced_var(assigned_to)
-                if isa(referenced_var, Symbol) &&
-                    isdefined(current_module(), referenced_var) &&
-                    isa(eval(current_module(), referenced_var), DistArray)
-                    dist_array = eval(current_module(), referenced_var)
-                    dist_array_id = dist_array.id
-                    if head != :(=)
-                        error("not supported!")
-                    end
-
-                    subscripts = ref_get_subscripts(assigned_to)
-                    rewritten_subscripts = Vector{Any}(length(subscripts))
-                    for sub_idx in eachindex(subscripts)
-                        sub = subscripts[sub_idx]
-                        rewritten_subscripts[sub_idx] = rewrite_dist_array_access(sub)
-                    end
-                    assigned_from = rewrite_dist_array_access(assigned_from)
-                    return gen_dist_array_write_func_call(dist_array_id, tuple(subscripts...), assigned_from)
-                else
-                    return AstWalk.AST_WALK_RECURSE
-                end
-            else
-                return AstWalk.AST_WALK_RECURSE
-            end
-        elseif is_ref(expr)
-            referenced_var = ref_get_referenced_var(expr)
-            if isa(referenced_var, Symbol) &&
-                isdefined(current_module(), referenced_var) &&
-                isa(eval(current_module(), referenced_var), DistArray)
-                dist_array = eval(current_module(), referenced_var)
-                dist_array_id = dist_array.id
-
-                subscripts = ref_get_subscripts(expr)
-                rewritten_subscripts = Vector{Any}(length(subscripts))
-                for sub_idx in eachindex(subscripts)
-                    sub = subscripts[sub_idx]
-                    rewritten_subscripts[sub_idx] = rewrite_dist_array_access(sub)
-                end
-                return gen_dist_array_read_func_call(dist_array_id, tuple(subscripts...))
-            else
-                return AstWalk.AST_WALK_RECURSE
-            end
-        else
-            return AstWalk.AST_WALK_RECURSE
-        end
-    else
-        return expr
-    end
-end
-
-function rewrite_dist_array_access(expr)
-    AstWalk.ast_walk(expr, rewrite_dist_array_access_visit, nothing)
 end

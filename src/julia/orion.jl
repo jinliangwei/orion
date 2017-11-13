@@ -7,6 +7,7 @@ module Orion
 
 include("scope_context.jl")
 include("dist_array.jl")
+include("dist_array_buffer.jl")
 include("driver.jl")
 
 include("ast.jl")
@@ -16,8 +17,8 @@ include("variable_scope.jl")
 include("debug.jl")
 include("ast_walk.jl")
 include("constants.jl")
-include("macros.jl")
 include("flow_analysis.jl")
+include("macros.jl")
 include("dist_array_access.jl")
 include("static_parallelization.jl")
 include("codegen.jl")

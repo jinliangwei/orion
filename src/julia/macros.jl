@@ -1,9 +1,5 @@
 macro share(ex::Expr)
-    if ex.head == :function
-        eval_expr_on_all(ex, :Main)
-    else
-        error("Do not support sharing Expr of this kind")
-    end
+    eval_expr_on_all(ex, :Main)
     esc(ex)
 end
 
@@ -51,6 +47,28 @@ function parallelize_for_loop(loop_stmt, is_ordered::Bool)
                                              flow_graph,
                                              flow_graph_context, ssa_context)
     println(parallelized_loop)
+    return parallelized_loop
+end
+
+function gen_parallelized_loop(expr::Expr,
+                              par_for_scope::ScopeContext,
+                              par_for_context::ParForContext,
+                              flow_graph::BasicBlock,
+                              flow_graph_context::FlowGraphContext,
+                              ssa_context::SsaContext)
+    parallelized_loop = quote end
+    bc_vars = get_vars_to_broadcast(par_for_scope)
+    define_dynamic_bc_vars_stmt = :(Orion.define_vars($bc_vars))
+    push!(parallelized_loop.args, define_dynamic_bc_vars_stmt)
+    par_for_context.dist_array_access_dict =
+        get_dist_array_access(flow_graph, par_for_context.iteration_var, ssa_context)
+    println(par_for_context.dist_array_access_dict)
+    exec_loop_stmts = static_parallelize(par_for_context, par_for_scope, ssa_context, flow_graph)
+
+    if exec_loop_stmts == nothing
+        error("loop not parallelizable")
+    end
+    push!(parallelized_loop.args, exec_loop_stmts)
     return parallelized_loop
 end
 

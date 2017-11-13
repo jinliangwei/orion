@@ -22,8 +22,15 @@ H.id = 2
 W.num_dims = 2
 H.num_dims = 2
 ratings.dims = [6000, 4000]
+ratings.iterate_dims = [6000, 4000]
 W.dims = [100, 6000]
 H.dims = [100, 4000]
+
+#Orion.@accumulator error = 0
+#Orion.@accumulator cnt = 0
+
+error = 0
+cnt = 0
 
 for i = 1:num_iterations
     Orion.@parallel_for for rating in ratings
@@ -39,8 +46,18 @@ for i = 1:num_iterations
         H_grad = -2 * diff .* W_row
         W[:, x_idx] = W_row - step_size .* W_grad
         H[:, y_idx] = H_row - step_size .* H_grad
+        cnt += 1
     end
-    step_size = step_size * 0.9
+    Orion.@parallel_for for rating in ratings
+        x_idx = rating[1][1]
+        y_idx = rating[1][2]
+        rv = rating[2]
+
+        W_row = W[:, x_idx]
+        H_row = H[:, y_idx]
+        pred = dot(W_row, H_row)
+        error += rv - pred
+    end
 end
 
 #ratings = Orion.text_file(data_path, parse_line)

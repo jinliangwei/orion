@@ -69,16 +69,22 @@ for i = 1:num_iterations
         H[:, y_idx] = H_row - step_size .* H_grad
         cnt += 1
     end
-    sleep(1)
-    cnt = Orion.get_aggregated_value(:cnt, :+)
-    println("cnt = ", cnt)
-#    Orion.reset_accumulator(:cnt, 0)
+    Orion.@parallel_for for rating in ratings
+        x_idx = rating[1][1]
+        y_idx = rating[1][2]
+        rv = rating[2]
+
+        W_row = W[:, x_idx]
+        H_row = H[:, y_idx]
+        pred = dot(W_row, H_row)
+        error += rv - pred
+    end
+    error = Orion.get_aggregated_value(:error, :+)
+    println("iteration = ", i, " error = ", error)
+    Orion.reset_accumulator(:error)
 end
 
-cnt = Orion.get_aggregated_value(:cnt, :+)
-println("cnt = ", cnt)
-
-#H.save_as_text_file("/home/ubuntu/model/H")
-#W.save_as_text_file("/home/ubuntu/model/W")
+#Orion.save_as_text_file(W, "/home/ubuntu/model/H")
+#Orion.save_as_text_file(H, "/home/ubuntu/model/W")
 
 Orion.stop()

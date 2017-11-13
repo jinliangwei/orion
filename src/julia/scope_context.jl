@@ -97,9 +97,13 @@ function print(scope_context::ScopeContext, indent = 0)
     for (var, info) in scope_context.local_var
         println(in_indent_str, var, "  ", string(info))
     end
-    println(indent_str * "child scope:")
-    for scope in scope_context.child_scope
-       print(scope, indent + 2)
+    if length(scope_context.child_scope) > 0
+        println(indent_str * "child scope:")
+        for scope in scope_context.child_scope
+            println(indent_str * (" " ^ 2), "...")
+            print(scope, indent + 2)
+            println(indent_str * (" " ^ 2), "...")
+        end
     end
 end
 

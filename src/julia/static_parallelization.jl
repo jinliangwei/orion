@@ -6,7 +6,19 @@
     2 DepVecValue_none =
     3
 
-const default_tile_size = 1000
+function get_1d_tile_size(iteration_space_partition_dim::Int64,
+                          iteration_space_dist_array::DistArray)::Int64
+    partition_dim_size = iteration_space_dist_array.iterate_dims[iteration_space_partition_dim]
+    tile_size = cld(partition_dim_size, num_executors * 2)
+    return tile_size
+end
+
+function get_2d_tile_sizes(iteration_space_partition_dims::Tuple{Int64, Int64},
+                           iteration_space_dist_array::DistArray)::Tuple{Int64, Int64}
+    tile_size_1 = get_1d_tile_size(iteration_space_partition_dims[1], iteration_space_dist_array)
+    tile_size_2 = get_1d_tile_size(iteration_space_partition_dims[2], iteration_space_dist_array)
+    return (tile_size_1, tile_size_2)
+end
 
 function compute_dependence_vectors(par_for_context::ParForContext)
     dep_vecs = Set{Tuple}()
@@ -117,6 +129,7 @@ function check_for_2d_parallelization(dep_vecs::Set{Tuple}, num_dims)
     for i = 1:num_dims
         for j = (i + 1):num_dims
             is_parallelizable = true
+            println("check for ", i, " ", j)
             for dep_vec in dep_vecs
                 if dep_vec[i] != 0 &&
                     dep_vec[j] != 0
@@ -166,95 +179,307 @@ function determine_parallelization_scheme(dep_vecs::Set{Tuple}, num_dims)
     end
 
     par_dims = check_for_unimodular_parallelization(dep_vecs, num_dims)
-    if !isempty(par_dims)
+    if length(par_dims) >= 2
         return ForLoopParallelScheme_unimodular, par_dims
     end
     return ForLoopParallelScheme_none, par_dims
 end
 
-function parallelize_2d(par_for_context::ParForContext,
-                        par_for_scope::ScopeContext,
-                        par_dims,
-                        ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
-    num_work_units = 0
-    par_dim = par_dims[1]
-    space_partition_dim = par_dim[1]
-    time_partition_dim = par_dim[2]
-
+function parallelize_naive(par_for_context::ParForContext,
+                           par_for_scope::ScopeContext,
+                           ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
+                           flow_graph::BasicBlock)
     iteration_space = par_for_context.iteration_space
     iteration_space_dist_array = eval(current_module(), iteration_space)
-    num_dims = iteration_space_dist_array.num_dims
-    iteration_space_dims = iteration_space_dist_array.dims
+    iteration_space_partition_info = iteration_space_dist_array.partition_info
+    if iteration_space_partition_info.partition_type == DistArrayPartitionType_naive ||
+        iteration_space_partition_info.partition_type == DistArrayPartitionType_range ||
+        iteration_space_partition_info.partition_type == DistArrayPartitionType_hash
+        partition_dim = length(iteration_space_dist_array.iterate_dims)
+        return parallelize_1d(par_for_context,
+                              par_for_scope,
+                              [partition_dim],
+                              ssa_defs,
+                              flow_graph)
+    elseif iteration_space_partition_info.partition_type == DistArrayPartitionType_1d
+        return parallelize_1d(par_for_context,
+                              par_for_scope,
+                              [iteration_space_partition_info.partition_dims[1]],
+                              ssa_defs,
+                              flow_graph)
+    elseif iteration_space_partition_info.partition_type == DistArrayPartitionType_2d
+        return parallelize_2d(par_for_context,
+                              par_for_scope,
+                              [iteration_space_partition_info.partition_dims],
+                              ssa_defs,
+                              flow_graph)
+    else
+        return parallelize_unimodular(par_for_context,
+                                      par_for_scope,
+                                      [iteration_space_partition_info.partition_dims...],
+                                      ssa_defs,
+                                      flow_graph)
+    end
+
+end
+
+function parallelize_1d(par_for_context::ParForContext,
+                        par_for_scope::ScopeContext,
+                        par_dims::Vector{Int64},
+                        ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
+                        flow_graph::BasicBlock)
+    space_partition_dim = par_dims[end]
+    iteration_space = par_for_context.iteration_space
+    iteration_space_dist_array = eval(current_module(), iteration_space)
+    iteration_space_dims = iteration_space_dist_array.iterate_dims
     da_access_dict = par_for_context.dist_array_access_dict
+    tile_size = get_1d_tile_size(space_partition_dim, iteration_space_dist_array)
+    iteration_space_dims_diff = length(iteration_space_dist_array.dims) - length(iteration_space_dist_array.iterate_dims)
     space_partitioned_dist_array_ids = Vector{Int32}()
-    time_partitioned_dist_array_ids = Vector{Int32}()
     global_indexed_dist_array_ids = Vector{Int32}()
+    global_indexed_dist_array_syms = Set{Symbol}()
 
     loop_partition_func_name = gen_unique_symbol()
-    loop_partition_func = gen_2d_partition_function(loop_partition_func_name,
-                                                    space_partition_dim,
-                                                    time_partition_dim,
-                                                    default_tile_size,
-                                                    default_tile_size)
+    loop_partition_func = gen_1d_partition_function(loop_partition_func_name,
+                                                    space_partition_dim + iteration_space_dims_diff,
+                                                    tile_size)
 
-    space_partition_func_name = gen_unique_symbol()
-    space_partition_func = gen_1d_partition_function(space_partition_func_name,
-                                                     space_partition_dim,
-                                                     default_tile_size)
-    time_partition_func_name = gen_unique_symbol()
-    time_partition_func = gen_1d_partition_function(time_partition_func_name,
-                                                    time_partition_dim,
-                                                    default_tile_size)
-
-    dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_2d,
-                                                       loop_partition_func_name,
-                                                       (space_partition_dim, time_partition_dim),
+    dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                       string(loop_partition_func_name),
+                                                       space_partition_dim + iteration_space_dims_diff,
+                                                       tile_size,
                                                        DistArrayIndexType_none)
-    repartition_stmt = :(Orion.check_and_repartition($(esc(iteration_space)), $dist_array_partition_info))
     parallelized_loop = quote end
+    repartition_stmt = :(Orion.check_and_repartition($(esc(iteration_space)), $dist_array_partition_info))
     push!(parallelized_loop.args, repartition_stmt)
+    partition_func_set = Set{Expr}()
+    println("determine partition scheme for dist arrays ", length(da_access_dict))
     for (da_sym, da_access_vec) in da_access_dict
-        partition_dims = compute_dist_array_partition_dims(da_sym, da_access_vec, num_dims,
+        println(da_sym)
+        partition_dims = compute_dist_array_partition_dims(da_sym, da_access_vec,
                                                            iteration_space_dims)
-        if space_partition_dim in partition_dims
-            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
-                                                               space_partition_func_name,
-                                                               (space_partition_dim,),
-                                                               DistArrayIndexType_local)
+        partition_dim = 0
+        if space_partition_dim in keys(partition_dims)
+            partition_dim = partition_dims[space_partition_dim]
             push!(space_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
-            repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
-            push!(parallelized_loop.args, repartition_stmt)
-        elseif time_partition_dim in partition_dims
+        else
+            push!(global_indexed_dist_array_ids, eval(current_module(), da_sym).id)
+            push!(global_indexed_dist_array_syms, da_sym)
+        end
+
+        if partition_dim > 0
+            partition_func_name = gen_unique_symbol()
+            partition_func = gen_1d_partition_function(partition_func_name,
+                                                       partition_dim,
+                                                       tile_size)
+            push!(partition_func_set, partition_func)
             dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
-                                                               time_partition_func_name,
-                                                               (time_partition_dim,),
+                                                               string(partition_func_name),
+                                                               (partition_dim,),
+                                                               (tile_size,),
                                                                DistArrayIndexType_local)
-            push!(time_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
         else
             dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_naive,
-                                                               nothing, nothing,
+                                                               "", nothing, nothing,
                                                                DistArrayIndexType_global)
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
-            push!(global_indexed_dist_array_ids, eval(current_module(), da_sym).id)
             push!(parallelized_loop.args, repartition_stmt)
         end
     end
 
     loop_body_func_name = gen_unique_symbol()
     loop_batch_func_name = gen_unique_symbol()
-    loop_body_func, loop_batch_func = gen_loop_body_function(loop_body_func_name,
-                                                             loop_batch_func_name,
-                                                             par_for_context.loop_stmt.args[2],
-                                                             par_for_context,
-                                                             par_for_scope,
-                                                             ssa_defs)
-    eval_expr_on_all(loop_partition_func, :Main)
-    eval_expr_on_all(space_partition_func, :Main)
-    eval_expr_on_all(time_partition_func, :Main)
-    eval_expr_on_all(loop_body_func, :Main)
-    eval_expr_on_all(loop_batch_func, :Main)
+    loop_body_func = gen_loop_body_function(loop_body_func_name,
+                                            par_for_context.loop_stmt.args[2],
+                                            par_for_context,
+                                            par_for_scope,
+                                            ssa_defs)
+    iter_space_value_type = iteration_space_dist_array.ValueType
+    if iteration_space_dist_array.dims == iteration_space_dist_array.iterate_dims
+        loop_batch_func = gen_loop_body_batch_function(loop_batch_func_name,
+                                                       loop_body_func_name,
+                                                       iter_space_value_type)
+    else
+        loop_batch_func = gen_loop_body_batch_function_iter_dims(loop_batch_func_name,
+                                                                 loop_body_func_name,
+                                                                 iter_space_value_type,
+                                                                 length(iteration_space_dist_array.iterate_dims))
+    end
+
+    prefetch_func = nothing
+    println(global_indexed_dist_array_syms)
+    if !isempty(global_indexed_dist_array_syms)
+        prefetch_stmts = get_prefetch_stmts(flow_graph, global_indexed_dist_array_syms)
+        if prefetch_stmts != nothing
+            prefetch_func_name = gen_unique_symbol()
+            prefetch_batch_func_name = gen_unique_symbol()
+            prefetch_func = gen_prefetch_function(prefetch_func_name,
+                                              par_for_context.iteration_var,
+                                              prefetch_stmts)
+            if iteration_space_dist_array.dims == iteration_space_dist_array.iterate_dims
+                prefetch_batch_func = gen_prefetch_batch_function(prefetch_batch_func_name,
+                                                                  prefetch_func_name,
+                                                                  iter_space_value_type)
+            else
+                prefetch_batch_func = gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name,
+                                                                            prefetch_func_name,
+                                                                            iter_space_value_type,
+                                                                            length(iteration_space_dist_array.iterate_dims))
+            end
+        end
+    end
+    remap_ssa_vars(loop_body_func.args[2], ssa_defs)
+    println(loop_body_func)
+    if prefetch_func != nothing
+        remap_ssa_vars(prefetch_func.args[2], ssa_defs)
+    end
+    println(prefetch_func)
+#    eval_expr_on_all(loop_partition_func, :Main)
+#    for partition_func in partition_func_set
+#        eval_expr_on_all(partition_func, :Main)
+#    end
+#    eval_expr_on_all(loop_body_func, :Main)
+#    eval_expr_on_all(loop_batch_func, :Main)
+
+    loop_batch_func_name_str = string(loop_batch_func_name)
+
+    exec_loop_stmt = :(Orion.exec_for_loop($(iteration_space_dist_array.id),
+                                           Orion.ForLoopParallelScheme_1d,
+                                           $(space_partitioned_dist_array_ids),
+                                           Vector{Int64}(),
+                                           $(global_indexed_dist_array_ids),
+                                           $loop_batch_func_name_str,
+                                           $(par_for_context.is_ordered)))
+    push!(parallelized_loop.args, exec_loop_stmt)
+    return parallelized_loop
+end
+
+function parallelize_2d(par_for_context::ParForContext,
+                        par_for_scope::ScopeContext,
+                        par_dims::Vector{Tuple{Int64, Int64}},
+                        ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
+                        flow_graph::BasicBlock)
+    par_dim = par_dims[end]
+    space_partition_dim = par_dim[1]
+    time_partition_dim = par_dim[2]
+
+    iteration_space = par_for_context.iteration_space
+    iteration_space_dist_array = eval(current_module(), iteration_space)
+    iteration_space_dims = iteration_space_dist_array.iterate_dims
+    da_access_dict = par_for_context.dist_array_access_dict
+    space_partitioned_dist_array_ids = Vector{Int32}()
+    time_partitioned_dist_array_ids = Vector{Int32}()
+    global_indexed_dist_array_ids = Vector{Int32}()
+    global_indexed_dist_array_syms = Set{Symbol}()
+    tile_sizes = get_2d_tile_sizes(par_dim, iteration_space_dist_array)
+
+    iteration_space_dims_diff = length(iteration_space_dist_array.dims) - length(iteration_space_dist_array.iterate_dims)
+
+    loop_partition_func_name = gen_unique_symbol()
+    loop_partition_func = gen_2d_partition_function(loop_partition_func_name,
+                                                    space_partition_dim + iteration_space_dims_diff,
+                                                    time_partition_dim + iteration_space_dims_diff,
+                                                    tile_sizes[1],
+                                                    tile_sizes[2])
+    dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_2d,
+                                                       string(loop_partition_func_name),
+                                                       (space_partition_dim + iteration_space_dims_diff,
+                                                        time_partition_dim + iteration_space_dims_diff),
+                                                       tile_sizes,
+                                                       DistArrayIndexType_none)
+    parallelized_loop = quote end
+    repartition_stmt = :(Orion.check_and_repartition($(esc(iteration_space)), $dist_array_partition_info))
+    push!(parallelized_loop.args, repartition_stmt)
+    partition_func_set = Set{Expr}()
+    for (da_sym, da_access_vec) in da_access_dict
+        partition_dims = compute_dist_array_partition_dims(da_sym, da_access_vec,
+                                                           iteration_space_dims)
+        partition_dim = 0
+        if space_partition_dim in keys(partition_dims)
+            partition_dim = partition_dims[space_partition_dim]
+            push!(space_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
+            tile_size = tile_sizes[1]
+        elseif time_partition_dim in keys(partition_dims)
+            partition_dim = partition_dims[time_partition_dim]
+            push!(time_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
+            tile_size = tile_sizes[2]
+        else
+            push!(global_indexed_dist_array_ids, eval(current_module(), da_sym).id)
+            push!(global_indexed_dist_array_syms, da_sym)
+        end
+
+        if partition_dim > 0
+            partition_func_name = gen_unique_symbol()
+            partition_func = gen_1d_partition_function(partition_func_name,
+                                                       partition_dim,
+                                                       tile_size)
+            push!(partition_func_set, partition_func)
+            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                               string(partition_func_name),
+                                                               (partition_dim,),
+                                                               (tile_size,),
+                                                               DistArrayIndexType_local)
+            repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
+            push!(parallelized_loop.args, repartition_stmt)
+        else
+            # TODO: compute the prefetch functions
+            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_naive,
+                                                               "", nothing, nothing,
+                                                               DistArrayIndexType_global)
+            repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
+            push!(parallelized_loop.args, repartition_stmt)
+        end
+    end
+
+    loop_body_func_name = gen_unique_symbol()
+    loop_batch_func_name = gen_unique_symbol()
+    loop_body_func = gen_loop_body_function(loop_body_func_name,
+                                            par_for_context.loop_stmt.args[2],
+                                            par_for_context,
+                                            par_for_scope,
+                                            ssa_defs)
+    iter_space_value_type = iteration_space_dist_array.ValueType
+    if iteration_space_dist_array.dims == iteration_space_dist_array.iterate_dims
+        loop_batch_func = gen_loop_body_batch_function(loop_batch_func_name,
+                                                       loop_body_func_name,
+                                                       iter_space_value_type)
+    else
+        loop_batch_func = gen_loop_body_batch_function_iter_dims(loop_batch_func_name,
+                                                                 loop_body_func_name,
+                                                                 iter_space_value_type,
+                                                                 length(iteration_space_dist_array.iterate_dims))
+    end
+
+    prefetch_func = nothing
+    if !isempty(global_indexed_dist_array_syms)
+        prefetch_stmts = get_prefetch_stmts(flow_graph, global_indexed_dist_array_syms)
+        if prefetch_stmts != nothing
+            prefetch_func_name = gen_unique_symbol()
+            prefetch_batch_func_name = gen_unique_symbol()
+            prefetch_func = gen_prefetch_function(prefetch_func_name,
+                                              par_for_context.iteration_var,
+                                              prefetch_stmts)
+            if iteration_space_dist_array.dims == iteration_space_dist_array.iterate_dims
+                prefetch_batch_func = gen_prefetch_batch_function(prefetch_batch_func_name,
+                                                                  prefetch_func_name,
+                                                                  iter_space_value_type)
+            else
+                prefetch_batch_func = gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name,
+                                                                            prefetch_func_name,
+                                                                            iter_space_value_type,
+                                                                            length(iteration_space_dist_array.iterate_dims))
+            end
+        end
+    end
+
+#    eval_expr_on_all(loop_partition_func, :Main)
+#    for partition_func in partition_func_set
+#        eval_expr_on_all(partition_func, :Main)
+#    end
+#    eval_expr_on_all(loop_body_func, :Main)
+#    eval_expr_on_all(loop_batch_func, :Main)
 
     loop_batch_func_name_str = string(loop_batch_func_name)
 
@@ -266,24 +491,29 @@ function parallelize_2d(par_for_context::ParForContext,
                                            $loop_batch_func_name_str,
                                            $(par_for_context.is_ordered)))
     push!(parallelized_loop.args, exec_loop_stmt)
-
-#    for (var, var_info) in par_for_scope.inherited_var
-#        println(var, var_info)
-#        if var in keys(accumulator_info_dict)
-#            var_str = string(var)
-#            get_accumulator_value_expr = :(esc(var) = Orion.get_accumulator_value(Symbol($(var_str))))
-            #push!(parallelized_loop.args, get_accumulator_value_expr)
-#            println("get accumulator value for ", var)
-#        end
-#    end
     return parallelized_loop
 end
 
+function parallelize_unimodular(par_for_context::ParForContext,
+                                par_for_scope::ScopeContext,
+                                par_dims::Vector{Int64},
+                                ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
+                                flow_graph::BasicBlock)
+    error("this is currently not supported")
+end
+
+# For a dist_array, if a subscript of all of its accesses are indexed by the same
+# loop induction variable with the same offset, then assuming the iteration space
+# is partitioned along that induction variable dimension (either time or space wise),
+# partitioning the dist_array along that subscript's dimension guarantees that
+# different workers do not access the same dist array element
+
+# this function returns all such subscript dimensions and corresponding induction
+# variable dimensions
+
 function compute_dist_array_partition_dims(da_sym::Symbol,
                                            da_access_vec::Vector{DistArrayAccess},
-                                           num_dims,
-                                           iteration_space_dims::Vector{Int64})
-    partition_dims = Set{Int64}([i for i in 1:num_dims])
+                                           iteration_space_dims::Vector{Int64})::Dict{Int64, Int64}
     dist_array = eval(current_module(), da_sym)
     sub_dims = Set{Tuple}()
     for i = 1:dist_array.num_dims
@@ -309,11 +539,11 @@ function compute_dist_array_partition_dims(da_sym::Symbol,
         end
     end
 
-    partition_dims = Set{Int64}()
+    partition_dims = Dict{Int64, Int64}()
     da_dims = dist_array.dims
     for (sub_dim, loop_index_dim) in sub_dims
         if da_dims[sub_dim] == iteration_space_dims[loop_index_dim]
-            push!(partition_dims, sub_dim)
+            partition_dims[loop_index_dim] = sub_dim
         end
     end
     return partition_dims
@@ -321,18 +551,42 @@ end
 
 function static_parallelize(par_for_context::ParForContext,
                             par_for_scope::ScopeContext,
-                            ssa_context::SsaContext)
+                            ssa_context::SsaContext,
+                            flow_graph::BasicBlock)
     iteration_space = par_for_context.iteration_space
     iteration_space_dist_array = eval(current_module(), iteration_space)
-    num_dims = iteration_space_dist_array.num_dims
+    num_dims = length(iteration_space_dist_array.iterate_dims)
+    println(iteration_space_dist_array.iterate_dims)
     dep_vecs = compute_dependence_vectors(par_for_context)
     par_scheme = determine_parallelization_scheme(dep_vecs, num_dims)
-    if par_scheme[1] == ForLoopParallelScheme_2d
+    println(par_scheme)
+    if par_scheme[1] == ForLoopParallelScheme_naive
+        println("parallel naive")
+        return parallelize_naive(par_for_context,
+                                 par_for_scope,
+                                 ssa_context.ssa_defs,
+                                 flow_graph)
+    elseif par_scheme[1] == ForLoopParallelScheme_1d
+        println("parallel 1d")
+        return parallelize_1d(par_for_context,
+                              par_for_scope,
+                              par_scheme[2],
+                              ssa_context.ssa_defs,
+                              flow_graph)
+    elseif par_scheme[1] == ForLoopParallelScheme_2d
+        println("parallel 2d")
         return parallelize_2d(par_for_context,
-                       par_for_scope,
-                       par_scheme[2],
-                       ssa_context.ssa_defs)
-    else
+                              par_for_scope,
+                              par_scheme[2],
+                              ssa_context.ssa_defs,
+                              flow_graph)
+    elseif par_scheme[1] == ForLoopParallelScheme_unimodular
+        println("parallel unimodular")
+        return parallelize_unimodular(par_for_context,
+                                      par_for_scope,
+                                      par_scheme[2],
+                                      ssa_context.ssa_defs,
+                                      flow_graph)
     end
     return nothing
 end

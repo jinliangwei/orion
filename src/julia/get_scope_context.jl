@@ -4,9 +4,11 @@ function get_scope_context_visit(expr::Any,
                                  is_top_level::Bool,
                                  read::Bool)
     if isa(expr, Symbol)
-        if expr == :(:) ||
-            (isdefined(current_module(), expr) &&
-             isa(eval(current_module(), expr), Function))
+        if is_keyword(expr)
+            return expr
+        end
+        if isdefined(expr) &&
+            isa(eval(which(expr), expr), Function)
             return expr
         end
 
@@ -25,16 +27,18 @@ function get_scope_context_visit(expr::Any,
     if head == :macrocall
         return expr
     elseif head == :for
-        loop_stmt = args[2]
-        child_scope = get_scope_context!(scope_context, loop_stmt)
-        add_child_scope!(scope_context, child_scope, true)
+        child_scope = get_scope_context!(scope_context, expr)
+        add_child_scope!(scope_context, child_scope)
         return expr
-    elseif expr.head in Set([:call, :invoke, :call1, :foreigncall])
+    elseif head in Set([:call, :invoke, :call1, :foreigncall])
         if call_get_func_name(expr) in Set([:(+), :(-), :(*), :(/)])
             return AstWalk.AST_WALK_RECURSE
         end
-        for arg in expr.args[2:end]
-            if isa(arg, Symbol)
+        for arg in args[2:end]
+            if isa(arg, Symbol) &&
+                !is_keyword(arg) &&
+                !(isdefined(arg) &&
+                  isa(eval(which(arg), arg), Function))
                 info = VarInfo()
                 info.is_mutated = true
                 add_var!(scope_context, arg, info)
@@ -48,7 +52,7 @@ function get_scope_context_visit(expr::Any,
             end
         end
         return AstWalk.AST_WALK_RECURSE
-    elseif expr.head == :(.)
+    elseif head == :(.)
         if !read
             mutated_var = ref_dot_get_mutated_var(expr)
             if mutated_var != nothing
@@ -65,7 +69,7 @@ function get_scope_context_visit(expr::Any,
         else
             return AstWalk.AST_WALK_RECURSE
         end
-    elseif expr.head == :ref
+    elseif head == :ref
         if !read
             mutated_var = ref_dot_get_mutated_var(expr)
             if mutated_var != nothing
@@ -75,7 +79,7 @@ function get_scope_context_visit(expr::Any,
             end
         end
         referenced_var = ref_get_referenced_var(expr)
-        if isa(referenced_var, Symbol) &&
+        if isa(referenced_var, Symbol)  &&
             (!isdefined(current_module(), referenced_var) ||
              !isa(eval(current_module(), referenced_var), Module))
             info = VarInfo()
@@ -83,6 +87,22 @@ function get_scope_context_visit(expr::Any,
         end
         return AstWalk.AST_WALK_RECURSE
     elseif head == :block
+        return AstWalk.AST_WALK_RECURSE
+    elseif head == :global
+        for arg in args
+            if isa(arg, Expr) && is_assignment(arg)
+                assignment_to = assignment_get_assigned_to(arg)
+                info = VarInfo()
+                info.is_marked_global = true
+                add_var!(scope_context, assignment_to, info)
+            elseif isa(arg, Symbol)
+                info = VarInfo()
+                info.is_marked_global = true
+                add_var!(scope_context, arg, info)
+            else
+                error("unsupported syntax")
+            end
+        end
         return AstWalk.AST_WALK_RECURSE
     else
         return AstWalk.AST_WALK_RECURSE

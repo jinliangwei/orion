@@ -140,10 +140,10 @@ println("to define global variable")
 Orion.define_vars(Set([:step_size]))
 
 
-@time Orion.exec_for_loop(ratings.id,
-                    Orion.ForLoopParallelScheme_2d,
-                    [W.id], [H.id],
-                    Vector{Int32}(), "loop_batch_func", false)
+#@time Orion.exec_for_loop(ratings.id,
+#                    Orion.ForLoopParallelScheme_2d,
+#                    [W.id], [H.id],
+#                    Vector{Int32}(), "loop_batch_func", false)
 #H.save_as_text_file("/home/ubuntu/model/H")
 #W.save_as_text_file("/home/ubuntu/model/W")
 
