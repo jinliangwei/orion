@@ -109,7 +109,7 @@ jl_datatype_t *GetJlDataType(PrimitiveType type) {
         return jl_string_type;
       }
     default:
-      return 0;
+      return nullptr;
   }
 }
 

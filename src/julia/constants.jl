@@ -52,33 +52,33 @@ function load_type_int32()
 end
 
 function load_dist_array_parent_type_int32()
-    ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_PARENT_TYPE_TEXT_FILE, lib_path), Int32)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARENT_TYPE_TEXT_FILE, lib_path), Int32)
     global const dist_array_parent_type_text_file = unsafe_load(ptr_val)
-    ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_PARENT_TYPE_DIST_ARRAY, lib_path), Int32)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARENT_TYPE_DIST_ARRAY, lib_path), Int32)
     global const dist_array_parent_type_dist_array = unsafe_load(ptr_val)
-    ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_PARENT_TYPE_INIT, lib_path), Int32)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARENT_TYPE_INIT, lib_path), Int32)
     global const dist_array_parent_type_init = unsafe_load(ptr_val)
 end
 
 function load_dist_array_init_type_int32()
-    ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_INIT_TYPE_EMPTY, lib_path), Int32)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_INIT_TYPE_EMPTY, lib_path), Int32)
     global const dist_array_init_type_empty = unsafe_load(ptr_val)
-    ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM, lib_path), Int32)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM, lib_path), Int32)
     global const dist_array_init_type_uniform_random = unsafe_load(ptr_val)
-    ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_INIT_TYPE_NORMAL_RANDOM, lib_path), Int32)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_INIT_TYPE_NORMAL_RANDOM, lib_path), Int32)
     global const dist_array_init_type_normal_random = unsafe_load(ptr_val)
 end
 
 function load_dist_array_map_type_int32()
-    ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_MAP_TYPE_NO_MAP, lib_path), Int32)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_MAP_TYPE_NO_MAP, lib_path), Int32)
     global const dist_array_map_type_no_map = unsafe_load(ptr_val)
-    ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP, lib_path), Int32)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_MAP_TYPE_MAP, lib_path), Int32)
     global const dist_array_map_type_map = unsafe_load(ptr_val)
-    ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_FIXED_KEYS, lib_path), Int32)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_MAP_TYPE_MAP_FIXED_KEYS, lib_path), Int32)
     global const dist_array_map_type_fixed_keys = unsafe_load(ptr_val)
-    ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES, lib_path), Int32)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_MAP_TYPE_MAP_VALUES, lib_path), Int32)
     global const dist_array_map_type_map_values = unsafe_load(ptr_val)
-    ptr_val = cglobal((:ORION_TASK_DIST_ARRAY_MAP_TYPE_MAP_VALUES_NEW_KEYS, lib_path), Int32)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_MAP_TYPE_MAP_VALUES_NEW_KEYS, lib_path), Int32)
     global const dist_array_map_type_map_values_new_keys = unsafe_load(ptr_val)
 end
 
@@ -234,8 +234,9 @@ function data_type_to_int32(ResultType::DataType)::Int32
         return type_float64_int32
     elseif ResultType == String
         return type_string_int32
+    else
+        return type_void_int32
     end
-    return -1
 end
 
 function int32_to_data_type(data_type::Int32)::DataType

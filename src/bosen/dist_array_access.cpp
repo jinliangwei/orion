@@ -32,19 +32,43 @@ DistArrayAccess::GetDims() {
 }
 
 void
-DistArrayAccess::ReadRange(int32_t key_begin,
-                           size_t num_elements,
-                           void *mem) {
+DistArrayAccess::ReadRangeDense(int32_t key_begin,
+                                size_t num_elements,
+                                jl_value_t *array_buff) {
   CHECK(access_partition_ != nullptr);
-  access_partition_->ReadRange(key_begin, num_elements, mem);
+  access_partition_->ReadRangeDense(key_begin, num_elements, array_buff);
+}
+
+void
+DistArrayAccess::ReadRangeSparse(int32_t key_begin,
+                                 size_t num_elements,
+                                 jl_value_t **key_array_buff,
+                                 jl_value_t **value_array_buff) {
+  CHECK(access_partition_ != nullptr);
+  if (access_partition_->IsGlobalIndexed()) {
+    access_partition_->ReadRangeSparseWithRequest(
+        key_begin, num_elements, key_array_buff, value_array_buff);
+  } else {
+    access_partition_->ReadRangeSparse(
+        key_begin, num_elements, key_array_buff, value_array_buff);
+  }
+}
+
+void
+DistArrayAccess::ReadRangeSparseWithInitValue(int32_t key_begin,
+                                              size_t num_elements,
+                                              jl_value_t *array_buff) {
+  CHECK(access_partition_ != nullptr);
+  access_partition_->ReadRangeSparseWithInitValue(
+      key_begin, num_elements, array_buff);
 }
 
 void
 DistArrayAccess::WriteRange(int64_t key_begin,
                             size_t num_elements,
-                       void *mem) {
+                            jl_value_t* array_buff) {
   CHECK(access_partition_ != nullptr);
-  access_partition_->WriteRange(key_begin, num_elements, mem);
+  access_partition_->WriteRange(key_begin, num_elements, array_buff);
 }
 
 }

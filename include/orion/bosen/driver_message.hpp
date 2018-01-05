@@ -109,6 +109,20 @@ struct DriverMsgGetAccumulatorValue {
   }
 };
 
+struct DriverMsgCreateDistArrayBuffer {
+  size_t task_size;
+ private:
+  DriverMsgCreateDistArrayBuffer() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _task_size) {
+    task_size = _task_size;
+  }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kCreateDistArrayBuffer;
+  }
+};
+
 class DriverMsgHelper {
  public:
   template<typename Msg,

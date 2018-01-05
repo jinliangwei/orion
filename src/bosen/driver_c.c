@@ -29,6 +29,7 @@ extern "C" {
       int32_t id,
       int32_t parent_type,
       int32_t map_type,
+      int32_t partition_scheme,
       bool flatten_results,
       size_t num_dims,
       int32_t value_type,
@@ -40,23 +41,49 @@ extern "C" {
       int64_t* dims,
       int32_t random_init_type,
       bool is_dense,
-      const char* symbol) {
+      const char* symbol,
+      const uint8_t* value_type_bytes,
+      size_t value_type_size) {
     driver->CreateDistArray(
         id,
-        static_cast<orion::bosen::task::DistArrayParentType>(parent_type),
+        parent_type,
         map_type,
+        partition_scheme,
         flatten_results,
         num_dims,
-        static_cast<orion::bosen::type::PrimitiveType>(value_type),
+        value_type,
         file_path,
         parent_id,
-        static_cast<orion::bosen::task::DistArrayInitType>(init_type),
+        init_type,
         static_cast<orion::bosen::JuliaModule>(mapper_func_module),
         mapper_func_name,
         dims,
         random_init_type,
         is_dense,
-        symbol);
+        symbol,
+        value_type_bytes,
+        value_type_size);
+  }
+
+  void orion_create_dist_array_buffer(
+      int32_t id,
+      int64_t *dims,
+      size_t num_dims,
+      bool is_dense,
+      int32_t value_type,
+      jl_value_t *init_value,
+      const char* symbol,
+      const uint8_t* value_type_bytes,
+      size_t value_type_size) {
+    driver->CreateDistArrayBuffer(id,
+                                  dims,
+                                  num_dims,
+                                  is_dense,
+                                  value_type,
+                                  init_value,
+                                  symbol,
+                                  value_type_bytes,
+                                  value_type_size);
   }
 
   jl_value_t* orion_eval_expr_on_all(
@@ -79,6 +106,16 @@ extern "C" {
                                  index_type);
   }
 
+  void orion_set_dist_array_buffer(
+      int32_t dist_array_id,
+      int32_t *buffer_ids,
+      size_t num_buffers) {
+    driver->SetDistArrayBuffer(
+        dist_array_id,
+        buffer_ids,
+        num_buffers);
+  }
+
   void orion_exec_for_loop(
       int32_t iteration_space_id,
       int32_t parallel_scheme,
@@ -88,7 +125,12 @@ extern "C" {
       size_t num_time_partitioned_dist_arrays,
       const int32_t *global_indexed_dist_array_ids,
       size_t num_global_indexed_dist_arrays,
+      const int32_t *buffered_dist_array_ids,
+      size_t num_buffered_dist_arrays,
+      const int32_t *dist_array_buffer_ids,
+      const size_t *num_buffers_each_dist_array,
       const char *loop_batch_func_name,
+      const char *prefetch_batch_func_name,
       bool is_ordered) {
     driver->ExecForLoop(
         iteration_space_id,
@@ -99,7 +141,12 @@ extern "C" {
         num_time_partitioned_dist_arrays,
         global_indexed_dist_array_ids,
         num_global_indexed_dist_arrays,
+        buffered_dist_array_ids,
+        num_buffered_dist_arrays,
+        dist_array_buffer_ids,
+        num_buffers_each_dist_array,
         loop_batch_func_name,
+        prefetch_batch_func_name,
         is_ordered);
   }
 

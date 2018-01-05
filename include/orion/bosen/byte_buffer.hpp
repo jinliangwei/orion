@@ -15,6 +15,9 @@ class ByteBuffer {
  public:
   ByteBuffer();
   ~ByteBuffer();
+  ByteBuffer(size_t buff_capacity);
+  ByteBuffer(const ByteBuffer & other);
+  ByteBuffer(ByteBuffer && other);
   void Reset(size_t capacity);
   uint8_t* GetAvailMem();
   void IncSize(size_t size);

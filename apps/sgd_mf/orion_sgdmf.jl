@@ -43,11 +43,11 @@ dim_x, dim_y = size(ratings)
 println((dim_x, dim_y))
 
 Orion.@dist_array W = Orion.randn(K, dim_x)
-Orion.@dist_array W = Orion.map_value(W, map_init_param)
+Orion.@dist_array W = Orion.map(W, map_init_param, map_values=true)
 Orion.materialize(W)
 
 Orion.@dist_array H = Orion.randn(K, dim_y)
-Orion.@dist_array H = Orion.map_value(H, map_init_param)
+Orion.@dist_array H = Orion.map_value(H, map_init_param, map_values=true)
 Orion.materialize(H)
 
 Orion.@accumulator error = 0

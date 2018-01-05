@@ -9,7 +9,7 @@
 function get_1d_tile_size(iteration_space_partition_dim::Int64,
                           iteration_space_dist_array::DistArray)::Int64
     partition_dim_size = iteration_space_dist_array.iterate_dims[iteration_space_partition_dim]
-    tile_size = cld(partition_dim_size, num_executors * 2)
+    tile_size = cld(partition_dim_size, iterate_space_dist_array.num_partitions_per_dim)
     return tile_size
 end
 
@@ -246,8 +246,8 @@ function parallelize_1d(par_for_context::ParForContext,
 
     dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
                                                        string(loop_partition_func_name),
-                                                       space_partition_dim + iteration_space_dims_diff,
-                                                       tile_size,
+                                                       (space_partition_dim + iteration_space_dims_diff,),
+                                                       (tile_size,),
                                                        DistArrayIndexType_none)
     parallelized_loop = quote end
     repartition_stmt = :(Orion.check_and_repartition($(esc(iteration_space)), $dist_array_partition_info))
@@ -259,7 +259,7 @@ function parallelize_1d(par_for_context::ParForContext,
         partition_dims = compute_dist_array_partition_dims(da_sym, da_access_vec,
                                                            iteration_space_dims)
         partition_dim = 0
-        if space_partition_dim in keys(partition_dims)
+        if !(da_sym in keys(dist_array_buffer_map)) && space_partition_dim in keys(partition_dims)
             partition_dim = partition_dims[space_partition_dim]
             push!(space_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
         else
@@ -287,6 +287,17 @@ function parallelize_1d(par_for_context::ParForContext,
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
         end
+
+        if da_sym in keys(dist_array_buffer_map)
+            buffer_info = dist_array_buffer_map[da_sym]
+            for helper_da_sym in buffer_info.helper_dist_array_vec
+                dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_naive,
+                                                                   "", nothing, nothing,
+                                                                   DistArrayIndexType_global)
+                repartition_stmt = :(Orion.check_and_repartition($(esc(helper_da_sym)), $dist_array_partition_info))
+                push!(parallelized_loop.args, repartition_stmt)
+            end
+        end
     end
 
     loop_body_func_name = gen_unique_symbol()
@@ -309,6 +320,8 @@ function parallelize_1d(par_for_context::ParForContext,
     end
 
     prefetch_func = nothing
+    prefetch_batch_func = nothing
+    prefetch_batch_func_name = nothing
     println(global_indexed_dist_array_syms)
     if !isempty(global_indexed_dist_array_syms)
         prefetch_stmts = get_prefetch_stmts(flow_graph, global_indexed_dist_array_syms)
@@ -316,8 +329,8 @@ function parallelize_1d(par_for_context::ParForContext,
             prefetch_func_name = gen_unique_symbol()
             prefetch_batch_func_name = gen_unique_symbol()
             prefetch_func = gen_prefetch_function(prefetch_func_name,
-                                              par_for_context.iteration_var,
-                                              prefetch_stmts)
+                                                  par_for_context.iteration_var,
+                                                  prefetch_stmts)
             if iteration_space_dist_array.dims == iteration_space_dist_array.iterate_dims
                 prefetch_batch_func = gen_prefetch_batch_function(prefetch_batch_func_name,
                                                                   prefetch_func_name,
@@ -336,21 +349,38 @@ function parallelize_1d(par_for_context::ParForContext,
         remap_ssa_vars(prefetch_func.args[2], ssa_defs)
     end
     println(prefetch_func)
-#    eval_expr_on_all(loop_partition_func, :Main)
-#    for partition_func in partition_func_set
-#        eval_expr_on_all(partition_func, :Main)
-#    end
-#    eval_expr_on_all(loop_body_func, :Main)
-#    eval_expr_on_all(loop_batch_func, :Main)
+    eval_expr_on_all(loop_partition_func, :Main)
+    for partition_func in partition_func_set
+        eval_expr_on_all(partition_func, :Main)
+    end
+    eval_expr_on_all(loop_body_func, :Main)
+    eval_expr_on_all(loop_batch_func, :Main)
 
     loop_batch_func_name_str = string(loop_batch_func_name)
+    prefetch_batch_func_name_str = string(prefetch_batch_func_name)
+    buffered_dist_array_ids = Vector{Int32}()
+    dist_array_buffer_ids = Vector{Int32}()
+    num_buffers_each_dist_array = Vector{Int32}()
+
+    for dist_array_id in global_indexed_dist_array_ids
+        if dist_array_id in keys(dist_array_buffer_map)
+            push!(buffered_dist_array_ids, dist_array_id)
+            buff_info = dist_array_buffer_map[dist_array_id]
+            push!(num_buffers_each_dist_array, length(buff_info.helper_buffer_vec))
+            append!(dist_array_buffer_ids, buff_info.helper_buffer_vec)
+        end
+    end
 
     exec_loop_stmt = :(Orion.exec_for_loop($(iteration_space_dist_array.id),
                                            Orion.ForLoopParallelScheme_1d,
                                            $(space_partitioned_dist_array_ids),
                                            Vector{Int64}(),
                                            $(global_indexed_dist_array_ids),
+                                           $(buffered_dist_array_ids),
+                                           $(dist_array_buffer_ids),
+                                           $(num_buffers_each_dist_array),
                                            $loop_batch_func_name_str,
+                                           $prefetch_batch_func_name_str,
                                            $(par_for_context.is_ordered)))
     push!(parallelized_loop.args, exec_loop_stmt)
     return parallelized_loop
@@ -397,14 +427,19 @@ function parallelize_2d(par_for_context::ParForContext,
         partition_dims = compute_dist_array_partition_dims(da_sym, da_access_vec,
                                                            iteration_space_dims)
         partition_dim = 0
-        if space_partition_dim in keys(partition_dims)
-            partition_dim = partition_dims[space_partition_dim]
-            push!(space_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
-            tile_size = tile_sizes[1]
-        elseif time_partition_dim in keys(partition_dims)
-            partition_dim = partition_dims[time_partition_dim]
-            push!(time_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
-            tile_size = tile_sizes[2]
+        if !(da_sym in keys(dist_array_buffer_map)) &&
+            (space_partition_dim in keys(partition_dims) ||
+             time_partition_dim in keys(partition_dims))
+            if space_partition_dim in keys(partition_dims)
+                partition_dim = partition_dims[space_partition_dim]
+                push!(space_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
+                tile_size = tile_sizes[1]
+            else
+                @assert time_partition_dim in keys(partition_dims)
+                partition_dim = partition_dims[time_partition_dim]
+                push!(time_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
+                tile_size = tile_sizes[2]
+            end
         else
             push!(global_indexed_dist_array_ids, eval(current_module(), da_sym).id)
             push!(global_indexed_dist_array_syms, da_sym)
@@ -430,6 +465,17 @@ function parallelize_2d(par_for_context::ParForContext,
                                                                DistArrayIndexType_global)
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
+        end
+
+        if da_sym in keys(dist_array_buffer_map)
+            buffer_info = dist_array_buffer_map[da_sym]
+            for helper_da_sym in buffer_info.helper_dist_array_vec
+                dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_naive,
+                                                                   "", nothing, nothing,
+                                                                   DistArrayIndexType_global)
+                repartition_stmt = :(Orion.check_and_repartition($(esc(helper_da_sym)), $dist_array_partition_info))
+                push!(parallelized_loop.args, repartition_stmt)
+            end
         end
     end
 
@@ -474,22 +520,40 @@ function parallelize_2d(par_for_context::ParForContext,
         end
     end
 
-#    eval_expr_on_all(loop_partition_func, :Main)
-#    for partition_func in partition_func_set
-#        eval_expr_on_all(partition_func, :Main)
-#    end
-#    eval_expr_on_all(loop_body_func, :Main)
-#    eval_expr_on_all(loop_batch_func, :Main)
+    eval_expr_on_all(loop_partition_func, :Main)
+    for partition_func in partition_func_set
+        eval_expr_on_all(partition_func, :Main)
+    end
+    eval_expr_on_all(loop_body_func, :Main)
+    eval_expr_on_all(loop_batch_func, :Main)
 
     loop_batch_func_name_str = string(loop_batch_func_name)
+    prefetch_batch_func_name_str = string(prefetch_batch_func_name)
+    buffered_dist_array_ids = Vector{Int32}()
+    dist_array_buffer_ids = Vector{Int32}()
+    num_buffers_each_dist_array = Vector{Int32}()
+
+    for dist_array_id in global_indexed_dist_array_ids
+        if dist_array_id in keys(dist_array_buffer_map)
+            push!(buffered_dist_array_ids, dist_array_id)
+            buff_info = dist_array_buffer_map[dist_array_id]
+            push!(num_buffers_each_dist_array, length(buff_info.helper_buffer_vec))
+            append!(dist_array_buffer_ids, buff_info.helper_buffer_vec)
+        end
+    end
 
     exec_loop_stmt = :(Orion.exec_for_loop($(iteration_space_dist_array.id),
                                            Orion.ForLoopParallelScheme_2d,
                                            $(space_partitioned_dist_array_ids),
                                            $(time_partitioned_dist_array_ids),
                                            $(global_indexed_dist_array_ids),
+                                           $(buffered_dist_array_ids),
+                                           $(dist_array_buffer_ids),
+                                           $(num_buffers_each_dist_array),
                                            $loop_batch_func_name_str,
+                                           $prefetch_batch_func_name_str,
                                            $(par_for_context.is_ordered)))
+
     push!(parallelized_loop.args, exec_loop_stmt)
     return parallelized_loop
 end

@@ -12,6 +12,8 @@
 #include <orion/bosen/event_handler.hpp>
 #include <orion/bosen/recv_arbitrary_bytes.hpp>
 #include <orion/bosen/julia_module.hpp>
+#include <orion/bosen/dist_array_meta.hpp>
+#include <orion/bosen/julia_evaluator.hpp>
 
 namespace orion {
 namespace bosen {
@@ -113,10 +115,6 @@ class Driver {
       std::bind(&Driver::HandleClosedConnection, this,
                std::placeholders::_1));
     jl_init(NULL);
-    LOG(INFO) << "master_recv_buff = "
-              << &master_.recv_buff
-              << " temp_recv_buff = "
-              << &master_recv_temp_buff_;
   }
   ~Driver() { }
 
@@ -129,26 +127,45 @@ class Driver {
 
   void CreateDistArray(
       int32_t id,
-      task::DistArrayParentType parent_type,
+      int32_t parent_type,
       int32_t map_type,
+      int32_t partition_scheme,
       bool flatten_results,
       size_t num_dims,
-      type::PrimitiveType value_type,
+      int32_t value_type,
       const char* file_path,
       int32_t parent_id,
-      task::DistArrayInitType init_type,
-      JuliaModule parser_func_module,
-      const char* parser_func_name,
+      int32_t init_type,
+      JuliaModule map_func_module,
+      const char* map_func_name,
       int64_t *dims,
       int32_t random_init_type,
       bool is_dense,
-      const char* symbol);
+      const char* symbol,
+      const uint8_t* value_type_bytes,
+      size_t value_type_size);
 
   void RepartitionDistArray(
       int32_t id,
       const char *partition_func_name,
       int32_t partition_scheme,
       int32_t index_type);
+
+  void CreateDistArrayBuffer(
+      int32_t id,
+      int64_t *dims,
+      size_t num_dims,
+      bool is_dense,
+      int32_t value_type,
+      jl_value_t *init_value,
+      const char* symbol,
+      const uint8_t* value_type_bytes,
+      size_t value_type_size);
+
+  void SetDistArrayBuffer(
+      int32_t dist_array_id,
+      int32_t *buffer_ids,
+      size_t num_buffers);
 
   void ExecForLoop(
       int32_t iteration_space_id,
@@ -159,7 +176,12 @@ class Driver {
       size_t num_time_partitioned_dist_arrays,
       const int32_t *global_indexed_dist_array_ids,
       size_t num_gloabl_indexed_dist_arrays,
+      const int32_t *buffered_dist_array_ids,
+      size_t num_buffered_dist_arrays,
+      const int32_t *dist_array_buffer_ids,
+      const size_t *num_buffers_each_dist_array,
       const char* loop_batch_func_name,
+      const char *prefetch_batch_func_name,
       bool is_ordered);
 
   jl_value_t* GetAccumulatorValue(
@@ -209,7 +231,6 @@ Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
         auto *response_msg = message::DriverMsgHelper::get_msg<
           message::DriverMsgMasterResponse>(recv_buff);
         size_t expected_size = response_msg->result_bytes;
-        LOG(INFO) << "expected size = " << expected_size;
         if (expected_size == 0) {
             received_from_master_ = true;
             ret = EventHandler<PollConn>::kClearOneMsg;
@@ -218,7 +239,6 @@ Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
           bool received_next_msg =
               ReceiveArbitraryBytes(master_.sock, &recv_buff, &result_buff_,
                                     expected_size);
-          LOG(INFO) << "result_buff size = " << result_buff_.GetSize();
           if (received_next_msg) {
             received_from_master_ = true;
             ret = EventHandler<PollConn>::kClearOneAndNextMsg;
@@ -227,7 +247,6 @@ Driver::HandleMasterMsg(PollConn *poll_conn_ptr) {
             ret = EventHandler<PollConn>::kNoAction;
           }
         }
-        LOG(INFO) << "received from master = " << received_from_master_;
       }
       break;
     default:
@@ -326,7 +345,6 @@ Driver::EvalExprOnAll(
         continue;
       }
       jl_array_ptr_1d_push(reinterpret_cast<jl_array_t*>(result_array), deserialized_result);
-      LOG(INFO) << "pushed 1 object " << (void*) deserialized_result;
       cursor += curr_result_size + sizeof(size_t);
     }
     JL_GC_POP();
@@ -341,44 +359,50 @@ Driver::EvalExprOnAll(
 void
 Driver::CreateDistArray(
       int32_t id,
-      task::DistArrayParentType parent_type,
+      int32_t parent_type,
       int32_t map_type,
+      int32_t partition_scheme,
       bool flatten_results,
       size_t num_dims,
-      type::PrimitiveType value_type,
+      int32_t value_type,
       const char* file_path,
       int32_t parent_id,
-      task::DistArrayInitType init_type,
-      JuliaModule mapper_func_module,
-      const char* mapper_func_name,
+      int32_t init_type,
+      JuliaModule map_func_module,
+      const char* map_func_name,
       int64_t *dims,
       int32_t random_init_type,
       bool is_dense,
-      const char* symbol) {
+      const char* symbol,
+      const uint8_t* value_type_bytes,
+      size_t value_type_size) {
   task::CreateDistArray create_dist_array;
   create_dist_array.set_id(id);
   create_dist_array.set_parent_type(parent_type);
-  switch (parent_type) {
-    case task::TEXT_FILE:
+  switch (static_cast<DistArrayParentType>(parent_type)) {
+    case DistArrayParentType::kTextFile:
       {
         create_dist_array.set_file_path(file_path);
       }
       break;
-    case task::DIST_ARRAY:
+    case DistArrayParentType::kDistArray:
       {
+        for (size_t i = 0; i < num_dims; i++) {
+            create_dist_array.add_dims(dims[i]);
+        }
+
         create_dist_array.set_parent_id(parent_id);
       }
       break;
-    case task::INIT:
+    case DistArrayParentType::kInit:
       {
         create_dist_array.set_init_type(init_type);
-        if (init_type != task::EMPTY) {
-          for (size_t i = 0; i < num_dims; i++) {
-            LOG(INFO) << "add dim[" << i << "] = " << dims[i];
+        for (size_t i = 0; i < num_dims; i++) {
             create_dist_array.add_dims(dims[i]);
-          }
         }
-        if (map_type != task::NO_MAP && init_type != task::EMPTY) {
+
+        if (static_cast<DistArrayInitType>(init_type) == DistArrayInitType::kNormalRandom
+            || static_cast<DistArrayInitType>(init_type) == DistArrayInitType::kUniformRandom) {
           create_dist_array.set_random_init_type(random_init_type);
         }
       }
@@ -387,20 +411,22 @@ Driver::CreateDistArray(
       LOG(FATAL) << "unrecognized parent type = "
                  << static_cast<int>(parent_type);
   }
-  create_dist_array.set_map_type(static_cast<task::DistArrayMapType>(map_type));
+  create_dist_array.set_map_type(map_type);
+  create_dist_array.set_partition_scheme(partition_scheme);
   create_dist_array.set_flatten_results(flatten_results);
-  if (map_type != task::NO_MAP) {
-   create_dist_array.set_mapper_func_module(
-        static_cast<int>(mapper_func_module));
-    create_dist_array.set_mapper_func_name(mapper_func_name);
+  if (static_cast<DistArrayMapType>(map_type )!= DistArrayMapType::kNoMap) {
+   create_dist_array.set_map_func_module(
+        static_cast<int>(map_func_module));
+    create_dist_array.set_map_func_name(map_func_name);
   }
   create_dist_array.set_num_dims(num_dims);
-  create_dist_array.set_value_type(static_cast<int>(value_type));
+  create_dist_array.set_value_type(value_type);
   create_dist_array.set_is_dense(is_dense);
   create_dist_array.set_symbol(symbol);
   LOG(INFO) << "create_dist_array, symbol = " << symbol;
+  create_dist_array.set_serialized_value_type(
+      std::string(reinterpret_cast<const char*>(value_type_bytes), value_type_size));
   create_dist_array.SerializeToString(&msg_buff_);
-  LOG(INFO) << "task size = " << msg_buff_.size();
 
   message::DriverMsgHelper::CreateMsg<message::DriverMsgCreateDistArray>(
       &master_.send_buff, msg_buff_.size());
@@ -415,7 +441,8 @@ Driver::CreateDistArray(
   auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
       master_recv_temp_buff_);
   CHECK_EQ(msg->result_bytes/sizeof(int64_t), num_dims);
-  if (parent_type == task::TEXT_FILE && msg->result_bytes > 0) {
+  if (static_cast<DistArrayParentType>(parent_type) == DistArrayParentType::kTextFile
+      && msg->result_bytes > 0) {
     memcpy(dims, result_buff_.GetBytes(), result_buff_.GetSize());
     master_recv_temp_buff_.ClearOneAndNextMsg();
   } else {
@@ -442,7 +469,11 @@ Driver::RepartitionDistArray(
   LOG(INFO) << __func__;
   task::RepartitionDistArray repartition_dist_array_task;
   repartition_dist_array_task.set_id(id);
-  repartition_dist_array_task.set_partition_func_name(partition_func_name);
+  auto my_partition_scheme = static_cast<DistArrayPartitionScheme>(partition_scheme);
+  if (my_partition_scheme == DistArrayPartitionScheme::kSpaceTime ||
+      my_partition_scheme == DistArrayPartitionScheme::k1D) {
+    repartition_dist_array_task.set_partition_func_name(partition_func_name);
+  }
   repartition_dist_array_task.set_partition_scheme(partition_scheme);
   repartition_dist_array_task.set_index_type(index_type);
   repartition_dist_array_task.SerializeToString(&msg_buff_);
@@ -462,6 +493,85 @@ Driver::RepartitionDistArray(
 }
 
 void
+Driver::CreateDistArrayBuffer(
+    int32_t id,
+    int64_t *dims,
+    size_t num_dims,
+    bool is_dense,
+    int32_t value_type,
+    jl_value_t *init_value,
+    const char* symbol,
+    const uint8_t* value_type_bytes,
+    size_t value_type_size) {
+  task::CreateDistArrayBuffer create_dist_array_buffer;
+  create_dist_array_buffer.set_id(id);
+  create_dist_array_buffer.set_num_dims(num_dims);
+  for (size_t i = 0; i < num_dims; i++) {
+    create_dist_array_buffer.add_dims(dims[i]);
+  }
+  create_dist_array_buffer.set_is_dense(is_dense);
+  create_dist_array_buffer.set_value_type(value_type);
+  auto my_value_type = static_cast<type::PrimitiveType>(value_type);
+
+  if (my_value_type == type::PrimitiveType::kString ||
+      my_value_type == type::PrimitiveType::kVoid) {
+    jl_value_t *buff = nullptr;
+    jl_value_t *serialized_result_array = nullptr;
+    JL_GC_PUSH2(&buff, &serialized_result_array);
+    jl_function_t *io_buffer_func
+        = JuliaEvaluator::GetFunction(jl_base_module, "IOBuffer");
+
+    buff = jl_call0(io_buffer_func);
+    jl_function_t *serialize_func
+        = JuliaEvaluator::GetFunction(jl_base_module, "serialize");
+    CHECK(serialize_func != nullptr);
+    jl_call2(serialize_func, buff, init_value);
+    jl_function_t *takebuff_array_func
+        = JuliaEvaluator::GetFunction(jl_base_module, "takebuf_array");
+    serialized_result_array = jl_call1(takebuff_array_func, buff);
+    size_t result_array_length = jl_array_len(serialized_result_array);
+    uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
+    create_dist_array_buffer.set_serialized_init_value(
+        array_bytes, result_array_length);
+    JL_GC_POP();
+  } else {
+    std::vector<uint8_t> buff(type::SizeOf(my_value_type));
+    JuliaEvaluator::UnboxValue(init_value, my_value_type,
+                               buff.data());
+    create_dist_array_buffer.set_serialized_init_value(
+        buff.data(), buff.size());
+  }
+
+  create_dist_array_buffer.set_symbol(symbol);
+  create_dist_array_buffer.set_serialized_value_type(
+      std::string(reinterpret_cast<const char*>(value_type_bytes), value_type_size));
+
+  create_dist_array_buffer.SerializeToString(&msg_buff_);
+
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgCreateDistArrayBuffer>(
+      &master_.send_buff, msg_buff_.size());
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  received_from_master_ = false;
+  BlockRecvFromMaster();
+
+  message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  master_recv_temp_buff_.ClearOneMsg();
+}
+
+void
+Driver::SetDistArrayBuffer(
+    int32_t dist_array_id,
+    int32_t *buffer_ids,
+    size_t num_buffers) {
+
+}
+
+void
 Driver::ExecForLoop(
     int32_t iteration_space_id,
     int32_t parallel_scheme,
@@ -471,9 +581,13 @@ Driver::ExecForLoop(
     size_t num_time_partitioned_dist_arrays,
     const int32_t *global_indexed_dist_array_ids,
     size_t num_global_indexed_dist_arrays,
+    const int32_t *buffered_dist_array_ids,
+    size_t num_buffered_dist_arrays,
+    const int32_t *dist_array_buffer_ids,
+    const size_t *num_buffers_each_dist_array,
     const char *loop_batch_func_name,
+    const char *prefetch_batch_func_name,
     bool is_ordered) {
-  LOG(INFO) << __func__;
   task::ExecForLoop exec_for_loop_task;
   exec_for_loop_task.set_iteration_space_id(iteration_space_id);
   exec_for_loop_task.set_parallel_scheme(parallel_scheme);
@@ -489,11 +603,27 @@ Driver::ExecForLoop(
     exec_for_loop_task.add_global_indexed_dist_array_ids(
         global_indexed_dist_array_ids[i]);
   }
+  if (num_buffered_dist_arrays > 0) {
+    CHECK(buffered_dist_array_ids != nullptr);
+    CHECK(dist_array_buffer_ids != nullptr);
+    CHECK(num_buffers_each_dist_array != nullptr);
+    size_t offset = 0;
+    for (size_t i = 0; i < num_buffered_dist_arrays; i++) {
+      exec_for_loop_task.add_buffered_dist_array_ids(buffered_dist_array_ids[i]);
+      exec_for_loop_task.add_num_buffers_each_dist_array(num_buffers_each_dist_array[i]);
+      for (size_t j = 0; j < num_buffers_each_dist_array[i]; j++) {
+        exec_for_loop_task.add_dist_array_buffer_ids(dist_array_buffer_ids[offset]);
+        offset++;
+      }
+    }
+  }
+
   exec_for_loop_task.set_loop_batch_func_name(loop_batch_func_name);
+  if (prefetch_batch_func_name != nullptr)
+    exec_for_loop_task.set_prefetch_batch_func_name(prefetch_batch_func_name);
   exec_for_loop_task.set_is_ordered(is_ordered);
 
   exec_for_loop_task.SerializeToString(&msg_buff_);
-
   message::DriverMsgHelper::CreateMsg<message::DriverMsgExecForLoop>(
       &master_.send_buff, msg_buff_.size());
   master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
@@ -512,6 +642,7 @@ jl_value_t*
 Driver::GetAccumulatorValue(
     const char *symbol,
     const char *combiner) {
+  LOG(INFO) << __func__;
   task::GetAccumulatorValue get_accumulator_value_task;
   get_accumulator_value_task.set_symbol(symbol);
   get_accumulator_value_task.set_combiner(combiner);
@@ -552,9 +683,10 @@ Driver::GetAccumulatorValue(
           result_size, 0));
   serialized_result_buff = jl_call1(io_buffer_func,
                                     reinterpret_cast<jl_value_t*>(serialized_result_array));
+  JuliaEvaluator::AbortIfException();
   deserialized_result = jl_call1(deserialize_func, serialized_result_buff);
 
-  CHECK(!jl_exception_occurred());
+  JuliaEvaluator::AbortIfException();
   JL_GC_POP();
   master_recv_temp_buff_.ClearOneAndNextMsg();
   return deserialized_result;

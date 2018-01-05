@@ -239,10 +239,10 @@ function gen_map_function(func_name::Symbol,
 end
 
 function gen_map_values_function(func_name::Symbol,
-                          map_func_names::Vector{String},
-                          map_func_modules::Vector{Module},
-                          map_types::Vector{DistArrayMapType},
-                          map_flattens::Vector{Bool})
+                                 map_func_names::Vector{String},
+                                 map_func_modules::Vector{Module},
+                                 map_types::Vector{DistArrayMapType},
+                                 map_flattens::Vector{Bool})
 
     loop_stmt = :(for i = 1:length(values)
                   value = values[i]
@@ -492,7 +492,7 @@ function gen_prefetch_function(prefetch_func_name::Symbol,
     prefetch_func = :(
         function $prefetch_func_name($iterate_var,
                                      oriongen_prefetch_point_dict::Dict{Int64, Set{Int64}},
-                                     oriongen_prefetch_point_dict::Dict{Int64, Set{Tuple{Int64, Int64}}})
+                                     oriongen_prefetch_range_dict::Dict{Int64, Set{Tuple{Int64, UInt64}}})
             $prefetch_stmts
         end
     )
@@ -506,13 +506,13 @@ function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
             function $prefetch_batch_func_name(keys::Vector{Int64},
                                                values::Vector{$iter_space_value_type},
                                                dims::Vector{Int64},
-                                               global_indexed_dist_array_ids::Vector{Int64})::Tuple{Vector{Vector{Int64}},
-                                                                                                    Vector{Vector{Tuple{Int64, Int64}}}}
-            prefetch_point_dict = Dict{Int64, Set{Int64}}()
-            prefetch_range_dict = Dict{Int64, Set{Tuple{Int64, Int64}}}()
+                                               global_indexed_dist_array_ids::Vector{Int32})::Tuple{Vector{Vector{Int64}},
+                                                                                                    Vector{Vector{Tuple{Int64, UInt64}}}}
+            prefetch_point_dict = Dict{Int32, Set{Int64}}()
+            prefetch_range_dict = Dict{Int32, Set{Tuple{Int64, UInt64}}}()
             for id in global_indexed_dist_array_ids
                 prefetch_point_dict[id] = Set{Int64}()
-                prefetch_range_dict[id] = Set{Tuple{Int64, Int64}}()
+                prefetch_range_dict[id] = Set{Tuple{Int64, UInt64}}()
             end
 
             for i in 1:length(keys)
@@ -525,7 +525,7 @@ function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
             end
 
             prefetch_point_array = Vector{Vector{Int64}}()
-            prefetch_range_array = Vector{Vector{Tuple{Int64, Int64}}}()
+            prefetch_range_array = Vector{Vector{Tuple{Int64, UInt64}}}()
             for id in global_indexed_dist_array_ids
                 point_set = prefetch_point_dict[id]
                 push!(prefetch_point_array, collect(point_set))
@@ -549,13 +549,13 @@ function gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name::Symbol,
             function $prefetch_batch_func_name(keys::Vector{Int64},
                                                values::Vector{$iter_space_value_type},
                                                dims::Vector{Int64},
-                                               global_indexed_dist_array_ids::Vector{Int64})::Tuple{Vector{Vector{Int64}},
-                                                                                                    Vector{Vector{Tuple{Int64, Int64}}}}
-            prefetch_point_dict = Dict{Int64, Set{Int64}}()
-            prefetch_range_dict = Dict{Int64, Set{Tuple{Int64, Int64}}}()
+                                               global_indexed_dist_array_ids::Vector{Int32})::Tuple{Vector{Vector{Int64}},
+                                                                                                    Vector{Vector{Tuple{Int64, UInt64}}}}
+            prefetch_point_dict = Dict{Int32, Set{Int64}}()
+            prefetch_range_dict = Dict{Int32, Set{Tuple{Int64, UInt64}}}()
             for id in global_indexed_dist_array_ids
                 prefetch_point_dict[id] = Set{Int64}()
-                prefetch_range_dict[id] = Set{Tuple{Int64, Int64}}()
+                prefetch_range_dict[id] = Set{Tuple{Int64, UInt64}}()
             end
 
             if length(keys) > 0
@@ -584,7 +584,7 @@ function gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name::Symbol,
             end
 
             prefetch_point_array = Vector{Vector{Int64}}()
-            prefetch_range_array = Vector{Vector{Tuple{Int64, Int64}}}()
+            prefetch_range_array = Vector{Vector{Tuple{Int64, UInt64}}}()
             for id in global_indexed_dist_array_ids
                 point_set = prefetch_point_dict[id]
                 push!(prefetch_point_array, collect(point_set))
@@ -596,4 +596,110 @@ function gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name::Symbol,
     )
 
     return prefetch_batch_func
+end
+
+function gen_access_count_function(access_count_func_name::Symbol,
+                                   iterate_var::Symbol,
+                                   access_stmts::Expr)
+    access_count_func = :(
+        function $access_count_func_name($iterate_var,
+                                         oriongen_access_count_dict::Dict{Int64, Dict{Int64, UInt64}})
+            $access_stmts
+        end
+    )
+    return access_count_func
+end
+
+function gen_access_count_batch_function(access_count_batch_func_name::Symbol,
+                                         access_count_func_name::Symbol,
+                                         iter_space_value_type::DataType)
+        access_count_batch_func = :(
+            function $access_count_batch_func_name(keys::Vector{Int64},
+                                                   values::Vector{$iter_space_value_type},
+                                                   dims::Vector{Int64},
+                                                   global_indexed_dist_array_ids::Vector{Int32})::Vector{Vector{Tuple{Int64, UInt64}}}
+            access_count_dict = Dict{Int32, Dict{Int64, UInt64}}()
+            for id in global_indexed_dist_array_ids
+                access_count_dict[id] = Dict{Int64, UInt64}()
+            end
+
+            for i in 1:length(keys)
+                key = keys[i]
+                value = values[i]
+                dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+
+                key_value = (dim_keys, value)
+                $(access_count_func_name)(key_value, access_count_dict)
+            end
+
+            access_count_array = Vector{Vector{Tuple{Int64, UInt64}}}()
+            for id in global_indexed_dist_array_ids
+                access_count = access_count_dict[id]
+                access_count_vec = Vector{Tuple{Int64, UInt64}}()
+                for ac_key in keys(access_count)
+                    push!(access_count_vec, (ac_key, access_count[ac_key]))
+                end
+                push!(access_count_array, access_count_vec)
+            end
+            return access_count_array
+        end
+    )
+
+    return access_count_batch_func
+end
+
+function gen_access_count_batch_function_iter_dims(access_count_batch_func_name::Symbol,
+                                                   access_count_func_name::Symbol,
+                                                   iter_space_value_type::DataType,
+                                                   iterate_dims_length::Int64)
+    access_count_batch_func = :(
+        function $access_count_batch_func_name(keys::Vector{Int64},
+                                               values::Vector{$iter_space_value_type},
+                                               dims::Vector{Int64},
+                                               global_indexed_dist_array_ids::Vector{Int32})::Vector{Vector{Tuple{Int64, UInt64}}}
+
+            access_count_dict = Dict{Int32, Dict{Int64, UInt64}}()
+            for id in global_indexed_dist_array_ids
+                access_count_dict[id] = Dict{Int64, UInt64}()
+            end
+
+            if length(keys) > 0
+                first_key = keys[1]
+                first_dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+                prefix = first_dim_keys[(end - $iterate_dims_length):end]
+                dim_keys_vec = Vector{Vector{Int64}}()
+                value_vec = Vector{$iter_space_value_type}()
+                for i in 1:length(keys)
+                    key = keys[i]
+                    value = values[i]
+                    dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+                    curr_prefix = dim_keys[(end - $iterate_dims_length):end]
+
+                    if curr_prefix == prefix
+                        push!(dim_keys_vec, dim_keys)
+                        push!(value_vec, value)
+                    else
+                        key_value = (dim_keys_vec, value_vec)
+                        $(access_count_func_name)(key_value, access_count_point_dict, access_count_range_dict)
+                        dim_keys_vec = [dim_keys]
+                        value_vec = [value]
+                        prefix = curr_prefix
+                    end
+                end
+            end
+
+            access_count_array = Vector{Vector{Tuple{Int64, UInt64}}}()
+            for id in global_indexed_dist_array_ids
+                access_count = access_count_dict[id]
+                access_count_vec = Vector{Tuple{Int64, UInt64}}()
+                for ac_key in keys(access_count)
+                    push!(access_count_vec, (ac_key, access_count[ac_key]))
+                end
+                push!(access_count_array, access_count_vec)
+            end
+            return access_count_array
+        end
+    )
+
+    return access_count_batch_func
 end

@@ -3,7 +3,8 @@
 #include <vector>
 #include <algorithm>
 #include <orion/noncopyable.hpp>
-#include <orion/bosen/task.pb.h>
+#include <orion/bosen/julia_module.hpp>
+#include <orion/bosen/type.hpp>
 
 namespace orion {
 namespace bosen {
@@ -40,22 +41,54 @@ enum class ForLoopParallelScheme {
     kSpaceTime = 1
 };
 
+enum class DistArrayParentType {
+  kTextFile = 0,
+    kDistArray = 1,
+    kInit = 2
+};
+
+enum class DistArrayInitType {
+  kEmpty = 0,
+    kUniformRandom = 1,
+    kNormalRandom = 2
+};
+
+enum class DistArrayMapType {
+  kNoMap = 0,
+    kMap = 1,
+    kMapFixedKeys = 2,
+    kMapValues = 3,
+    kMapValuesNewKeys = 4
+};
+
 class DistArrayMeta {
  private:
   const size_t kNumDims;
   std::vector<int64_t> dims_;
-  task::DistArrayParentType kParentType_;
-  task::DistArrayInitType kInitType_;
+  const DistArrayParentType kParentType;
+  const DistArrayInitType kInitType;
+  const DistArrayMapType kMapType;
+  const JuliaModule kMapFuncModule { JuliaModule::kNone };
+  const std::string kMapFuncName;
+  const bool kFlattenResults;
+  const bool kIsDense;
+  const type::PrimitiveType kRandomInitType;
   DistArrayPartitionScheme partition_scheme_;
-  bool is_dense_;
   DistArrayIndexType index_type_;
   std::vector<int32_t> max_partition_ids_;
   std::string symbol_;
+  std::vector<uint8_t> init_value_bytes_;
+
  public:
   DistArrayMeta(size_t num_dims,
-                task::DistArrayParentType parent_type,
-                task::DistArrayInitType init_type,
-                const DistArrayMeta *parent_dist_array_meta,
+                DistArrayParentType parent_type,
+                DistArrayInitType init_type,
+                DistArrayMapType map_type,
+                DistArrayPartitionScheme partition_scheme,
+                JuliaModule map_func_module,
+                const std::string &map_func_name,
+                type::PrimitiveType random_init_type,
+                bool flatten_results,
                 bool is_dense,
                 const std::string &symbol);
   ~DistArrayMeta() { }
@@ -63,18 +96,30 @@ class DistArrayMeta {
 
   void UpdateDimsMax(const std::vector<int64_t> &dims);
   const std::vector<int64_t> &GetDims() const;
-  std::vector<int64_t> &GetDims() { return dims_; }
   void AssignDims(const int64_t* dims);
   bool IsDense() const;
-  DistArrayPartitionScheme GetPartitionScheme() const;
+  size_t GetNumDims() const { return kNumDims; }
+  DistArrayPartitionScheme GetPartitionScheme() const { return partition_scheme_; }
   void SetPartitionScheme(DistArrayPartitionScheme partition_scheme);
   void SetIndexType(DistArrayIndexType index_type);
-  DistArrayPartitionScheme GetPartitionScheme() { return partition_scheme_; }
   DistArrayIndexType GetIndexType() { return index_type_; }
+  void SetMaxPartitionIds(int32_t space_id, int32_t time_id);
+  void SetMaxPartitionIds(int32_t partition_id);
+  void SetMaxPartitionIds(const int32_t* max_ids, size_t num_dims);
   void ResetMaxPartitionIds();
   void AccumMaxPartitionIds(const int32_t *max_ids, size_t num_dims);
   const std::vector<int32_t> &GetMaxPartitionIds() { return max_partition_ids_; }
-  std::string &GetSymbol() { return symbol_; }
+  const std::string &GetSymbol() const { return symbol_; }
+  bool IsFlattenResults() const { return kFlattenResults; }
+
+  DistArrayMapType GetMapType() const { return kMapType; }
+  JuliaModule GetMapFuncModule() const { return kMapFuncModule; }
+  const std::string &GetMapFuncName() { return kMapFuncName; }
+
+  void SetInitValue(const uint8_t *init_value_bytes, size_t num_bytes);
+  const std::vector<uint8_t>& GetInitValue() const;
+  type::PrimitiveType GetRandomInitType() const { return kRandomInitType; }
+  DistArrayInitType GetInitType() const { return kInitType; }
 };
 
 }

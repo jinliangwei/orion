@@ -1262,8 +1262,64 @@ function get_deleted_syms(bb_list::Vector{BasicBlock})
     return syms_deleted
 end
 
+function transform_dist_array_read_set(dist_array_read::Tuple)
+    da_sym = dist_array_read[1]
+    subscripts_vec = dist_array_read[2]
+    subscript_to_index_func_call = :(Orion.subscript_to_index($da_sym))
+    for sub in subscripts_vec
+        push!(subscript_to_index_func_call.args, sub)
+    end
+    append_stmt = quote
+        indices = $(subscript_to_index_func_call)
+        if indices[2] == 1
+            for key in indices[1]
+                push!(oriongen_prefetch_point_dict[$da_sym.id], key)
+            end
+        else
+            for key in indices[1]
+                push!(oriongen_prefetch_range_dict[$da_sym.id], (key, indices[2]))
+            end
+        end
+    end
+    return append_stmt.args
+end
+
+function transform_dist_array_read_dict(dist_array_read::Tuple)
+    da_sym = dist_array_read[1]
+    subscripts_vec = dist_array_read[2]
+    subscript_to_index_func_call = :(Orion.subscript_to_index($da_sym))
+    for sub in subscripts_vec
+        push!(subscript_to_index_func_call.args, sub)
+    end
+    append_stmt = quote
+        indices = $(subscript_to_index_func_call)
+        if indices[2] == 1
+            for key in indices[1]
+                if key in keys(oriongen_prefetch_point_dict[$da_sym.id])
+                    oriongen_prefetch_point_dict[$da_sym.id][key] += 1
+                else
+                    oriongen_prefetch_point_dict[$da_sym.id][key] = 1
+                end
+            end
+        else
+            for key in indices[1]
+                for i in 0:indices[2]
+                    k = key + i
+                    if k in keys(oriongen_prefetch_point_dict[$da_sym.id])
+                        oriongen_access_count_dict[$da_sym.id][k] += 1
+                    else
+                        oriongen_access_count_dict[$da_sym.id][k] = 1
+                    end
+                end
+            end
+        end
+    end
+    return append_stmt.args
+end
+
 function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                         bb_stmts_dict::Dict{Int64, Dict{Int64, Any}},
+                                        transform_dist_array_read_func::Function,
                                         stmt_vec::Vector{Any},
                                         appended_bbs::Set{Int64})
     println("recreate_stmts_from_flow_graph ", bb.id)
@@ -1281,25 +1337,8 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                 for dist_array_read in stmt
                     println(dist_array_read)
                     @assert isa(dist_array_read, Tuple)
-                    da_sym = dist_array_read[1]
-                    subscripts_vec = dist_array_read[2]
-                    subscript_to_index_func_call = :(Orion.subscript_to_index($da_sym))
-                    for sub in subscripts_vec
-                        push!(subscript_to_index_func_call.args, sub)
-                    end
-                    append_stmt = quote
-                        indices = $(subscript_to_index_func_call)
-                        if indices[2] == 1
-                            for key in indices[1]
-                                push!(oriongen_prefetch_point_dict[$da_sym.id], key)
-                            end
-                        else
-                             for key in indices[1]
-                                push!(oriongen_prefetch_range_dict[$da_sym.id], (key, indices[2]))
-                            end
-                        end
-                    end
-                    append!(stmt_vec, append_stmt.args)
+                    stmt_vec = transform_dist_array_read_func(dist_array_read)
+                    append!(stmt_vec, stmt_vec)
                 end
             elseif !isa(stmt, Tuple)
                 push!(stmt_vec, stmt)
@@ -1322,6 +1361,7 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
             if suc[1]
                 branch_unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
                                                                       bb_stmts_dict,
+                                                                      transform_dist_array_read_func,
                                                                       true_branch_stmt_vec,
                                                                       appended_bbs)
             end
@@ -1336,6 +1376,7 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                 default_suc = suc[2]
                 unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
                                                                bb_stmts_dict,
+                                                               transform_dist_array_read_func,
                                                                stmt_vec,
                                                                appended_bbs)
             end
@@ -1355,11 +1396,13 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
             if suc[1]
                 true_unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
                                                                     bb_stmts_dict,
+                                                                    transform_dist_array_read_func,
                                                                     true_branch_stmt_vec,
                                                                     appended_bbs)
             else
                 false_unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
                                                                      bb_stmts_dict,
+                                                                     transform_dist_array_read_func,
                                                                      false_branch_stmt_vec,
                                                                      appended_bbs)
 
@@ -1395,6 +1438,7 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
             if suc[1]
                 true_unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
                                                                     bb_stmts_dict,
+                                                                    transform_dist_array_read_func,
                                                                     true_branch_stmt_vec,
                                                                     appended_bbs)
             end
@@ -1412,6 +1456,7 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
             if !suc[1]
                 false_unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
                                                                      bb_stmts_dict,
+                                                                     transform_dist_array_read_func,
                                                                      stmt_vec,
                                                                      appended_bbs)
 
@@ -1438,9 +1483,10 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                  "num_backward_edges = ", suc_bb.num_backward_edges)
         if (num_unappended_preds - suc_bb.num_backward_edges) == 0
             unhandled_suc = recreate_stmts_from_flow_graph(suc_bb,
-                                            bb_stmts_dict,
-                                            stmt_vec,
-                                            appended_bbs)
+                                                           bb_stmts_dict,
+                                                           transform_dist_array_read_func,
+                                                           stmt_vec,
+                                                           appended_bbs)
         else
             unhandled_suc = suc_bb
         end
@@ -1593,6 +1639,7 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
     stmt_vec = Vector{Any}()
     unhandled_suc = recreate_stmts_from_flow_graph(flow_graph,
                                                    bb_stmt_dict,
+                                                   transform_dist_array_read_set,
                                                    stmt_vec,
                                                    appended_bbs)
     @assert unhandled_suc == nothing

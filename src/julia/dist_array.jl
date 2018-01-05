@@ -43,8 +43,8 @@ export DistArray, size, getindex, setindex!
 type DistArrayPartitionInfo
     partition_type::DistArrayPartitionType
     partition_func_name::String
-    partition_dims
-    tile_sizes
+    partition_dims::Union{Tuple, Void} # tuple or nothing
+    tile_sizes::Union{Tuple, Void} # tuple or nothing
     index_type::DistArrayIndexType
 end
 
@@ -59,7 +59,7 @@ function get_dist_array_partition_distinguisher(partition_info::DistArrayPartiti
     return DistArrayPartitionDistinguisher(
     partition_info.partition_type,
     partition_info.partition_dims,
-    partitoin_info.tile_sizes,
+    partition_info.tile_sizes,
     partition_info.index_type)
 end
 
@@ -83,8 +83,8 @@ type DistArray{T} <: AbstractDistArray{T}
     file_path::String
     parent_id::Int32
     init_type::DistArrayInitType
-    mapper_func_module::Module
-    mapper_func_name::String
+    map_func_module::Module
+    map_func_name::String
     is_materialized::Bool
     dims::Vector{Int64}
     random_init_type::DataType
@@ -93,6 +93,8 @@ type DistArray{T} <: AbstractDistArray{T}
     symbol
     access_ptr
     iterate_dims::Vector{Int64}
+    partitions::Vector{Vector{T}}
+    num_partitions_per_dim::Int64
     DistArray(id::Integer,
               parent_type::DistArrayParentType,
               flatten_results::Bool,
@@ -101,8 +103,8 @@ type DistArray{T} <: AbstractDistArray{T}
               file_path::String,
               parent_id::Integer,
               init_type::DistArrayInitType,
-              mapper_func_module::Module,
-              mapper_func_name::String,
+              map_func_module::Module,
+              map_func_name::String,
               is_materialized::Bool,
               random_init_type::DataType,
               is_dense::Bool,
@@ -116,8 +118,8 @@ type DistArray{T} <: AbstractDistArray{T}
                   file_path,
                   parent_id,
                   init_type,
-                  mapper_func_module,
-                  mapper_func_name,
+                  map_func_module,
+                  map_func_name,
                   is_materialized,
                   zeros(Int64, num_dims),
                   random_init_type,
@@ -125,7 +127,9 @@ type DistArray{T} <: AbstractDistArray{T}
                   partition_info,
                   nothing,
                   nothing,
-                  zeros(Int64, num_dims))
+                  zeros(Int64, num_dims),
+                  Vector{Vector{T}}(),
+                  num_executors * 2)
 
     DistArray() = new(-1,
                       DistArrayParentType_init,
@@ -146,7 +150,9 @@ type DistArray{T} <: AbstractDistArray{T}
                                              nothing, nothing, DistArrayIndexType_none),
                       nothing,
                       nothing,
-                      zeros(Int64, 0))
+                      zeros(Int64, 0),
+                      Vector{Vector{T}}(),
+                      1)
 end
 
 const dist_arrays = Dict{Int32, AbstractDistArray}()
@@ -154,19 +160,35 @@ dist_array_id_counter = 0
 
 function text_file(
     file_path::AbstractString,
-    parser_func::Function,
-    is_dense::Bool = false)::DistArray
+    map_func::Function;
+    is_dense::Bool = false,
+    with_line_number::Bool = false,
+    new_keys::Bool = true,
+    flatten::Bool = false,
+    num_dims::Int64 = 0)::DistArray
 
-    parser_func_module = which(Base.function_name(parser_func))
-    parser_func_name = string(Base.function_name(parser_func))
+    map_func_module = which(Base.function_name(map_func))
+    map_func_name = string(Base.function_name(map_func))
+    local map_type
+    local ValueType, key_num_dims
+    if with_line_number && new_keys
+        ValueType, key_num_dims = parse_map_new_keys_function(map_func, (Int64, AbstractString), flatten)
+        map_type = DistArrayMapType_map
+    elseif !with_line_number && new_keys
+        ValueType, key_num_dims = parse_map_new_keys_function(map_func, (AbstractString,), flatten)
+        map_type = DistArrayMapType_map_values_new_keys
+    elseif with_line_number && !new_keys
+        ValueType = parse_map_fixed_keys_function(map_func, (Int64, AbstractString), flatten)
+        map_type = DistArrayMapType_map_fixed_keys
+    else
+        ValueType = parse_map_fixed_keys_function(map_func, (AbstractString,), flatten)
+        map_type = DistArrayMapType_map_values
+    end
 
-    ValueType, num_dims, flatten_results, preserving_keys =
-        parse_map_function(parser_func, (AbstractString,))
-    @assert !preserving_keys
-
-    map_type = num_dims > 0 ?
-        DistArrayMapType_map_values_new_keys :
-        DistArrayMapType_map_values
+    if new_keys && num_dims == 0
+        @assert key_num_dims > 0
+        num_dims = key_num_dims
+    end
 
     global dist_array_id_counter
     id = dist_array_id_counter
@@ -174,14 +196,14 @@ function text_file(
     dist_array = DistArray{ValueType}(
         id,
         DistArrayParentType_text_file,
-        flatten_results,
+        flatten,
         map_type,
         num_dims,
         file_path,
         -1,
         DistArrayInitType_empty,
-        parser_func_module,
-        parser_func_name,
+        map_func_module,
+        map_func_name,
         false,
         Void,
         is_dense,
@@ -189,12 +211,6 @@ function text_file(
                                nothing, nothing, DistArrayIndexType_none))
     dist_arrays[id] = dist_array
     return dist_array
-end
-
-function text_file_with_line_number(file_path::AbstractString,
-                                    parser_func::Function,
-                                    is_dense::Bool = false)::DistArray
-    return DistArray{Float64}()
 end
 
 function rand(ValueType::DataType, dims...)::DistArray
@@ -268,32 +284,39 @@ function materialize(dist_array::DistArray)
 
     if dist_array.parent_type == DistArrayParentType_dist_array
         dist_array_to_create = process_dist_array_map(dist_array)
-        #dist_array_to_create.mapper_func_name = "map_values_func"
-        #dist_array_to_create.mapper_func_module = Main
+        #dist_array_to_create.map_func_name = "map_values_func"
+        #dist_array_to_create.map_func_module = Main
     else
         dist_array_to_create = dist_array
     end
 
+    buff = IOBuffer()
+    serialize(buff, dist_array_to_create.ValueType)
+    buff_array = takebuf_array(buff)
+
     println("map_type = ", dist_array_to_create.map_type)
     ccall((:orion_create_dist_array, lib_path),
-          Void, (Int32, Int32, Int32, Bool, UInt64, Int32,
+          Void, (Int32, Int32, Int32, Int32, Bool, UInt64, Int32,
                  Cstring, Int32, Int32, Int32, Cstring, Ptr{Int64}, Int32,
-                 Bool, Cstring),
+                 Bool, Cstring, Ref{UInt8}, UInt64),
           dist_array_to_create.id,
           dist_array_parent_type_to_int32(dist_array_to_create.parent_type),
           dist_array_map_type_to_int32(dist_array_to_create.map_type),
+          dist_array_partition_type_to_int32(dist_array_to_create.partition_info.partition_type),
           dist_array_to_create.flatten_results,
           dist_array_to_create.num_dims,
           data_type_to_int32(dist_array_to_create.ValueType),
           dist_array_to_create.file_path,
           dist_array_to_create.parent_id,
           dist_array_init_type_to_int32(dist_array_to_create.init_type),
-          module_to_int32(Symbol(dist_array_to_create.mapper_func_module)),
-          dist_array_to_create.mapper_func_name,
+          module_to_int32(Symbol(dist_array_to_create.map_func_module)),
+          dist_array_to_create.map_func_name,
           dist_array_to_create.dims,
           data_type_to_int32(dist_array_to_create.random_init_type),
           dist_array_to_create.is_dense,
-          dist_array_to_create.symbol)
+          dist_array_to_create.symbol,
+          buff_array,
+          length(buff_array))
     dist_array.is_materialized = true
     if dist_array.iterate_dims == zeros(Int64, length(dist_array.iterate_dims))
         dist_array.iterate_dims = copy(dist_array.dims)
@@ -310,8 +333,8 @@ function copy(dist_array::DistArray)::DistArray
     new_dist_array.file_path = dist_array.file_path
     new_dist_array.parent_id = dist_array.parent_id
     new_dist_array.init_type = dist_array.init_type
-    new_dist_array.mapper_func_module = dist_array.mapper_func_module
-    new_dist_array.mapper_func_name = dist_array.mapper_func_name
+    new_dist_array.map_func_module = dist_array.map_func_module
+    new_dist_array.map_func_name = dist_array.map_func_name
     new_dist_array.is_materialized = dist_array.is_materialized
     new_dist_array.dims = copy(dist_array.dims)
     new_dist_array.random_init_type = dist_array.random_init_type
@@ -334,8 +357,8 @@ function process_dist_array_map(dist_array::DistArray)::DistArray
     while !origin_dist_array.is_materialized &&
         origin_dist_array.parent_type == DistArrayParentType_dist_array
 
-        insert!(map_func_names, 1, origin_dist_array.mapper_func_name)
-        insert!(map_func_modules, 1, origin_dist_array.mapper_func_module)
+        insert!(map_func_names, 1, origin_dist_array.map_func_name)
+        insert!(map_func_modules, 1, origin_dist_array.map_func_module)
         insert!(map_types, 1, origin_dist_array.map_type)
         insert!(map_flattens, 1, origin_dist_array.flatten_results)
         parent_id = origin_dist_array.parent_id
@@ -343,8 +366,8 @@ function process_dist_array_map(dist_array::DistArray)::DistArray
     end
 
     map_func_name_sym = gen_unique_symbol()
-    processed_dist_array.mapper_func_name = string(map_func_name_sym)
-    processed_dist_array.mapper_func_module = Module(:Main)
+    processed_dist_array.map_func_name = string(map_func_name_sym)
+    processed_dist_array.map_func_module = Module(:Main)
     processed_dist_array.parent_type = origin_dist_array.parent_type
 
     if origin_dist_array.parent_type == DistArrayParentType_init
@@ -399,29 +422,54 @@ end
 
 function map_generic(parent_dist_array::DistArray,
                      map_func::Function,
-                     map_value_only::Bool)::DistArray
+                     map_value_only::Bool,
+                     new_keys::Bool,
+                     flatten::Bool,
+                     num_dims::Int64)::DistArray
     global dist_array_id_counter
     id = dist_array_id_counter
     dist_array_id_counter += 1
 
     map_func_module = which(Base.function_name(map_func))
     map_func_name = string(Base.function_name(map_func))
-
-    if !map_value_only
-        ValueType, num_dims, flatten_results, preserving_keys =
-            parse_map_function(map_func, (Tuple, parent_dist_array.ValueType))
+    local map_type
+    local ValueType, key_num_dims
+    if !map_value_only && new_keys
+        ValueType, key_num_dims = parse_map_new_keys_function(map_func, (Tuple, parent_dist_array.ValueType), flatten)
+        map_type = DistArrayMapType_map
+    elseif map_value_only && new_keys
+        ValueType, key_num_dims = parse_map_new_keys_function(map_func, (parent_dist_array.ValueType,), flatten)
+        map_type = DistArrayMapType_map_values_new_keys
+    elseif !map_value_only && !new_keys
+        ValueType = parse_map_fixed_keys_function(map_func, (Tuple, parent_dist_array.ValueType), flatten)
+        map_type = DistArrayMapType_map_fixed_keys
     else
-        ValueType, num_dims, flatten_results, preserving_keys =
-            parse_map_function(map_func, (parent_dist_array.ValueType,))
+        ValueType = parse_map_fixed_keys_function(map_func, (parent_dist_array.ValueType,), flatten)
+        map_type = DistArrayMapType_map_values
     end
+
+    partition_info = parent_dist_array.partition_info
+
+    if map_type == DistArrayMapType_map ||
+        map_type == DistArrayMapType_map_values_new_keys
+        partition_info = DistArrayPartitionInfo(DistArrayPartitionType_naive,
+                                                "", nothing, nothing,
+                                                DistArrayIndexType_none)
+    end
+    if new_keys && num_dims == 0
+        @assert key_num_dims > 0
+        num_dims = key_num_dims
+    end
+    @assert !new_keys ||
+        (isempty(parent_dist_array.dims) || length(parent_dist_array.dims) == num_dims)
 
     dist_array = DistArray{ValueType}(
         id,
         DistArrayParentType_dist_array,
-        flatten_results,
+        flatten,
         map_value_only ?
-        (preserving_keys ? DistArrayMapType_map_values : DistArrayMapType_map_values_new_keys) :
-        (preserving_keys ? DistArrayMapType_map_fixed_keys : DistArrayMapType_map),
+        (new_keys ? DistArrayMapType_map_values_new_keys : DistArrayMapType_map_values) :
+        (new_keys ? DistArrayMapType_map : DistArrayMapType_map_fixed_keys),
         length(parent_dist_array.dims),
         "",
         parent_dist_array.id,
@@ -431,21 +479,23 @@ function map_generic(parent_dist_array::DistArray,
         false,
         parent_dist_array.random_init_type,
         parent_dist_array.is_dense,
-        DistArrayPartitionInfo(DistArrayPartitionType_naive,
-                               "", nothing, nothing,
-                               DistArrayIndexType_none))
-    dist_array.dims = parent_dist_array.dims
+        partition_info)
+    if !new_keys || !isempty(parent_dist_array.dims)
+        dist_array.dims = parent_dist_array.dims
+    else
+        dist_array.num_dims = num_dims
+    end
     dist_array.iterate_dims = parent_dist_array.iterate_dims
     dist_arrays[id] = dist_array
     return dist_array
 end
 
-function map(parent_dist_array::DistArray, map_func::Function)::DistArray
-    return map_generic(parent_dist_array, map_func, false)
-end
-
-function map_value(parent_dist_array::DistArray, map_func::Function)::DistArray
-    return map_generic(parent_dist_array, map_func, true)
+function map(parent_dist_array::DistArray, map_func::Function;
+             map_values::Bool = false,
+             new_keys::Bool = false,
+             flatten::Bool = false,
+             num_dims::Int64 = 0)::DistArray
+    return map_generic(parent_dist_array, map_func, map_values, new_keys, flatten, num_dims)
 end
 
 function check_and_repartition(dist_array::DistArray,
@@ -454,11 +504,7 @@ function check_and_repartition(dist_array::DistArray,
     curr_partition_info = dist_array.partition_info
     repartition = false
     if partition_info.index_type == DistArrayIndexType_global
-        if dist_array.is_dense
-            partition_info.partition_type = DistArrayPartitionType_range
-        else
-            partition_info.partition_type = DistArrayPartitionType_hash
-        end
+        partition_info.partition_type = DistArrayPartitionType_hash
     end
 
     if partition_info.partition_func_name == curr_partition_info.partition_func_name

@@ -19,7 +19,7 @@ namespace bosen {
 class PeerRecvThread {
   struct PollConn {
     enum class ConnType {
-      peer = 1,
+      my_executor = 1,
         executor = 2,
         server = 3
     };
@@ -28,7 +28,7 @@ class PeerRecvThread {
     int32_t id;
 
     bool Receive() {
-      if (type == ConnType::peer
+      if (type == ConnType::executor
           || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.Recv(&(sock_conn->recv_buff));
@@ -39,7 +39,7 @@ class PeerRecvThread {
     }
 
     bool Send() {
-      if (type == ConnType::peer
+      if (type == ConnType::executor
           || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.Send(&(sock_conn->send_buff));
@@ -50,7 +50,7 @@ class PeerRecvThread {
     }
 
     conn::RecvBuffer& get_recv_buff() {
-      if (type == ConnType::peer
+      if (type == ConnType::executor
           || type == ConnType::server) {
         return reinterpret_cast<conn::SocketConn*>(conn)->recv_buff;
       } else {
@@ -59,7 +59,7 @@ class PeerRecvThread {
     }
 
     conn::SendBuffer& get_send_buff() {
-      if (type == ConnType::peer
+      if (type == ConnType::executor
           || type == ConnType::server) {
         return reinterpret_cast<conn::SocketConn*>(conn)->send_buff;
       } else {
@@ -72,7 +72,7 @@ class PeerRecvThread {
     }
 
     int get_read_fd() const {
-      if (type == ConnType::peer
+      if (type == ConnType::executor
           || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.get_fd();
@@ -83,7 +83,7 @@ class PeerRecvThread {
     }
 
     int get_write_fd() const {
-      if (type == ConnType::peer
+      if (type == ConnType::executor
           || type == ConnType::server) {
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(conn);
         return sock_conn->sock.get_fd();
@@ -112,20 +112,16 @@ class PeerRecvThread {
   Blob send_mem_;
   conn::SendBuffer send_buff_;
 
-  Blob peer_send_mem_;
-  Blob peer_recv_mem_;
+  Blob executor_server_send_mem_;
+  Blob executor_server_recv_mem_;
+  std::vector<conn::Socket> executor_server_socks_;
+  std::vector<PollConn> executor_server_conn_;
+  std::vector<int> executor_server_sock_fds_;
+
   std::vector<std::unique_ptr<conn::SocketConn>> peer_;
-  std::vector<PollConn> peer_conn_;
-  std::vector<conn::Socket> peer_socks_;
-  std::vector<int> peer_sock_fds_;
   std::vector<ByteBuffer> peer_recv_byte_buff_;
 
-  Blob server_send_mem_;
-  Blob server_recv_mem_;
   std::vector<std::unique_ptr<conn::SocketConn>> server_;
-  std::vector<PollConn> server_conn_;
-  std::vector<conn::Socket> server_socks_;
-  std::vector<int> server_sock_fds_;
   std::vector<ByteBuffer> server_recv_byte_buff_;
 
   conn::Pipe executor_pipe_[2];
@@ -137,14 +133,24 @@ class PeerRecvThread {
   Action action_ { Action::kNone };
 
   void *data_recv_buff_ { nullptr };
-  std::unique_ptr<PeerRecvExecForLoopDistArrayDataBuffer> exec_for_loop_data_buff_;
+  bool has_executor_requested_pipeline_time_partitions_ { false };
+  std::vector<PeerRecvPipelinedTimePartitionsBuffer*> pipelined_time_partitions_buff_vec_;
+  PeerRecvPipelinedTimePartitionsBuffer* pipelined_time_partitions_buff_ { nullptr };
+
+  std::vector<PeerRecvGlobalIndexedDistArrayDataBuffer*> global_indexed_dist_arrays_buff_vec_;
+  PeerRecvGlobalIndexedDistArrayDataBuffer* global_indexed_dist_arrays_buff_ { nullptr };
+  bool has_executor_requested_global_indexed_dist_array_data_ { false };
+
+  bool pred_completed_ { false };
+  bool has_executor_requested_pred_completion_ { false };
  public:
   PeerRecvThread(int32_t id,
                  int32_t executor_id,
                  int32_t server_id,
                  bool is_server,
-                 const std::vector<conn::Socket> &peer_socks,
-                 const std::vector<conn::Socket> &server_socks,
+                 size_t num_executors,
+                 size_t num_servers,
+                 const std::vector<conn::Socket> &executor_server_socks,
                  size_t buff_capacity);
   void operator() ();
   conn::Pipe GetExecutorPipe();
@@ -154,7 +160,9 @@ class PeerRecvThread {
   int HandleExecuteMsg(PollConn* poll_conn_ptr);
   int HandleExecutorMsg();
   int HandleClosedConnection(PollConn *poll_conn_ptr);
-  void ExecForLoopServeRequest();
+  void ServePipelinedTimePartitionsRequest();
+  void ServeGlobalIndexedDistArrayDataRequest();
+  void ServeExecForLoopPredCompletion();
   void SendToExecutor();
 };
 
@@ -163,31 +171,27 @@ PeerRecvThread::PeerRecvThread(
     int32_t executor_id,
     int32_t server_id,
     bool is_server,
-    const std::vector<conn::Socket> &peer_socks,
-    const std::vector<conn::Socket> &server_socks,
+    size_t num_executors,
+    size_t num_servers,
+    const std::vector<conn::Socket> &executor_server_socks,
     size_t buff_capacity):
     kId(id),
     kExecutorId(executor_id),
     kServerId(server_id),
     kIsServer(is_server),
-    kNumExecutors(peer_socks.size()),
-    kNumServers(server_socks.size()),
+    kNumExecutors(num_executors),
+    kNumServers(num_servers),
     kCommBuffCapacity(buff_capacity),
     send_mem_(kCommBuffCapacity),
     send_buff_(send_mem_.data(), kCommBuffCapacity),
-    peer_send_mem_(buff_capacity * kNumExecutors),
-    peer_recv_mem_(buff_capacity * kNumExecutors),
+    executor_server_send_mem_(buff_capacity * (kNumExecutors + kNumServers)),
+    executor_server_recv_mem_(buff_capacity * (kNumExecutors + kNumServers)),
+    executor_server_socks_(executor_server_socks),
+    executor_server_conn_(kNumExecutors + kNumServers),
+    executor_server_sock_fds_(kNumExecutors + kNumServers),
     peer_(kNumExecutors),
-    peer_conn_(kNumExecutors),
-    peer_socks_(peer_socks),
-    peer_sock_fds_(kNumExecutors),
     peer_recv_byte_buff_(kNumExecutors),
-    server_send_mem_(buff_capacity * kNumServers),
-    server_recv_mem_(buff_capacity * kNumServers),
     server_(kNumServers),
-    server_conn_(kNumServers),
-    server_socks_(server_socks),
-    server_sock_fds_(kNumServers),
     server_recv_byte_buff_(kNumServers),
     executor_recv_mem_(buff_capacity),
     executor_send_mem_(buff_capacity),
@@ -200,7 +204,7 @@ PeerRecvThread::PeerRecvThread(
       executor_recv_mem_.data(),
       executor_send_mem_.data(),
       kCommBuffCapacity);
-  executor_conn_.type = PollConn::ConnType::executor;
+  executor_conn_.type = PollConn::ConnType::my_executor;
   executor_conn_.conn = executor_.get();
 }
 
@@ -218,47 +222,26 @@ PeerRecvThread::operator() () {
 
   event_handler_.SetToReadOnly(&executor_conn_);
 
-  for (size_t peer_index = 0; peer_index < kNumExecutors; peer_index++) {
-    if (!kIsServer && peer_index == kExecutorId) continue;
-    auto &sock = peer_socks_[peer_index];
-    uint8_t *recv_mem = peer_recv_mem_.data()
+  for (size_t peer_index = 0; peer_index < kNumExecutors + kNumServers; peer_index++) {
+    if (peer_index == kId) continue;
+    auto &sock = executor_server_socks_[peer_index];
+    uint8_t *recv_mem = executor_server_recv_mem_.data()
                         + kCommBuffCapacity * peer_index;
 
-    uint8_t *send_mem = peer_send_mem_.data()
+    uint8_t *send_mem = executor_server_send_mem_.data()
                         + kCommBuffCapacity * peer_index;
 
     auto *sock_conn = new conn::SocketConn(
         sock, recv_mem, send_mem, kCommBuffCapacity);
-    auto &curr_poll_conn = peer_conn_[peer_index];
+    auto &curr_poll_conn = executor_server_conn_[peer_index];
     curr_poll_conn.conn = sock_conn;
-    curr_poll_conn.type = PollConn::ConnType::peer;
+    curr_poll_conn.type = PollConn::ConnType::executor;
     curr_poll_conn.id = peer_index;
     int ret = event_handler_.SetToReadOnly(&curr_poll_conn);
     CHECK_EQ(ret, 0) << "errno = " << errno << " fd = " << sock.get_fd()
                      << " i = " << peer_index
-                     << " id = " << kId;
-  }
-
-  if (!kIsServer) {
-    for (size_t server_index = 0; server_index < kNumServers; server_index++) {
-      auto &sock = server_socks_[server_index];
-      uint8_t *recv_mem = server_recv_mem_.data()
-                          + kCommBuffCapacity * server_index;
-
-      uint8_t *send_mem = server_send_mem_.data()
-                          + kCommBuffCapacity * server_index;
-
-      auto *sock_conn = new conn::SocketConn(
-          sock, recv_mem, send_mem, kCommBuffCapacity);
-      auto &curr_poll_conn = server_conn_[server_index];
-      curr_poll_conn.conn = sock_conn;
-      curr_poll_conn.type = PollConn::ConnType::server;
-      curr_poll_conn.id = server_index;
-      int ret = event_handler_.SetToReadOnly(&curr_poll_conn);
-      CHECK_EQ(ret, 0) << "errno = " << errno << " fd = " << sock.get_fd()
-                       << " i = " << server_index
-                       << " id = " << kId;
-    }
+                     << " id = " << kId
+                     << " kIsServer = " << kIsServer;
   }
 
   while (true) {
@@ -275,7 +258,8 @@ PeerRecvThread::GetExecutorPipe() {
 int
 PeerRecvThread::HandleMsg(PollConn* poll_conn_ptr) {
   int ret = 0;
-  if (poll_conn_ptr->type == PollConn::ConnType::peer) {
+  if (poll_conn_ptr->type == PollConn::ConnType::executor
+      || poll_conn_ptr->type == PollConn::ConnType::server) {
     ret = HandlePeerMsg(poll_conn_ptr);
   } else {
     ret = HandleExecutorMsg();
@@ -290,7 +274,8 @@ PeerRecvThread::HandleMsg(PollConn* poll_conn_ptr) {
         {
           message::Helper::CreateMsg<message::ExecutorConnectToPeersAck>(&send_buff_);
           send_buff_.set_next_to_send(
-              peer_sock_fds_.data(), peer_sock_fds_.size() * sizeof(int));
+              executor_server_sock_fds_.data(),
+              executor_server_sock_fds_.size() * sizeof(int));
           SendToExecutor();
           send_buff_.clear_to_send();
           action_ = Action::kNone;
@@ -319,13 +304,24 @@ PeerRecvThread::HandleExecutorMsg() {
         ret = EventHandler<PollConn>::kClearOneMsg | EventHandler<PollConn>::kExit;
       }
       break;
-    case message::ExecuteMsgType::kRequestExecForLoopDistArrayData:
+    case message::ExecuteMsgType::kRequestExecForLoopGlobalIndexedDistArrays:
       {
-        if (exec_for_loop_data_buff_.get() == nullptr) {
-          exec_for_loop_data_buff_.reset(new PeerRecvExecForLoopDistArrayDataBuffer());
-        }
-        exec_for_loop_data_buff_->is_executor_expecting = true;
-        ExecForLoopServeRequest();
+        has_executor_requested_global_indexed_dist_array_data_ = true;
+        ServeGlobalIndexedDistArrayDataRequest();
+        ret = EventHandler<PollConn>::kClearOneMsg;
+      }
+      break;
+    case message::ExecuteMsgType::kRequestExecForLoopPipelinedTimePartitions:
+      {
+        has_executor_requested_pipeline_time_partitions_ = true;
+        ServePipelinedTimePartitionsRequest();
+        ret = EventHandler<PollConn>::kClearOneMsg;
+      }
+      break;
+    case message::ExecuteMsgType::kRequestExecForLoopPredecessorCompletion:
+      {
+        has_executor_requested_pred_completion_ = true;
+        ServeExecForLoopPredCompletion();
         ret = EventHandler<PollConn>::kClearOneMsg;
       }
       break;
@@ -347,8 +343,34 @@ PeerRecvThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
         auto *msg = message::Helper::get_msg<message::ExecutorIdentity>(recv_buff);
         auto* sock_conn = reinterpret_cast<conn::SocketConn*>(poll_conn_ptr->conn);
         peer_[msg->executor_id].reset(sock_conn);
-        peer_sock_fds_[msg->executor_id] = sock_conn->sock.get_fd();
+        executor_server_sock_fds_[msg->executor_id] = sock_conn->sock.get_fd();
         poll_conn_ptr->id = msg->executor_id;
+        poll_conn_ptr->type = PollConn::ConnType::executor;
+        num_identified_peers_++;
+        if (kIsServer) {
+          if (num_identified_peers_ == kNumExecutors) {
+            action_ = Action::kAckConnectToPeers;
+          } else {
+            action_ = Action::kNone;
+          }
+        } else {
+          if (num_identified_peers_ == kExecutorId) {
+            action_ = Action::kAckConnectToPeers;
+          } else {
+            action_ = Action::kNone;
+          }
+        }
+        ret = EventHandler<PollConn>::kClearOneMsg;
+      }
+      break;
+    case message::Type::kServerIdentity:
+      {
+        auto *msg = message::Helper::get_msg<message::ServerIdentity>(recv_buff);
+        auto* sock_conn = reinterpret_cast<conn::SocketConn*>(poll_conn_ptr->conn);
+        server_[msg->server_id].reset(sock_conn);
+        executor_server_sock_fds_[msg->server_id + kNumExecutors] = sock_conn->sock.get_fd();
+        poll_conn_ptr->id = msg->server_id;
+        poll_conn_ptr->type = PollConn::ConnType::server;
         num_identified_peers_++;
         if (kIsServer) {
           if (num_identified_peers_ == kNumExecutors) {
@@ -391,10 +413,10 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
   switch (msg_type) {
     case message::ExecuteMsgType::kRepartitionDistArrayData:
       {
-        auto *msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgRepartitionDistArrayData>(
-            recv_buff);
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgRepartitionDistArrayData>(recv_buff);
         size_t expected_size = msg->data_size;
-        bool received_next_msg = (expected_size == 0);
+        bool received_next_msg = false;
         if (data_recv_buff_ == nullptr) {
           auto *buff_ptr = new PeerRecvRepartitionDistArrayDataBuffer();
           buff_ptr->dist_array_id = msg->dist_array_id;
@@ -406,20 +428,25 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         if (expected_size > 0) {
           auto &byte_buffs = repartition_recv_buff->byte_buffs;
           auto &byte_buff = byte_buffs[sender_id];
-          if (byte_buff.GetCapacity() == 0) byte_buff.Reset(expected_size);
+          //if (byte_buff.GetCapacity() == 0) byte_buff.Reset(expected_size);
           received_next_msg =
               ReceiveArbitraryBytes(
                   sock, &recv_buff,
                   &byte_buff, expected_size);
         }
 
-        if (received_next_msg) {
+        bool from_server = msg->from_server;
+
+        if (expected_size == 0  || received_next_msg) {
           ret = expected_size > 0
                 ? EventHandler<PollConn>::kClearOneAndNextMsg
                 : EventHandler<PollConn>::kClearOneMsg;
-          repartition_recv_buff->num_executors_received += 1;
-          if (repartition_recv_buff->num_executors_received
-              == (kNumExecutors - 1)) {
+          repartition_recv_buff->num_msgs_received += 1;
+          size_t num_expected_recvs = from_server ? (kNumServers - (kIsServer ? 1 : 0))
+                                      : (kNumExecutors - (!kIsServer ? 1 : 0));
+
+          if (repartition_recv_buff->num_msgs_received
+              == num_expected_recvs) {
             message::ExecuteMsgHelper::CreateMsg<
               message::ExecuteMsgRepartitionDistArrayRecved>(
                 &send_buff_, data_recv_buff_);
@@ -433,42 +460,44 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         action_ = Action::kNone;
       }
       break;
-    case message::ExecuteMsgType::kPipelineTimePartition:
+    case message::ExecuteMsgType::kPipelinedTimePartitions:
       {
-        auto* msg = message::ExecuteMsgHelper::get_msg<message::ExecuteMsgPipelineTimePartition>(
-            recv_buff);
+        auto* msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgPipelinedTimePartitions>(recv_buff);
         size_t expected_size = msg->data_size;
 
-        if (exec_for_loop_data_buff_.get() == nullptr) {
-          exec_for_loop_data_buff_.reset(new PeerRecvExecForLoopDistArrayDataBuffer());
+        if (pipelined_time_partitions_buff_ == nullptr) {
+          pipelined_time_partitions_buff_=
+              new PeerRecvPipelinedTimePartitionsBuffer();
+        }
+        pipelined_time_partitions_buff_->pred_notice = msg->pred_notice;
+        bool received_next_msg = false;
+        if (expected_size > 0) {
+          auto &byte_buff = pipelined_time_partitions_buff_->byte_buff;
+          received_next_msg = ReceiveArbitraryBytes(
+              sock, &recv_buff,
+              &byte_buff, expected_size);
         }
 
-        auto &incomplete_buffers = exec_for_loop_data_buff_->incomplete_buffers;
-        auto iter = incomplete_buffers.find(sender_id);
-        if (iter == incomplete_buffers.end()) {
-          auto iter_pair = incomplete_buffers.emplace(std::make_pair(
-              sender_id, PeerRecvDistArrayDataBuffer()));
-          iter = iter_pair.first;
-          iter->second.dist_array_id = msg->dist_array_id;
-          iter->second.partition_id = msg->time_partition_id;
-          iter->second.data = new uint8_t[expected_size];
-          iter->second.expected_size = expected_size;
-          iter->second.received_size = 0;
+        if (received_next_msg || (expected_size == 0)) {
+          pipelined_time_partitions_buff_vec_.push_back(pipelined_time_partitions_buff_);
+          pipelined_time_partitions_buff_ = nullptr;
+          ServePipelinedTimePartitionsRequest();
         }
 
-        bool received_next_msg = ReceiveArbitraryBytes(sock, &recv_buff,
-                                                       iter->second.data, &(iter->second.received_size),
-                                                       expected_size);
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kNone;
-          exec_for_loop_data_buff_->complete_buffers.emplace_back(iter->second);
-          incomplete_buffers.erase(iter);
-          ExecForLoopServeRequest();
+        } else if (expected_size == 0) {
+          return EventHandler<PollConn>::kClearOneMsg;
         } else {
-          ret = EventHandler<PollConn>::kNoAction;
-          action_ = Action::kNone;
+          return EventHandler<PollConn>::kNoAction;
         }
+      }
+      break;
+    case message::ExecuteMsgType::kPredCompletion:
+      {
+        pred_completed_ = true;
+        ServeExecForLoopPredCompletion();
       }
       break;
     default:
@@ -486,26 +515,37 @@ PeerRecvThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
 }
 
 void
-PeerRecvThread::ExecForLoopServeRequest() {
-  if (!exec_for_loop_data_buff_->is_executor_expecting) return;
-  if (exec_for_loop_data_buff_->complete_buffers.empty()) return;
-  auto& complete_buffers = exec_for_loop_data_buff_->complete_buffers;
-  size_t data_buff_size = complete_buffers.size() * sizeof(PeerRecvDistArrayDataBuffer);
-  uint8_t *data_buff_vec = new uint8_t[data_buff_size];
-  memcpy(data_buff_vec, complete_buffers.data(), data_buff_size);
-
-  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyExecForLoopDistArrayData>(
-      &send_buff_, data_buff_vec, complete_buffers.size());
-  complete_buffers.clear();
+PeerRecvThread::ServePipelinedTimePartitionsRequest() {
+  if (!has_executor_requested_pipeline_time_partitions_) return;
+  if (pipelined_time_partitions_buff_vec_.empty()) return;
+  auto* buff_vec = new PeerRecvPipelinedTimePartitionsBuffer*[pipelined_time_partitions_buff_vec_.size()];
+  memcpy(buff_vec, pipelined_time_partitions_buff_vec_.data(),
+         pipelined_time_partitions_buff_vec_.size() * sizeof(PeerRecvPipelinedTimePartitionsBuffer*));
+  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyPipelinedTimePartitions>(
+      &send_buff_, buff_vec, pipelined_time_partitions_buff_vec_.size());
+  pipelined_time_partitions_buff_vec_.clear();
+  has_executor_requested_pipeline_time_partitions_ = false;
   SendToExecutor();
   send_buff_.clear_to_send();
   send_buff_.reset_sent_sizes();
+}
 
-  if (exec_for_loop_data_buff_->incomplete_buffers.empty()) {
-    exec_for_loop_data_buff_.reset();
-  } else {
-    exec_for_loop_data_buff_->is_executor_expecting = false;
-  }
+void
+PeerRecvThread::ServeGlobalIndexedDistArrayDataRequest() {
+
+}
+
+void
+PeerRecvThread::ServeExecForLoopPredCompletion() {
+  if (!has_executor_requested_pred_completion_) return;
+  if (!pred_completed_) return;
+  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgPredCompletion>(
+      &send_buff_);
+  has_executor_requested_pred_completion_ = false;
+  SendToExecutor();
+  send_buff_.clear_to_send();
+  send_buff_.reset_sent_sizes();
+  pred_completed_ = false;
 }
 
 void

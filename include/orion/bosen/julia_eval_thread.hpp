@@ -9,6 +9,7 @@
 #include <orion/bosen/conn.hpp>
 #include <orion/bosen/julia_evaluator.hpp>
 #include <orion/bosen/julia_task.hpp>
+#include <orion/bosen/julia_thread_requester.hpp>
 
 namespace orion {
 namespace bosen {
@@ -25,13 +26,13 @@ class JuliaEvalThread {
   bool stop_ {false};
   std::mutex mtx_;
   std::condition_variable cv_;
-  JuliaEvaluator julia_eval_;
   // for waiting to write
   conn::Poll poll_;
   static constexpr size_t kNumEvents = 1;
   epoll_event es_[kNumEvents];
 
   const std::string kOrionHome;
+  JuliaThreadRequester julia_requester_;
 
  private:
   void BlockNotifyExecutor(JuliaTask *task) {
@@ -63,7 +64,13 @@ class JuliaEvalThread {
                   const std::string &orion_home):
       send_mem_(send_buff_capacity),
       send_buff_(send_mem_.data(), send_buff_capacity),
-      kOrionHome(orion_home) {
+      kOrionHome(orion_home),
+      julia_requester_(write_pipe_,
+                       send_mem_,
+                       send_buff_,
+                       poll_,
+                       kNumEvents,
+                       es_) {
     int ret = conn::Pipe::CreateUniPipe(&read_pipe_, &write_pipe_);
     CHECK_EQ(ret, 0) << "create pipe failed";
     ret = poll_.Init();
@@ -98,7 +105,7 @@ class JuliaEvalThread {
   }
 
   void operator() () {
-    julia_eval_.Init(kOrionHome);
+    JuliaEvaluator::Init(kOrionHome);
     while (true) {
       std::unique_lock<std::mutex> lock(mtx_);
       cv_.wait(lock, [this]{ return this->stop_ || (this->task_queue_.size() > 0); });
@@ -106,10 +113,14 @@ class JuliaEvalThread {
       auto task = task_queue_.front();
       task_queue_.pop();
       lock.unlock();
-      julia_eval_.ExecuteTask(task);
+      JuliaEvaluator::ExecuteTask(task);
       BlockNotifyExecutor(task);
     }
-    julia_eval_.AtExitHook();
+    JuliaEvaluator::AtExitHook();
+  }
+
+  JuliaThreadRequester* GetJuliaThreadRequester() {
+    return &julia_requester_;
   }
 };
 

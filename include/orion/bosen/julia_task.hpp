@@ -12,12 +12,23 @@ namespace bosen {
 enum class TaskLabel {
   kNone = 0,
     kLoadDistArrayFromTextFile = 1,
-    kRandomInitDistArray = 2,
-    kDefineVar = 3,
-    kComputeRepartition = 4,
-    kDefineJuliaDistArray = 5,
-    kExecForLoopTile = 6,
-    kGetAccumulatorValue = 7
+    kParseDistArrayTextBuffer = 2,
+    kInitDistArray = 3,
+    kMapDistArray = 4,
+    kDefineVar = 5,
+    kComputeRepartition = 6,
+    kRepartitionSerialize = 7,
+    kRepartitionDeserialize = 8,
+    kDefineJuliaDistArray = 9,
+    kDefineJuliaDistArrayBuffer = 10,
+    kGetAccumulatorValue = 11,
+    kSetDistArrayDims = 12,
+    kExecForLoopPartition = 13,
+    kComputePrefetchIndices = 14,
+    kSerializeGlobalIndexedDistArrays = 15,
+    kSerializeDistArrayTimePartitions = 16,
+    kDeserializeGlobalIndexedDistArrays = 17,
+    kDeserializeDistArrayTimePartitions = 18
 };
 
 class JuliaEvaluator;
@@ -28,16 +39,9 @@ class JuliaTask {
   virtual ~JuliaTask() { }
 };
 
-class ExecJuliaFuncTask : public JuliaTask {
- public:
-  std::string function_name;
-  type::PrimitiveType result_type;
-  Blob result_buff;
-};
-
 class ExecCppFuncTask : public JuliaTask {
  public:
-  std::function<void(JuliaEvaluator*)> func;
+  std::function<void()> func;
   Blob result_buff;
   TaskLabel label {TaskLabel::kNone};
 };

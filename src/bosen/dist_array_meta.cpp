@@ -5,43 +5,29 @@ namespace orion {
 namespace bosen {
 DistArrayMeta::DistArrayMeta(
     size_t num_dims,
-    task::DistArrayParentType parent_type,
-    task::DistArrayInitType init_type,
-    const DistArrayMeta *parent_dist_array_meta,
+    DistArrayParentType parent_type,
+    DistArrayInitType init_type,
+    DistArrayMapType map_type,
+    DistArrayPartitionScheme partition_scheme,
+    JuliaModule map_func_module,
+    const std::string &map_func_name,
+    type::PrimitiveType random_init_type,
+    bool flatten_results,
     bool is_dense,
     const std::string &symbol):
     kNumDims(num_dims),
     dims_(num_dims, 0),
-    kParentType_(parent_type),
-    kInitType_(init_type),
-    is_dense_(is_dense),
+    kParentType(parent_type),
+    kInitType(init_type),
+    kMapType(map_type),
+    kMapFuncModule(map_func_module),
+    kMapFuncName(map_func_name),
+    kFlattenResults(flatten_results),
+    kIsDense(is_dense),
+    kRandomInitType(random_init_type),
+    partition_scheme_(partition_scheme),
     index_type_(DistArrayIndexType::kNone),
-    symbol_(symbol) {
-  switch (kParentType_) {
-    case task::TEXT_FILE:
-      {
-        partition_scheme_ = DistArrayPartitionScheme::kNaive;
-      }
-      break;
-    case task::DIST_ARRAY:
-      {
-        CHECK(parent_dist_array_meta != nullptr);
-        partition_scheme_ = parent_dist_array_meta->partition_scheme_;
-      }
-      break;
-    case task::INIT:
-      {
-        if (kInitType_ == task::EMPTY) {
-          partition_scheme_ = DistArrayPartitionScheme::kHash;
-        } else {
-          partition_scheme_ = DistArrayPartitionScheme::kRange;
-        }
-      }
-      break;
-    default:
-      LOG(FATAL) << "Unknown parent type " << static_cast<int>(kParentType_);
-  }
-}
+    symbol_(symbol) { }
 
 void
 DistArrayMeta::UpdateDimsMax(
@@ -64,12 +50,7 @@ DistArrayMeta::AssignDims(
 
 bool
 DistArrayMeta::IsDense() const {
-  return is_dense_;
-}
-
-DistArrayPartitionScheme
-DistArrayMeta::GetPartitionScheme() const {
-  return partition_scheme_;
+  return kIsDense;
 }
 
 void
@@ -80,6 +61,29 @@ DistArrayMeta::SetPartitionScheme(DistArrayPartitionScheme partition_scheme) {
 void
 DistArrayMeta::SetIndexType(DistArrayIndexType index_type) {
   index_type_ = index_type;
+}
+
+void
+DistArrayMeta::SetMaxPartitionIds(int32_t space_id, int32_t time_id) {
+  max_partition_ids_.resize(2);
+  max_partition_ids_[0] = space_id;
+  max_partition_ids_[1] = time_id;
+}
+
+void
+DistArrayMeta::SetMaxPartitionIds(int32_t partition_id) {
+  max_partition_ids_.resize(1);
+  max_partition_ids_[0] = partition_id;
+}
+
+void
+DistArrayMeta::SetMaxPartitionIds(const int32_t* max_ids, size_t num_dims) {
+  LOG(INFO) << __func__ << " num_dims = " << num_dims;
+  max_partition_ids_.resize(num_dims);
+  for (size_t i = 0; i < num_dims; i++) {
+    LOG(INFO) << "i = " << i << " id = " << max_ids[i];
+    max_partition_ids_[i] = max_ids[i];
+  }
 }
 
 void
@@ -97,7 +101,16 @@ DistArrayMeta::AccumMaxPartitionIds(const int32_t *max_ids, size_t num_dims) {
   }
 }
 
+void
+DistArrayMeta::SetInitValue(const uint8_t *init_value_bytes, size_t num_bytes) {
+  init_value_bytes_.resize(num_bytes);
+  memcpy(init_value_bytes_.data(), init_value_bytes, num_bytes);
+}
 
+const std::vector<uint8_t>&
+DistArrayMeta::GetInitValue() const {
+  return init_value_bytes_;
+}
 
 }
 }

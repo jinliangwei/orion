@@ -144,7 +144,6 @@ class RecvBuffer {
   }
 
   void ClearOneMsg() {
-    LOG(INFO) << __func__;
     size_t last_expected_size = expected_size_;
     CHECK(size_ >= last_expected_size) << "size = " << size_
                                        << " last_expected_size = " << last_expected_size;
@@ -185,19 +184,14 @@ class RecvBuffer {
   }
 
   void ClearOneAndNextMsg() {
-    LOG(INFO) << __func__ << " for " << (void*) this
-              << " size = " << size_
-              << " expected_size_ = " << expected_size_;
     if (size_ > expected_size_) {
       size_t size_to_clear = std::min(size_,
                                       expected_size_ + next_expected_size_);
-      LOG(INFO) << "size_to_clear = " << size_to_clear;
       memmove(mem_, mem_ + size_to_clear, size_ - size_to_clear);
       size_ -= size_to_clear;
     } else {
       size_ -= expected_size_;
     }
-    LOG(INFO) << "size = " << size_;
     reset_next_recv();
   }
 

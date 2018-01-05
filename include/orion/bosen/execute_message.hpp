@@ -109,13 +109,16 @@ struct ExecuteMsgPeerRecvStop {
 struct ExecuteMsgRepartitionDistArrayData {
   int32_t dist_array_id;
   size_t data_size;
+  bool from_server;
  private:
   ExecuteMsgRepartitionDistArrayData() = default;
   friend class DefaultMsgCreator;
  public:
-  void Init(int32_t _dist_array_id, size_t _data_size) {
+  void Init(int32_t _dist_array_id, size_t _data_size,
+            bool _from_server) {
     dist_array_id = _dist_array_id;
     data_size = _data_size;
+    from_server = _from_server;
   }
   static constexpr ExecuteMsgType get_type() {
     return ExecuteMsgType::kRepartitionDistArrayData;
@@ -175,56 +178,93 @@ struct ExecuteMsgRepartitionDistArrayMaxPartitionIds {
   }
 };
 
-struct ExecuteMsgPipelineTimePartition {
+struct ExecuteMsgPipelinedTimePartitions {
  public:
-  int32_t dist_array_id;
-  int32_t time_partition_id;
   size_t data_size;
+  uint64_t pred_notice;
  private:
-  ExecuteMsgPipelineTimePartition() = default;
+  ExecuteMsgPipelinedTimePartitions() = default;
   friend class DefaultMsgCreator;
  public:
-  void Init(int32_t _dist_array_id,
-            int32_t _time_partition_id,
-            size_t _data_size) {
-    dist_array_id = _dist_array_id;
-    time_partition_id = _time_partition_id;
+  void Init(size_t _data_size,
+            uint64_t _pred_notice) {
     data_size = _data_size;
+    pred_notice = _pred_notice;
   }
+
   static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kPipelineTimePartition;
+    return ExecuteMsgType::kPipelinedTimePartitions;
   }
 };
 
-struct ExecuteMsgRequestExecForLoopDistArrayData {
+struct ExecuteMsgRequestExecForLoopGlobalIndexedDistArrays {
  private:
-  ExecuteMsgRequestExecForLoopDistArrayData() = default;
+  ExecuteMsgRequestExecForLoopGlobalIndexedDistArrays() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init() {  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kRequestExecForLoopGlobalIndexedDistArrays;
+  }
+};
+
+static_assert(std::is_pod<ExecuteMsgRequestExecForLoopGlobalIndexedDistArrays>::value,
+              "ExecuteMsgRequestExecForLoopGlobalIndexedDistArrays must be POD!");
+
+struct ExecuteMsgRequestExecForLoopPipelinedTimePartitions {
+ private:
+  ExecuteMsgRequestExecForLoopPipelinedTimePartitions() = default;
   friend class DefaultMsgCreator;
  public:
   void Init() { }
   static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kRequestExecForLoopDistArrayData;
+    return ExecuteMsgType::kRequestExecForLoopPipelinedTimePartitions;
   }
 };
 
-static_assert(std::is_pod<ExecuteMsgRequestExecForLoopDistArrayData>::value,
-              "ExecuteMsgRequestExecForLoopDistArray must be POD!");
-
-struct ExecuteMsgReplyExecForLoopDistArrayData {
- public:
-  uint8_t *buff_vec_ptr;
-  size_t num_buffs;
+struct ExecuteMsgRequestExecForLoopPredecessorCompletion {
  private:
-  ExecuteMsgReplyExecForLoopDistArrayData() = default;
+  ExecuteMsgRequestExecForLoopPredecessorCompletion() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init() { }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kRequestExecForLoopPredecessorCompletion;
+  }
+};
+
+struct ExecuteMsgReplyPipelinedTimePartitions {
+ public:
+  void *data_buff_vec;
+  size_t num_data_buffs;
+ private:
+  ExecuteMsgReplyPipelinedTimePartitions() = default;
   friend class DefaultMsgCreator;
 
  public:
-  void Init(uint8_t* _buff_vec_ptr, size_t _num_buffs) {
-    buff_vec_ptr = _buff_vec_ptr;
-    num_buffs = _num_buffs;
+  void Init(void *_data_buff_vec,
+            size_t _num_data_buffs) {
+    data_buff_vec = _data_buff_vec;
+    num_data_buffs = _num_data_buffs;
   }
   static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kReplyExecForLoopDistArrayData;
+    return ExecuteMsgType::kReplyPipelinedTimePartitions;
+  }
+};
+
+struct ExecuteMsgReplyGlobalIndexedDistArrayData {
+ public:
+  void *data_buff;
+ private:
+  ExecuteMsgReplyGlobalIndexedDistArrayData() = default;
+  friend class DefaultMsgCreator;
+
+ public:
+  void Init(void *_data_buff) {
+    data_buff = _data_buff;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kReplyGlobalIndexedDistArrayData;
   }
 };
 
@@ -240,6 +280,88 @@ struct ExecuteMsgReplyGetAccumulatorValue {
   }
   static constexpr ExecuteMsgType get_type() {
     return ExecuteMsgType::kReplyGetAccumulatorValue;
+  }
+};
+
+struct ExecuteMsgPartitionNumLines {
+ public:
+  int32_t dist_array_id;
+  size_t num_partitions;
+ private:
+  ExecuteMsgPartitionNumLines() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(int32_t _dist_array_id,
+            size_t _num_partitions) {
+    dist_array_id = _dist_array_id;
+    num_partitions = _num_partitions;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kPartitionNumLines;
+  }
+};
+
+struct ExecuteMsgCreateDistArrayBufferAck {
+  int32_t dist_array_buffer_id;
+ private:
+  ExecuteMsgCreateDistArrayBufferAck() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(int32_t _dist_array_buffer_id) {
+    dist_array_buffer_id = _dist_array_buffer_id;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kCreateDistArrayBufferAck;
+  }
+};
+
+struct ExecuteMsgRequestDistArrayValue {
+  int32_t dist_array_id;
+  int64_t key;
+ private:
+  ExecuteMsgRequestDistArrayValue() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(int32_t _dist_array_id,
+            int64_t _key) {
+    dist_array_id = _dist_array_id;
+    key = _key;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kRequestDistArrayValue;
+  }
+};
+
+struct ExecuteMsgPredCompletion {
+ private:
+  ExecuteMsgPredCompletion() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init() { }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kPredCompletion;
+  }
+};
+
+struct ExecuteMsgExecForLoopAck {
+ private:
+  ExecuteMsgExecForLoopAck() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init() { }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kExecForLoopAck;
+  }
+};
+
+struct  ExecuteMsgExecForLoopDone {
+ private:
+  ExecuteMsgExecForLoopDone() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init() { }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kExecForLoopDone;
   }
 };
 

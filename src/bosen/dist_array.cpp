@@ -7,25 +7,45 @@ namespace orion {
 namespace bosen {
 
 DistArray::DistArray(
+    int32_t id,
     const Config &config,
+    bool is_server,
     type::PrimitiveType value_type,
     int32_t executor_id,
+    int32_t server_id,
     size_t num_dims,
-    task::DistArrayParentType parent_type,
-    task::DistArrayInitType init_type,
-    const DistArrayMeta *parent_dist_array_meta,
+    DistArrayParentType parent_type,
+    DistArrayInitType init_type,
+    DistArrayMapType map_type,
+    DistArrayPartitionScheme partition_scheme,
+    JuliaModule map_func_module,
+    const std::string &map_func_name,
+    type::PrimitiveType random_init_type,
+    bool flatten_results,
     bool is_dense,
-    const std::string &symbol):
+    const std::string &symbol,
+    JuliaThreadRequester *julia_requester):
+    kId(id),
     kConfig(config),
+    kIsServer(is_server),
     kValueType(value_type),
     kValueSize(type::SizeOf(value_type)),
     kExecutorId(executor_id),
-    meta_(num_dims, parent_type, init_type,
-          parent_dist_array_meta,
-          is_dense, symbol) {
+    kServerId(server_id),
+    meta_(num_dims,
+          parent_type,
+          init_type,
+          map_type,
+          partition_scheme,
+          map_func_module,
+          map_func_name,
+          random_init_type,
+          flatten_results,
+          is_dense,
+          symbol),
+    julia_requester_(julia_requester) {
   if (num_dims > 0)
     dims_.resize(num_dims);
-  LOG(INFO) << "access = " << (void*) &access_;
 }
 
 DistArray::~DistArray() {
@@ -34,100 +54,92 @@ DistArray::~DistArray() {
   }
 }
 
-/*DistArray::DistArray(DistArray &&other):
-    kConfig(other.kConfig),
-    kValueType(other.kValueType),
-    kValueSize(other.kValueSize),
-    kExecutorId(other.kExecutorId),
-    partitions_(other.partitions_),
-    meta_(other.meta_) {
-  other.partitions_.clear();
-  } */
-
 AbstractDistArrayPartition*
 DistArray::CreatePartition() {
   AbstractDistArrayPartition *partition_ptr = nullptr;
   switch(kValueType) {
     case type::PrimitiveType::kVoid:
       {
-        LOG(FATAL) << "DistArray value type cannot be void";
+        partition_ptr
+            = static_cast<AbstractDistArrayPartition*>(
+                new DistArrayPartition<void>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     case type::PrimitiveType::kInt8:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int8_t>(this, kConfig, kValueType));
+                new DistArrayPartition<int8_t>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     case type::PrimitiveType::kUInt8:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<uint8_t>(this, kConfig, kValueType));
+                new DistArrayPartition<uint8_t>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     case type::PrimitiveType::kInt16:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int16_t>(this, kConfig, kValueType));
+                new DistArrayPartition<int16_t>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     case type::PrimitiveType::kUInt16:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<uint16_t>(this, kConfig, kValueType));
+                new DistArrayPartition<uint16_t>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     case type::PrimitiveType::kInt32:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int32_t>(this, kConfig, kValueType));
+                new DistArrayPartition<int32_t>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     case type::PrimitiveType::kUInt32:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<uint32_t>(this, kConfig, kValueType));
+                new DistArrayPartition<uint32_t>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     case type::PrimitiveType::kInt64:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int64_t>(this, kConfig, kValueType));
+                new DistArrayPartition<int64_t>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     case type::PrimitiveType::kUInt64:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<int64_t>(this, kConfig, kValueType));
+                new DistArrayPartition<int64_t>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     case type::PrimitiveType::kFloat32:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<float>(this, kConfig, kValueType));
+                new DistArrayPartition<float>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     case type::PrimitiveType::kFloat64:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<double>(this, kConfig, kValueType));
+                new DistArrayPartition<double>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     case type::PrimitiveType::kString:
       {
         partition_ptr
             = static_cast<AbstractDistArrayPartition*>(
-                new DistArrayPartition<const char*>(this, kConfig, kValueType));
+                new DistArrayPartition<std::string>(this, kConfig, kValueType, julia_requester_));
         break;
       }
     default:
@@ -137,59 +149,136 @@ DistArray::CreatePartition() {
 }
 
 void
-DistArray::AddPartition(int32_t partition_id,
-                        AbstractDistArrayPartition* partition) {
-  auto partition_iter = partitions_.find(partition_id);
-  CHECK(partition_iter == partitions_.end());
-  partitions_[partition_id] = partition;
-  auto index_type = meta_.GetIndexType();
-  if (index_type == DistArrayIndexType::kGlobal
-      || index_type == DistArrayIndexType::kLocal) {
-    partition->BuildIndex();
-  }
-}
-
-void
-DistArray::AddPartition(int32_t space_id, int32_t time_id,
-                        AbstractDistArrayPartition* partition) {
-  auto partition_iter = space_time_partitions_[space_id].find(time_id);
-  CHECK(partition_iter == partitions_.end());
-  space_time_partitions_[space_id][time_id] = partition;
-  auto index_type = meta_.GetIndexType();
-  if (index_type == DistArrayIndexType::kGlobal
-      || index_type == DistArrayIndexType::kLocal) {
-    partition->BuildIndex();
-  }
-}
-
-void
-DistArray::LoadPartitionsFromTextFile(
-    JuliaEvaluator *julia_eval,
-    std::string file_path,
-    task::DistArrayMapType map_type,
-    bool flatten_results,
-    size_t num_dims,
-    JuliaModule mapper_func_module,
-    std::string mapper_func_name,
-    Blob *result_buff) {
+DistArray::LoadPartitionsFromTextFile(std::string file_path) {
   CHECK(partitions_.empty());
   bool read = true;
   size_t partition_id = kExecutorId;
   while (read) {
     auto *dist_array_partition = CreatePartition();
-    read = dist_array_partition->LoadTextFile(
-        julia_eval,
-        file_path,
-        partition_id,
-        map_type,
-        flatten_results,
-        num_dims,
-        mapper_func_module,
-        mapper_func_name,
-        result_buff);
+    read = dist_array_partition->LoadTextFile(file_path, partition_id);
     if (read)
       partitions_.emplace(partition_id, dist_array_partition);
     partition_id += kConfig.kNumExecutors;
+  }
+}
+
+void
+DistArray::ParseBufferedText(Blob *max_ids,
+                             const std::vector<size_t> &line_number_start) {
+
+  size_t num_dims = meta_.GetNumDims();
+  max_ids->resize(sizeof(int64_t) * num_dims);
+
+  if (line_number_start.size() == 0) {
+    for (auto &partition_pair : partitions_) {
+      partition_pair.second->ParseText(max_ids, 0);
+    }
+  } else {
+    size_t i = 0;
+    for (auto &partition_pair : partitions_) {
+      partition_pair.second->ParseText(max_ids,
+                                       line_number_start[i]);
+      i += 1;
+    }
+  }
+}
+
+void
+DistArray::GetPartitionTextBufferNumLines(std::vector<int64_t> *partition_ids,
+                                          std::vector<size_t> *num_lines) {
+  size_t num_partitions = partitions_.size();
+  partition_ids->resize(num_partitions);
+  num_lines->resize(num_partitions);
+  size_t i = 0;
+  for (auto &partition_pair : partitions_) {
+    int64_t partition_id = partition_pair.first;
+    auto *partition = partition_pair.second;
+    size_t nlines = partition->CountNumLines();
+    (*partition_ids)[i] = partition_id;
+    (*num_lines)[i] = nlines;
+  }
+}
+
+void
+DistArray::Init() {
+  size_t num_params = 1;
+  for (auto d : dims_) {
+    num_params *= d;
+  }
+  size_t num_params_this_executor = num_params / kConfig.kNumExecutors
+                                    + ((kExecutorId < (num_params % kConfig.kNumExecutors))
+                                       ? 1 : 0);
+  LOG(INFO) << __func__ << " num_params_this_executor = " << num_params_this_executor;
+  if (num_params_this_executor == 0) return;
+  int64_t key_begin = (kExecutorId < (num_params % kConfig.kNumExecutors))
+                      ? (num_params / kConfig.kNumExecutors + 1) * kExecutorId
+                      : (num_params / kConfig.kNumExecutors) * kExecutorId
+                      + (num_params % kConfig.kNumExecutors);
+  auto *dist_array_partition = CreatePartition();
+  dist_array_partition->Init(key_begin, num_params_this_executor);
+  partitions_.emplace(std::make_pair(kExecutorId, dist_array_partition));
+}
+
+void
+DistArray::Map(DistArray* child_dist_array) {
+  for (auto& partition_pair : partitions_) {
+    int64_t partition_id = partition_pair.first;
+    auto* partition = partition_pair.second;
+    auto child_partition_pair = child_dist_array->GetAndCreateLocalPartition(partition_id);
+    auto *child_partition = child_partition_pair.first;
+    partition->BuildKeyValueBuffersFromSparseIndex();
+    partition->Map(child_partition);
+  }
+
+  for (auto &time_partitions : space_time_partitions_) {
+    int64_t space_id = time_partitions.first;
+    for (auto &partition_pair : time_partitions.second) {
+      int64_t time_id = partition_pair.first;
+      auto *partition = partition_pair.second;
+      auto child_partition_pair = child_dist_array->GetAndCreateLocalPartition(space_id, time_id);
+      auto *child_partition = child_partition_pair.first;
+      partition->BuildKeyValueBuffersFromSparseIndex();
+      partition->Map(child_partition);
+    }
+  }
+}
+
+void
+DistArray::ComputeHashRepartition(size_t num_partitions) {
+  std::vector<AbstractDistArrayPartition*> partition_buff;
+  GetAndClearLocalPartitions(&partition_buff);
+
+  for (auto dist_array_partition : partition_buff) {
+    dist_array_partition->BuildKeyValueBuffersFromSparseIndex();
+    dist_array_partition->ComputeHashRepartitionIdsAndRepartition(num_partitions);
+    DeletePartition(dist_array_partition);
+  }
+}
+
+void
+DistArray::ComputeRepartition(const std::string &repartition_func_name) {
+  std::vector<AbstractDistArrayPartition*> partition_buff;
+  GetAndClearLocalPartitions(&partition_buff);
+
+  for (auto dist_array_partition : partition_buff) {
+    dist_array_partition->BuildKeyValueBuffersFromSparseIndex();
+    dist_array_partition->ComputeRepartitionIdsAndRepartition(repartition_func_name);
+    DeletePartition(dist_array_partition);
+  }
+
+  bool from_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHash;
+  bool to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHash;
+
+  bool repartition_recv = true;
+  if ((to_server && (!kIsServer || (from_server && kConfig.kNumServers == 1))) ||
+      (!to_server && (kIsServer || (!from_server && kConfig.kNumExecutors == 1)))
+      ) {
+    repartition_recv = false;
+  }
+
+  if (!repartition_recv) {
+    ComputeMaxPartitionIds();
+    CheckAndBuildIndex();
   }
 }
 
@@ -227,11 +316,6 @@ DistArray::GetValueType() {
   return kValueType;
 }
 
-DistArray::PartitionMap&
-DistArray::GetLocalPartitionMap() {
-  return partitions_;
-}
-
 AbstractDistArrayPartition*
 DistArray::GetLocalPartition(int32_t partition_id) {
   auto partition_iter = partitions_.find(partition_id);
@@ -239,9 +323,47 @@ DistArray::GetLocalPartition(int32_t partition_id) {
   return partition_iter->second;
 }
 
-DistArray::SpaceTimePartitionMap&
-DistArray::GetSpaceTimePartitionMap() {
-  return space_time_partitions_;
+AbstractDistArrayPartition*
+DistArray::GetLocalPartition(int32_t space_id,
+                             int32_t time_id) {
+  auto time_partition_map_iter = space_time_partitions_.find(space_id);
+  if (time_partition_map_iter == space_time_partitions_.end()) return nullptr;
+  auto &time_partition_map = time_partition_map_iter->second;
+  auto partition_iter = time_partition_map.find(time_id);
+  if (partition_iter == time_partition_map.end()) return nullptr;
+  return partition_iter->second;
+}
+
+std::pair<AbstractDistArrayPartition*, bool>
+DistArray::GetAndCreateLocalPartition(int32_t partition_id) {
+  bool new_created = false;
+  auto partition_iter = partitions_.find(partition_id);
+  if (partition_iter == partitions_.end()) {
+    auto partition_pair = partitions_.emplace(partition_id, CreatePartition());
+    partition_iter = partition_pair.first;
+    new_created = true;
+  }
+  return std::make_pair(partition_iter->second, new_created);
+}
+
+std::pair<AbstractDistArrayPartition*, bool>
+DistArray::GetAndCreateLocalPartition(int32_t space_id,
+                                      int32_t time_id) {
+  bool new_created = false;
+  auto time_partition_map_iter = space_time_partitions_.find(space_id);
+  if (time_partition_map_iter == space_time_partitions_.end()) {
+    auto iter_pair = space_time_partitions_.emplace(space_id, TimePartitionMap());
+    time_partition_map_iter = iter_pair.first;
+    new_created = true;
+  }
+  auto &time_partition_map = time_partition_map_iter->second;
+  auto partition_iter = time_partition_map.find(time_id);
+  if (partition_iter == time_partition_map.end()) {
+    auto iter_pair = time_partition_map.emplace(time_id, CreatePartition());
+    partition_iter = iter_pair.first;
+    new_created = true;
+  }
+  return std::make_pair(partition_iter->second, new_created);
 }
 
 void
@@ -271,38 +393,55 @@ DistArray::GetAndClearLocalPartitions(std::vector<AbstractDistArrayPartition*>
 
 void
 DistArray::RepartitionSerializeAndClear(
-    std::unordered_map<int32_t, std::pair<uint8_t*, size_t>>* send_buff_ptr) {
+    ExecutorSendBufferMap *send_buff_ptr) {
   if (meta_.GetPartitionScheme() == DistArrayPartitionScheme::kSpaceTime) {
     RepartitionSerializeAndClearSpaceTime(send_buff_ptr);
   } else {
     RepartitionSerializeAndClear1D(send_buff_ptr);
   }
+  GcPartitions();
 }
 
 void
 DistArray::RepartitionSerializeAndClearSpaceTime(
-    std::unordered_map<int32_t, std::pair<uint8_t*, size_t>>* send_buff_ptr) {
-  LOG(INFO) << __func__ << " id = " << kExecutorId;
+    ExecutorSendBufferMap* send_buff_ptr) {
+
+  std::unordered_map<
+    int32_t,
+    std::vector<
+      std::pair<int32_t,
+                SendDataBuffer>
+      >
+    > send_partition_buffs;
   std::unordered_map<int32_t, size_t> send_buff_sizes;
-  for (auto &time_partition_map_pair : space_time_partitions_) {
+
+  auto iter = space_time_partitions_.begin();
+  while (iter != space_time_partitions_.end()) {
+    auto &time_partition_map_pair = *iter;
     int32_t space_id = time_partition_map_pair.first;
+    auto& time_partition_map = time_partition_map_pair.second;
     int32_t recv_id = space_id % kConfig.kNumExecutors;
-    if (recv_id == kExecutorId) continue;
-    send_buff_sizes[recv_id] += sizeof(int32_t) + sizeof(size_t); // space_partition_id + num_time_partitions
-    //LOG(INFO) << "send_buff_sizes[" << recv_id << "] = " << send_buff_sizes[recv_id];
-    auto &partitions = time_partition_map_pair.second;
-    for (auto &partition_pair : partitions) {
-      auto *partition = partition_pair.second;
-      // time_id + num_key_values + keys + values
-      send_buff_sizes[recv_id] += sizeof(int32_t) + sizeof(size_t)
-                                  + partition->GetNumKeyValues()
-                                  * (sizeof(int64_t) + partition->GetValueSize());
+    if (!kIsServer && (recv_id == kExecutorId)) {
+      iter++;
+      continue;
     }
+    // space_partition_id + num_partitions
+    send_buff_sizes[recv_id] += sizeof(int32_t) + sizeof(size_t);
+    for (auto &partition_pair : time_partition_map) {
+      int32_t time_id = partition_pair.first;
+      auto *partition = partition_pair.second;
+      SendDataBuffer partition_buff = partition->Serialize();
+      send_partition_buffs[space_id].emplace_back(time_id, partition_buff);
+      send_buff_sizes[recv_id] += sizeof(int32_t) + partition_buff.second;
+      DeletePartition(partition);
+    }
+    time_partition_map.clear();
+    space_time_partitions_.erase(iter++);
   }
-  LOG(INFO) << "compute send buff sizes done";
+
   auto &send_buff = *send_buff_ptr;
   for (int32_t recv_id = 0; recv_id < kConfig.kNumExecutors; recv_id++) {
-    if (recv_id == kExecutorId) continue;
+    if (!kIsServer && recv_id == kExecutorId) continue;
     auto iter = send_buff_sizes.find(recv_id);
     if (iter == send_buff_sizes.end()) continue;
     size_t buff_size = iter->second;
@@ -314,70 +453,64 @@ DistArray::RepartitionSerializeAndClearSpaceTime(
     send_buff_offsets[i] = 0;
   }
 
-  for (auto &time_partition_map_pair : space_time_partitions_) {
-    int32_t space_id = time_partition_map_pair.first;
+  for (const auto &partition_buff_vec_pair : send_partition_buffs) {
+    int32_t space_id = partition_buff_vec_pair.first;
     int32_t recv_id = space_id % kConfig.kNumExecutors;
-    if (recv_id == kExecutorId) continue;
-    auto &partitions = time_partition_map_pair.second;
+    if (!kIsServer && (recv_id == kExecutorId)) continue;
+    const auto &partition_buff_vec = partition_buff_vec_pair.second;
+
     auto *buff = send_buff[recv_id].first;
     uint8_t *mem = buff + send_buff_offsets[recv_id];
     *reinterpret_cast<int32_t*>(mem) = space_id;
     mem += sizeof(int32_t);
-    *reinterpret_cast<size_t*>(mem) = partitions.size();
+    *reinterpret_cast<size_t*>(mem) = partition_buff_vec.size();
     mem += sizeof(size_t);
-    for (auto &partition_pair : partitions) {
-      int32_t time_id = partition_pair.first;
-      auto *partition = partition_pair.second;
+    for (const auto &partition_buff_pair : partition_buff_vec) {
+      int32_t time_id = partition_buff_pair.first;
       *reinterpret_cast<int32_t*>(mem) = time_id;
       mem += sizeof(int32_t);
-      *reinterpret_cast<size_t*>(mem) = partition->GetNumKeyValues();
-      mem += sizeof(size_t);
-      auto &keys = partition->GetKeys();
-      memcpy(mem, keys.data(), keys.size() * sizeof(int64_t));
-      mem += keys.size() * sizeof(int64_t);
-      partition->CopyValues(mem);
-      mem += partition->GetNumKeyValues() * partition->GetValueSize();
-      delete partition;
+      const auto& partition_buff = partition_buff_pair.second;
+      memcpy(mem, partition_buff.first, partition_buff.second);
+      mem += partition_buff.second;
+      delete[] partition_buff.first;
     }
     send_buff_offsets[recv_id] = mem - buff;
-  }
-
-  for (size_t i = 0; i < kConfig.kNumExecutors; i++) {
-    if (i == kExecutorId) continue;
-    CHECK_EQ(send_buff_offsets[i], send_buff_sizes[i]);
-  }
-  auto iter = space_time_partitions_.begin();
-
-  while (iter != space_time_partitions_.end()) {
-    int32_t space_id = iter->first;
-    int32_t recv_id = space_id % kConfig.kNumExecutors;
-    if (recv_id == kExecutorId) {
-      iter++;
-      continue;
-    }
-    space_time_partitions_.erase(iter++);
   }
 }
 
 void
 DistArray::RepartitionSerializeAndClear1D(
-    std::unordered_map<int32_t, std::pair<uint8_t*, size_t>>* send_buff_ptr) {
-  LOG(INFO) << __func__ << " id = " << kExecutorId;
+    ExecutorSendBufferMap* send_buff_ptr) {
+  std::vector<
+    std::pair<int32_t, SendDataBuffer>
+    > send_partition_buffs;
   std::unordered_map<int32_t, size_t> send_buff_sizes;
-  for (auto &partition_pair : partitions_) {
+  bool send_to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHash;
+  auto iter = partitions_.begin();
+  while (iter != partitions_.end()) {
+    auto &partition_pair = *iter;
     int32_t partition_id = partition_pair.first;
     auto *partition = partition_pair.second;
-    int32_t recv_id = partition_id % kConfig.kNumExecutors;
-    if (recv_id == kExecutorId) continue;
-    send_buff_sizes[recv_id] += sizeof(int32_t) + sizeof(size_t)
-                                + partition->GetNumKeyValues()
-                                * (sizeof(int64_t) + partition->GetValueSize());
+    int32_t recv_id = send_to_server ? partition_id % kConfig.kNumServers
+                      : partition_id % kConfig.kNumExecutors;
+    if ((send_to_server && kIsServer && recv_id == kServerId)
+        || (!send_to_server && !kIsServer && recv_id == kExecutorId)) {
+      iter++;
+      continue;
+    }
+    auto partition_buff = partition->Serialize();
+    send_partition_buffs.emplace_back(partition_id, partition_buff);
+    send_buff_sizes[recv_id] += sizeof(int32_t) + partition_buff.second;
+    DeletePartition(partition);
+    partitions_.erase(iter++);
   }
 
-  LOG(INFO) << "compute send buff sizes done";
   auto &send_buff = *send_buff_ptr;
-  for (int32_t recv_id = 0; recv_id < kConfig.kNumExecutors; recv_id++) {
-    if (recv_id == kExecutorId) continue;
+  size_t num_receivers = send_to_server ? kConfig.kNumServers
+                         : kConfig.kNumExecutors;
+  for (int32_t recv_id = 0; recv_id < num_receivers; recv_id++) {
+    if ((send_to_server && kIsServer && recv_id == kServerId)
+        || (!send_to_server && !kIsServer && recv_id == kExecutorId)) continue;
     auto iter = send_buff_sizes.find(recv_id);
     if (iter == send_buff_sizes.end()) continue;
     size_t buff_size = iter->second;
@@ -385,49 +518,43 @@ DistArray::RepartitionSerializeAndClear1D(
   }
 
   std::unordered_map<int32_t, size_t> send_buff_offsets;
-  for (size_t i = 0; i < kConfig.kNumExecutors; i++) {
+  for (size_t i = 0; i < num_receivers; i++) {
     send_buff_offsets[i] = 0;
   }
 
-  for (auto &partition_pair : partitions_) {
-    int32_t partition_id = partition_pair.first;
-    auto *partition = partition_pair.second;
-    int32_t recv_id = partition_id % kConfig.kNumExecutors;
-    if (recv_id == kExecutorId) continue;
-    uint8_t *buff = send_buff[recv_id].first;
+  for (const auto &partition_buff_pair : send_partition_buffs) {
+    int32_t partition_id = partition_buff_pair.first;
+    int32_t recv_id = partition_id % num_receivers;
+    if ((send_to_server && kIsServer && recv_id == kServerId)
+        || (!send_to_server && !kIsServer && recv_id == kExecutorId)) continue;
+
+    auto *buff = send_buff[recv_id].first;
     uint8_t *mem = buff + send_buff_offsets[recv_id];
     *reinterpret_cast<int32_t*>(mem) = partition_id;
     mem += sizeof(int32_t);
-    *reinterpret_cast<size_t*>(mem) = partition->GetNumKeyValues();
-    mem += sizeof(size_t);
-    auto &keys = partition->GetKeys();
-    memcpy(mem, keys.data(), keys.size() * sizeof(int64_t));
-    mem += keys.size() * sizeof(int64_t);
-    partition->CopyValues(mem);
-    mem += partition->GetNumKeyValues() * partition->GetValueSize();
-    delete partition;
+    const auto& partition_buff = partition_buff_pair.second;
+    memcpy(mem, partition_buff.first, partition_buff.second);
+    mem += partition_buff.second;
+    delete[] partition_buff.first;
     send_buff_offsets[recv_id] = mem - buff;
-  }
-
-  for (size_t i = 0; i < kConfig.kNumExecutors; i++) {
-    if (i == kExecutorId) continue;
-    CHECK_EQ(send_buff_offsets[i], send_buff_sizes[i]);
-  }
-  auto iter = partitions_.begin();
-
-  while (iter != partitions_.end()) {
-    int32_t partition_id = iter->first;
-    int32_t recv_id = partition_id % kConfig.kNumExecutors;
-    if (recv_id == kExecutorId) {
-      iter++;
-      continue;
-    }
-    partitions_.erase(iter++);
   }
 }
 
 void
 DistArray::RepartitionDeserialize(
+    PeerRecvRepartitionDistArrayDataBuffer *data_buff_ptr) {
+  auto byte_buffs = data_buff_ptr->byte_buffs;
+  for (auto &buff_pair : byte_buffs) {
+    auto &buff = buff_pair.second;
+    RepartitionDeserializeInternal(buff.GetBytes(), buff.GetSize());
+  }
+  delete data_buff_ptr;
+  ComputeMaxPartitionIds();
+  CheckAndBuildIndex();
+}
+
+void
+DistArray::RepartitionDeserializeInternal(
     const uint8_t *mem, size_t mem_size) {
   if (meta_.GetPartitionScheme() == DistArrayPartitionScheme::kSpaceTime) {
     RepartitionDeserializeSpaceTime(mem, mem_size);
@@ -448,22 +575,9 @@ DistArray::RepartitionDeserializeSpaceTime(
     for (size_t i = 0; i < num_time_partitions; i++) {
       int32_t time_id = *reinterpret_cast<const int32_t*>(cursor);
       cursor += sizeof(int32_t);
-      size_t num_key_values = *reinterpret_cast<const size_t*>(cursor);
-      cursor += sizeof(size_t);
-      auto *partition = space_time_partitions_[space_id][time_id];
-      if (partition == nullptr) {
-        partition = CreatePartition();
-        space_time_partitions_[space_id][time_id] = partition;
-        int32_t partition_id_array[] = {space_id, time_id};
-        meta_.AccumMaxPartitionIds(partition_id_array, 2);
-      }
-      const int64_t* keys = reinterpret_cast<const int64_t*>(cursor);
-      cursor += sizeof(int64_t) * num_key_values;
-      const uint8_t *values = cursor;
-      cursor += kValueSize * num_key_values;
-      for (size_t j = 0; j < num_key_values; j++) {
-        partition->AppendKeyValue(keys[j], values + kValueSize * j);
-      }
+      auto partition_pair = GetAndCreateLocalPartition(space_id, time_id);
+      auto *partition = partition_pair.first;
+      cursor = partition->DeserializeAndAppend(cursor);
     }
   }
 }
@@ -475,73 +589,22 @@ DistArray::RepartitionDeserialize1D(
   while (cursor - mem < mem_size) {
     int32_t partition_id = *reinterpret_cast<const int32_t*>(cursor);
     cursor += sizeof(int32_t);
-    size_t num_key_values = *reinterpret_cast<const size_t*>(cursor);
-    cursor += sizeof(size_t);
-    auto *partition = partitions_[partition_id];
-    if (partition == nullptr) {
-      partition = CreatePartition();
-      partitions_[partition_id] = partition;
-      int32_t partition_id_array[] = {partition_id};
-      meta_.AccumMaxPartitionIds(partition_id_array, 1);
-    }
-    const int64_t* keys = reinterpret_cast<const int64_t*>(cursor);
-    cursor += sizeof(int64_t) * num_key_values;
-    const uint8_t *values = cursor;
-    cursor += kValueSize * num_key_values;
-    for (size_t j = 0; j < num_key_values; j++) {
-      partition->AppendKeyValue(keys[j], values + kValueSize * j);
-    }
+    auto partition_pair = GetAndCreateLocalPartition(partition_id);
+    auto *partition = partition_pair.first;
+    cursor = partition->DeserializeAndAppend(cursor);
   }
-}
-
-void
-DistArray::RandomInit(
-      JuliaEvaluator *julia_eval,
-      task::DistArrayInitType init_type,
-      task::DistArrayMapType map_type,
-      JuliaModule mapper_func_module,
-      std::string mapper_func_name,
-      type::PrimitiveType random_init_type) {
-  size_t num_params = 1;
-  for (auto d : dims_) {
-    num_params *= d;
-  }
-  size_t num_params_this_executor = num_params / kConfig.kNumExecutors
-                                    + ((kExecutorId < (num_params % kConfig.kNumExecutors))
-                                       ? 1 : 0);
-  LOG(INFO) << __func__ << " num_params_this_executor = " << num_params_this_executor;
-  if (num_params_this_executor == 0) return;
-  int64_t key_begin = (kExecutorId < (num_params % kConfig.kNumExecutors))
-                      ? (num_params / kConfig.kNumExecutors + 1) * kExecutorId
-                      : (num_params / kConfig.kNumExecutors) * kExecutorId + (num_params % kConfig.kNumExecutors);
-  auto *dist_array_partition = CreatePartition();
-  dist_array_partition->RandomInit(
-      julia_eval,
-      dims_,
-      key_begin,
-      num_params_this_executor,
-      init_type,
-      map_type,
-      mapper_func_module,
-      mapper_func_name,
-      random_init_type);
-  partitions_.emplace(std::make_pair(kExecutorId, dist_array_partition));
-
 }
 
 void
 DistArray::CheckAndBuildIndex() {
-  LOG(INFO) << __func__ << " meta = " << (void*) &meta_;
   auto index_type = meta_.GetIndexType();
-  LOG(INFO) << "index_type = " << static_cast<int>(index_type);
   switch (index_type) {
     case DistArrayIndexType::kNone:
       break;
     case DistArrayIndexType::kGlobal:
       {
         auto partition_scheme = meta_.GetPartitionScheme();
-        CHECK(partition_scheme == DistArrayPartitionScheme::kHash ||
-              partition_scheme == DistArrayPartitionScheme::kRange);
+        CHECK(partition_scheme == DistArrayPartitionScheme::kHash);
       }
       // continue to build partition indices
     case DistArrayIndexType::kLocal:
@@ -556,7 +619,6 @@ DistArray::CheckAndBuildIndex() {
 
 void
 DistArray::BuildPartitionIndices() {
-  LOG(INFO) << __func__ << " meta = " << (void*) &meta_;
   if (meta_.GetPartitionScheme() == DistArrayPartitionScheme::kSpaceTime) {
     for (auto &time_partition_map : space_time_partitions_) {
       for (auto &partition_pair : time_partition_map.second) {
@@ -566,7 +628,6 @@ DistArray::BuildPartitionIndices() {
     }
   } else {
     for (auto &partition_pair : partitions_) {
-      LOG(INFO) << __func__ << " for partition " << partition_pair.first;
       auto partition = partition_pair.second;
       partition->BuildIndex();
     }
@@ -631,11 +692,104 @@ DistArray::GetAccessPartition() {
 }
 
 void
+DistArray::SetBufferAccessPartition() {
+  SetAccessPartition(buffer_partition_);
+}
+
+void
+DistArray::ResetAccessPartition() {
+  SetAccessPartition(nullptr);
+}
+
+void
+DistArray::CreateDistArrayBuffer(const std::string &serialized_value_type) {
+  const auto &symbol = meta_.GetSymbol();
+  const auto &dims = meta_.GetDims();
+  bool is_dense = meta_.IsDense();
+
+  JuliaEvaluator::DefineDistArray(symbol, serialized_value_type,
+                                  dims, is_dense, &access_, true);
+  buffer_partition_ = CreatePartition();
+  buffer_partition_->BuildIndex();
+}
+
+void
 DistArray::DeletePartition(int32_t partition_id) {
   auto partition_iter = partitions_.find(partition_id);
   CHECK(partition_iter != partitions_.end());
+  auto *gc_partition = partition_iter->second->GetGcPartition();
   delete partition_iter->second;
   partitions_.erase(partition_iter);
+  if (gc_partition != nullptr) {
+    gc_partitions_.push_back(gc_partition);
+  }
+}
+
+void
+DistArray::DeletePartition(AbstractDistArrayPartition* partition) {
+  auto *gc_partition = partition->GetGcPartition();
+  delete partition;
+  if (gc_partition != nullptr) {
+    gc_partitions_.push_back(gc_partition);
+  }
+}
+
+void
+DistArray::GcPartitions() {
+  if (gc_partitions_.empty()) return;
+  jl_value_t* dist_array = nullptr;
+  JuliaEvaluator::GetDistArray(meta_.GetSymbol(), &dist_array);
+  jl_value_t *array_type = nullptr,
+          *partition_vec = nullptr;
+  JL_GC_PUSH2(&array_type, &partition_vec);
+  array_type = jl_apply_array_type(jl_any_type, 1);
+  partition_vec = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(array_type, gc_partitions_.size()));
+  for (size_t i = 0; i < gc_partitions_.size(); i++) {
+    auto* gc_partition = gc_partitions_[i];
+    jl_arrayset(reinterpret_cast<jl_array_t*>(partition_vec), gc_partition, i);
+  }
+  jl_function_t* delete_partitions_func = JuliaEvaluator::GetFunction(
+      jl_main_module,
+      "orionres_dist_array_delete_partitions");
+  jl_call2(delete_partitions_func, dist_array, partition_vec);
+  JL_GC_POP();
+}
+
+void
+DistArray::ComputeMaxPartitionIds() {
+  if (meta_.GetPartitionScheme() == DistArrayPartitionScheme::kSpaceTime) {
+    ComputeMaxPartitionIdsSpaceTime();
+  } else {
+    ComputeMaxPartitionIds1D();
+  }
+}
+
+void
+DistArray::ComputeMaxPartitionIdsSpaceTime() {
+  int64_t max_space_id = 0, max_time_id = 0;
+  for (auto &time_partition_map_pair : space_time_partitions_) {
+    int64_t space_id = time_partition_map_pair.first;
+    auto &time_partition_map = time_partition_map_pair.second;
+    if (max_space_id < space_id) max_space_id = space_id;
+    for (auto &partition_pair : time_partition_map) {
+      int32_t time_id = partition_pair.first;
+      if (max_time_id < time_id) max_time_id = time_id;
+    }
+  }
+  meta_.SetMaxPartitionIds(max_space_id, max_time_id);
+  LOG(INFO) << __func__ << " max_space_id = " << max_space_id
+            << " max_time_id = " << max_time_id;
+}
+
+void
+DistArray::ComputeMaxPartitionIds1D() {
+  int32_t max_partition_id = 0;
+  for (auto &partition_pair : partitions_) {
+    int32_t partition_id = partition_pair.first;
+    if (max_partition_id < partition_id) max_partition_id = partition_id;
+  }
+  meta_.SetMaxPartitionIds(max_partition_id);
+  LOG(INFO) << __func__ << " max_partition_id = " << max_partition_id;
 }
 
 }

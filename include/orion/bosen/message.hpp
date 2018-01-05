@@ -124,7 +124,8 @@ enum class DriverMsgType {
     kDefineVar = 10,
     kRepartitionDistArray = 11,
     kExecForLoop = 12,
-    kGetAccumulatorValue = 13
+    kGetAccumulatorValue = 13,
+    kCreateDistArrayBuffer = 14
 };
 
 struct DriverMsg {
@@ -152,10 +153,19 @@ enum class ExecuteMsgType {
       kPeerRecvStop = 11,
       kRepartitionDistArrayAck = 12,
       kRepartitionDistArrayMaxPartitionIds = 13,
-      kPipelineTimePartition = 14,
-      kRequestExecForLoopDistArrayData = 15,
-      kReplyExecForLoopDistArrayData = 16,
-      kReplyGetAccumulatorValue = 17
+      kRequestExecForLoopGlobalIndexedDistArrays = 14,
+      kRequestExecForLoopPipelinedTimePartitions = 15,
+      kRequestExecForLoopPredecessorCompletion = 16,
+      kPipelinedTimePartitions = 17,
+      kReplyPipelinedTimePartitions = 18,
+      kReplyGlobalIndexedDistArrayData = 19,
+      kReplyGetAccumulatorValue = 20,
+      kPartitionNumLines = 21,
+      kCreateDistArrayBufferAck = 22,
+      kRequestDistArrayValue = 23,
+      kPredCompletion = 24,
+      kExecForLoopAck = 25,
+      kExecForLoopDone = 26
 };
 
 struct ExecuteMsg {

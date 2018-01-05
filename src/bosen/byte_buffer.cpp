@@ -6,6 +6,17 @@ namespace bosen {
 ByteBuffer::ByteBuffer() { }
 ByteBuffer::~ByteBuffer() { }
 
+ByteBuffer::ByteBuffer(size_t buff_capacity):
+    buff_(buff_capacity) { }
+
+ByteBuffer::ByteBuffer(const ByteBuffer & other):
+    buff_(other.buff_),
+    size_(other.size_) { }
+
+ByteBuffer::ByteBuffer(ByteBuffer && other):
+    buff_(std::move(other.buff_)),
+    size_(other.size_) { }
+
 uint8_t*
 ByteBuffer::GetBytes() {
   return buff_.data();

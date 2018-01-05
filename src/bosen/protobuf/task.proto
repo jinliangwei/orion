@@ -1,41 +1,34 @@
 package orion.bosen.task;
 
-enum DistArrayParentType {
-  TEXT_FILE = 1;
-  DIST_ARRAY = 2;
-  INIT = 3;
-}
-
-enum DistArrayInitType {
-  EMPTY = 1;
-  UNIFORM_RANDOM = 2;
-  NORMAL_RANDOM = 3;
-}
-
-enum DistArrayMapType {
-  NO_MAP = 1;
-  MAP = 2;
-  MAP_FIXED_KEYS = 3;
-  MAP_VALUES = 4;
-  MAP_VALUES_NEW_KEYS = 5;
-}
-
 message CreateDistArray {
   required int32 id = 1;
-  required DistArrayParentType parent_type = 2;
-  required DistArrayMapType map_type = 3;
-  required bool flatten_results = 4;
-  required uint64 num_dims = 5;
-  required int32 value_type = 6;
-  optional string file_path = 7;
-  optional int32 parent_id = 8;
-  optional DistArrayInitType init_type = 9;
-  optional int32 mapper_func_module = 10;
-  optional string mapper_func_name = 11;
-  repeated int64 dims = 12;
-  optional int32 random_init_type = 13; // used only if map is ture with random init
-  required bool is_dense = 14;
-  required string symbol = 15;
+  required int32 parent_type = 2;
+  required int32 map_type = 3;
+  required int32 partition_scheme = 4;
+  required bool flatten_results = 5;
+  required uint64 num_dims = 6;
+  required int32 value_type = 7;
+  optional string file_path = 8;
+  optional int32 parent_id = 9;
+  optional int32 init_type = 10;
+  optional int32 map_func_module = 11;
+  optional string map_func_name = 12;
+  repeated int64 dims = 13;
+  optional int32 random_init_type = 15; // used only if map is ture with random init
+  required bool is_dense = 16;
+  required string symbol = 17;
+  required bytes serialized_value_type = 18;
+}
+
+message CreateDistArrayBuffer {
+  required int32 id = 1;
+  repeated int64 dims = 2;
+  required uint64 num_dims = 3;
+  required bool is_dense = 4;
+  required int32 value_type = 5;
+  required bytes serialized_init_value = 6;
+  required string symbol = 7;
+  required bytes serialized_value_type = 8;
 }
 
 message EvalExpr {
@@ -45,7 +38,7 @@ message EvalExpr {
 
 message RepartitionDistArray {
   required int32 id = 1;
-  required string partition_func_name = 2;
+  optional string partition_func_name = 2;
   required int32 partition_scheme = 3;
   required int32 index_type = 4;
 }
@@ -56,8 +49,12 @@ message ExecForLoop {
   repeated int32 space_partitioned_dist_array_ids = 3;
   repeated int32 time_partitioned_dist_array_ids = 4;
   repeated int32 global_indexed_dist_array_ids = 5;
-  required string loop_batch_func_name = 6;
-  required bool is_ordered = 7;
+  repeated int32 buffered_dist_array_ids = 6;
+  repeated int32 dist_array_buffer_ids = 7;
+  repeated uint64 num_buffers_each_dist_array = 8;
+  required string loop_batch_func_name = 9;
+  optional string prefetch_batch_func_name = 10;
+  required bool is_ordered = 11;
 }
 
 message GetAccumulatorValue {

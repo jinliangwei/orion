@@ -4,73 +4,92 @@
 #include <string>
 #include <hdfs.h>
 #include <vector>
+#include <orion/bosen/config.hpp>
 #include <orion/bosen/blob.hpp>
 #include <orion/bosen/julia_module.hpp>
 #include <orion/bosen/julia_evaluator.hpp>
+#include <orion/bosen/julia_thread_requester.hpp>
 #include <orion/noncopyable.hpp>
-#include <orion/bosen/task.pb.h>
+#include <orion/bosen/dist_array_meta.hpp>
+#include <orion/bosen/send_data_buffer.hpp>
+#include <orion/bosen/key_vec_type.hpp>
 
 namespace orion {
 namespace bosen {
 class DistArray;
+class JuliaEvaluator;
 
 class AbstractDistArrayPartition {
+ protected:
+  const Config& kConfig;
+  const type::PrimitiveType kValueType;
+
+  DistArray *dist_array_;
+  JuliaThreadRequester *julia_requester_;
+  std::vector<int64_t> keys_;
+  std::vector<char> char_buff_;
+  std::vector<int64_t> key_buff_;
+  int64_t key_start_ { -1 }; // used (set to nonnegative when a dense index is built)
  public:
-  AbstractDistArrayPartition() { }
+  AbstractDistArrayPartition(DistArray* dist_array,
+                             const Config &config,
+                             type::PrimitiveType value_type,
+                             JuliaThreadRequester *julia_requester);
   virtual ~AbstractDistArrayPartition() { }
 
-  virtual bool LoadTextFile(
-      JuliaEvaluator *julia_eval,
-      const std::string &file_path,
-      int32_t partition_id,
-      task::DistArrayMapType map_type,
-      bool flatten_results,
-      size_t num_dims,
-      JuliaModule mapper_func_module,
-      const std::string &mapper_func,
-      Blob *result_buff) = 0;
-  virtual void ComputeKeysFromBuffer(const std::vector<int64_t> &dims) = 0;
-  virtual std::vector<int64_t> &GetDims() = 0;
-  virtual type::PrimitiveType GetValueType() = 0;
+  bool IsGlobalIndexed();
+  bool LoadTextFile(const std::string &path, int32_t partition_id);
+  void ParseText(Blob *max_key, size_t line_num_start);
+  size_t CountNumLines() const;
+  std::vector<int64_t>& GetDims();
+  void Init(int64_t key_begin, size_t num_elements);
+  void Map(AbstractDistArrayPartition *child_partition);
+  void ComputeKeysFromBuffer(const std::vector<int64_t> &dims);
+  const std::string &GetDistArraySymbol();
+  size_t GetNumKeyValues() { return keys_.size(); }
+  void ComputeHashRepartitionIdsAndRepartition(size_t num_partitions);
+  void ComputeRepartitionIdsAndRepartition(
+      const std::string &repartition_func_name);
+  void ComputePrefetchIndinces(const std::string &prefetch_batch_func_name,
+                               const std::vector<int32_t> &dist_array_ids_vec,
+                               PointQueryKeyDistArrayMap *point_key_vec_map,
+                               RangeQueryKeyDistArrayMap *range_key_vec_map);
+  void Execute(const std::string &loop_batch_func_name);
 
-  virtual void Insert(int64_t key, const Blob &buff) = 0;
-  virtual void Get(int64_t key, Blob *buff) = 0;
-  virtual void GetRange(int64_t start, int64_t end, Blob *buff) = 0;
-  virtual std::vector<int64_t>& GetKeys() = 0;
-  virtual void* GetValues() = 0;
-  virtual void AppendKeyValue(int64_t key, const void* value) = 0;
-  virtual void Repartition(const int32_t *repartition_ids) = 0;
-  virtual size_t GetNumKeyValues() = 0;
-  virtual size_t GetValueSize() = 0;
-  virtual void CopyValues(void *mem) const = 0;
-  virtual void RandomInit(
-      JuliaEvaluator *julia_eval,
-      const std::vector<int64_t> &dims,
-      int64_t key_begin,
-      size_t num_elements,
-      task::DistArrayInitType init_type,
-      task::DistArrayMapType map_type,
-      JuliaModule mapper_func_module,
-      const std::string &mapper_func_name,
-      type::PrimitiveType random_init_type) = 0;
+  virtual void BuildKeyValueBuffersFromSparseIndex() = 0;
 
-  virtual void ReadRange(
-      int64_t key_begin,
-      size_t num_elements,
-      void *mem) = 0;
+  // user creates buff
+  virtual void ReadRangeDense(int64_t key_begin, size_t num_elements, jl_value_t* buff) = 0;
+  // I create buff
+  virtual void ReadRangeSparse(int64_t key_begin, size_t num_elements,
+                               jl_value_t** key_buff, jl_value_t** value_buff) = 0;
+  // user creates buff
+  virtual void ReadRangeSparseWithInitValue(
+      int64_t key_begin, size_t num_elements,
+      jl_value_t* value_buff) = 0;
 
-  virtual void WriteRange(
-      int64_t key_begin,
-      size_t num_elements,
-      void *mem) = 0;
+  virtual void ReadRangeSparseWithRequest(
+      int64_t key_begin, size_t num_elements,
+      jl_value_t** key_buff, jl_value_t** value_buff) = 0;
 
+  virtual void WriteRange(int64_t key_begin, size_t num_elements, jl_value_t* buff) = 0;
   virtual void BuildIndex() = 0;
 
-  virtual std::pair<uint8_t*, size_t> Serialize() = 0;
-  virtual void Deserialize(const uint8_t *buffer, size_t num_bytes) = 0;
-
+  virtual SendDataBuffer Serialize() = 0;
+  virtual const uint8_t* Deserialize(const uint8_t *buffer) = 0;
+  virtual const uint8_t* DeserializeAndAppend(const uint8_t *buffer) = 0;
+  virtual jl_value_t *GetGcPartition() = 0;
+  virtual void Clear() = 0;
  protected:
   DISALLOW_COPY(AbstractDistArrayPartition);
+
+  void AppendKeyValue(int64_t key, jl_value_t* value);
+  virtual void Repartition(const int32_t *repartition_ids) = 0;
+
+  virtual void GetJuliaValueArray(jl_value_t **value) = 0;
+
+  virtual void AppendJuliaValue(jl_value_t *value) = 0;
+  virtual void AppendJuliaValueArray(jl_value_t *value) = 0;
 
   static void GetBufferBeginAndEnd(int32_t partition_id,
                                    size_t partition_size,
@@ -84,15 +103,16 @@ class AbstractDistArrayPartition {
                            int32_t partition_id,
                            size_t num_executors,
                            size_t partition_size,
-                           std::vector<char> *char_buff, size_t *begin,
-                           size_t *end);
+                           std::vector<char> *char_buff);
 
   static bool LoadFromPosixFS(const std::string &file_path,
                               int32_t partition_id,
                               size_t num_executors,
                               size_t partition_size,
-                              std::vector<char> *char_buff, size_t *begin,
-                              size_t *end);
+                              std::vector<char> *char_buff);
+
+  virtual void BuildDenseIndex() = 0;
+  virtual void BuildSparseIndex() = 0;
 };
 
 }

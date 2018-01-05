@@ -257,10 +257,6 @@ Socket::Send(SendBuffer *buf) const {
 }
 
 bool Socket::Recv(RecvBuffer *buf) const {
-  LOG(INFO) << "before read buf size = "
-            << buf->get_size()
-            << " expected size = "
-            << buf->get_expected_size();
   ssize_t ret = read(socket_, buf->get_recv_mem(),
                      buf->get_capacity() - buf->get_size());
   if (ret < 0) {
@@ -275,9 +271,6 @@ bool Socket::Recv(RecvBuffer *buf) const {
     buf->inc_size(ret);
   }
 
-  LOG(INFO) << __func__
-            << " received " << ret << " bytes "
-            << " buf size = " << buf->get_size();
   if (buf->is_initialized())
     CHECK_GE(buf->get_capacity(), buf->get_expected_size())
         << "message is too large, expected size = "
@@ -300,7 +293,6 @@ bool Socket::Recv(RecvBuffer *buf, void *mem) const {
     buf->set_eof();
     return true;
   } else {
-    LOG(INFO) << "reading size up to " << buf->get_next_expected_size() - buf->get_next_recved_size();
     buf->inc_next_recved_size(ret);
   }
 
