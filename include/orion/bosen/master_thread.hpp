@@ -26,6 +26,10 @@
 namespace orion {
 namespace bosen {
 
+namespace {
+const size_t kPeerConnectionInterval = 64;
+}
+
 class MasterThread {
  private:
   struct PollConn {
@@ -164,6 +168,8 @@ class MasterThread {
   void ConstructDriverResponse(int32_t executor_id, size_t num_responses,
                                size_t result_size);
   void InitializeAccumulator();
+  void BroadcastToAllExecutorsAndServersRange(size_t start,
+                                              size_t end);
   void BroadcastToAllExecutorsAndServers();
   void BroadcastToAllExecutors();
   void BroadcastToAllServers();
@@ -325,10 +331,10 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
               &send_buff_, kNumExecutors, kNumServers);
           send_buff_.set_next_to_send(host_info_.data(),
                                       (kNumExecutors + kNumServers) * sizeof(HostInfo));
-          BroadcastToAllExecutorsAndServers();
+          BroadcastToAllExecutorsAndServersRange(num_recved_executor_acks_,
+                                                 std::min(num_recved_executor_acks_ + kPeerConnectionInterval,
+                                                          kNumExecutors + kNumServers));
           send_buff_.clear_to_send();
-          num_expected_executor_acks_ = kNumExecutors + kNumServers;
-          num_recved_executor_acks_ = 0;
           action_ = Action::kWaitingExecutorResponse;
         }
         break;
@@ -589,6 +595,8 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
             && (num_identified_executors_ == kNumExecutors
                 && num_identified_servers_ == kNumServers)) {
           action_ = Action::kExecutorConnectToPeers;
+          num_recved_executor_acks_ = 0;
+          num_expected_executor_acks_ = kNumExecutors + kNumServers;
         }
         ret = EventHandler<PollConn>::kClearOneMsg;
       }
@@ -611,6 +619,8 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
             && (num_identified_executors_ == kNumExecutors
                 && num_identified_servers_ == kNumServers)) {
           action_ = Action::kExecutorConnectToPeers;
+          num_recved_executor_acks_ = 0;
+          num_expected_executor_acks_ = kNumExecutors + kNumServers;
         }
         ret = EventHandler<PollConn>::kClearOneMsg;
       }
@@ -619,13 +629,16 @@ MasterThread::HandleExecutorMsg(PollConn *poll_conn_ptr) {
       {
         LOG(INFO) << "connect to peers ack! " << num_recved_executor_acks_;
         num_recved_executor_acks_++;
-        if (num_recved_executor_acks_ == num_expected_executor_acks_) {
+        if (num_recved_executor_acks_ < num_expected_executor_acks_
+            && num_recved_executor_acks_ % kPeerConnectionInterval == 0) {
+          action_ = Action::kExecutorConnectToPeers;
+        } else if (num_recved_executor_acks_ == num_expected_executor_acks_) {
           std::cout << "Your Orion cluster is ready!" << std::endl;
           std::cout << "Connect your client application to "
                     << kMasterIp << ":" << kMasterPort << std::endl;
+          action_ = Action::kNone;
         }
         ret = EventHandler<PollConn>::kClearOneMsg;
-        action_ = Action::kNone;
       }
       break;
     case message::Type::kExecuteMsg:
@@ -1128,6 +1141,51 @@ MasterThread::InitializeAccumulator() {
   accumulator_.symbol = get_accumulator_value_task.symbol();
   accumulator_.combiner = get_accumulator_value_task.combiner();
   accumulator_.num_accumulated = 0;
+}
+
+void
+MasterThread::BroadcastToAllExecutorsAndServersRange(size_t start,
+                                                     size_t end) {
+  size_t i = start;
+  for (; i < kNumExecutors && i < end; ++i) {
+    conn::SendBuffer& send_buff = executors_[i]->send_buff;
+    if (send_buff.get_remaining_to_send_size() > 0
+        || send_buff.get_remaining_next_to_send_size() > 0) {
+      bool sent = executors_[i]->sock.Send(&send_buff);
+      while (!sent) {
+        sent = executors_[i]->sock.Send(&send_buff);
+      }
+      send_buff.clear_to_send();
+    }
+    bool sent = executors_[i]->sock.Send(&send_buff_);
+    if (!sent) {
+      send_buff.CopyAndMoveNextToSend(&send_buff_);
+      event_handler_.SetToReadWrite(executor_id_to_poll_conn_ptr_[i]);
+    }
+    send_buff_.reset_sent_sizes();
+  }
+
+  if (i >= end) return;
+
+  for (; i < end; i++) {
+    size_t j = i - kNumExecutors;
+    CHECK(j < kNumServers);
+    conn::SendBuffer& send_buff = servers_[j]->send_buff;
+    if (send_buff.get_remaining_to_send_size() > 0
+        || send_buff.get_remaining_next_to_send_size() > 0) {
+      bool sent = servers_[j]->sock.Send(&send_buff);
+      while (!sent) {
+        sent = servers_[j]->sock.Send(&send_buff);
+      }
+      send_buff.clear_to_send();
+    }
+    bool sent = servers_[j]->sock.Send(&send_buff_);
+    if (!sent) {
+      send_buff.CopyAndMoveNextToSend(&send_buff_);
+      event_handler_.SetToReadWrite(executor_id_to_poll_conn_ptr_[j]);
+    }
+    send_buff_.reset_sent_sizes();
+  }
 }
 
 void

@@ -236,7 +236,7 @@ if __name__ == "__main__":
                                                 "%s" % host,
                                                 ssh_cmd_worker],
                                                shell=False)
-                if (i + 1) % 10 == 0:
+                if (i + 1) % 8 == 0:
                     time.sleep(1)
             worker_id += 1
     while True:
