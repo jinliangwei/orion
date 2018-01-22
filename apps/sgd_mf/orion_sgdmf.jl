@@ -10,11 +10,13 @@ Orion.helloworld()
 const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 4
+const num_executors = 1
+const num_servers = 1
 
 # initialize logging of the runtime library
 Orion.glog_init()
-Orion.init(master_ip, master_port, comm_buff_capacity, num_executors)
+Orion.init(master_ip, master_port, comm_buff_capacity, num_executors,
+           num_servers)
 
 #const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
 #const data_path = "file:///home/ubuntu/data/ml-10M100K/ratings.csv"
@@ -23,7 +25,12 @@ const K = 100
 const num_iterations = 1
 const step_size = 0.001
 
+Orion.@accumulator err = 0
+Orion.@accumulator line_cnt = 0
+
 Orion.@share function parse_line(line::AbstractString)
+    global line_cnt
+    line_cnt += 1
     tokens = split(line, ',')
     @assert length(tokens) == 3
     key_tuple = (parse(Int64, String(tokens[1])),
@@ -41,19 +48,20 @@ Orion.materialize(ratings)
 dim_x, dim_y = size(ratings)
 
 println((dim_x, dim_y))
+line_cnt = Orion.get_aggregated_value(:line_cnt, :+)
+println("line_cnt = ", line_cnt)
 
 Orion.@dist_array W = Orion.randn(K, dim_x)
-Orion.@dist_array W = Orion.map(W, map_init_param, map_values=true)
+Orion.@dist_array W = Orion.map(W, map_init_param, map_values = true)
 Orion.materialize(W)
 
 Orion.@dist_array H = Orion.randn(K, dim_y)
-Orion.@dist_array H = Orion.map_value(H, map_init_param, map_values=true)
+Orion.@dist_array H = Orion.map(H, map_init_param, map_values = true)
 Orion.materialize(H)
 
-Orion.@accumulator error = 0
-Orion.@accumulator cnt = 0
+error_vec = Vector{Float64}()
 
-for i = 1:num_iterations
+for iteration = 1:num_iterations
     Orion.@parallel_for for rating in ratings
         x_idx = rating[1][1]
         y_idx = rating[1][2]
@@ -67,24 +75,25 @@ for i = 1:num_iterations
         H_grad = -2 * diff .* W_row
         W[:, x_idx] = W_row - step_size .* W_grad
         H[:, y_idx] = H_row - step_size .* H_grad
-        cnt += 1
     end
-    Orion.@parallel_for for rating in ratings
-        x_idx = rating[1][1]
-        y_idx = rating[1][2]
-        rv = rating[2]
-
-        W_row = W[:, x_idx]
-        H_row = H[:, y_idx]
-        pred = dot(W_row, H_row)
-        error += rv - pred
+    if iteration % 4 == 1 ||
+        iteration == num_iterations
+        Orion.@parallel_for for rating in ratings
+            x_idx = rating[1][1]
+            y_idx = rating[1][2]
+            rv = rating[2]
+            W_row = W[:, x_idx]
+            H_row = H[:, y_idx]
+            pred = dot(W_row, H_row)
+            err += rv - pred
+        end
+        err = Orion.get_aggregated_value(:err, :+)
+        println("iteration = ", iteration, " err = ", err)
+        Orion.reset_accumulator(:err)
+        push!(error_vec, err)
     end
-    error = Orion.get_aggregated_value(:error, :+)
-    println("iteration = ", i, " error = ", error)
-    Orion.reset_accumulator(:error)
 end
-
-#Orion.save_as_text_file(W, "/home/ubuntu/model/H")
-#Orion.save_as_text_file(H, "/home/ubuntu/model/W")
+println(error_vec)
 
 Orion.stop()
+exit()

@@ -15,21 +15,18 @@ JuliaThreadRequester::RequestDistArrayData(
   message::ExecuteMsgHelper::CreateMsg<
     message::ExecuteMsgRequestDistArrayValue>(&send_buff_, dist_array_id, key);
   bool sent = write_pipe_.Send(&send_buff_);
-  if (sent) {
-    send_buff_.reset_sent_sizes();
-    send_buff_.clear_to_send();
-    return;
+  if (!sent) {
+    int ret = poll_.Add(write_pipe_.get_write_fd(), &write_pipe_, EPOLLOUT);
+    CHECK_EQ(ret, 0);
+    while (!sent) {
+      int num_events = poll_.Wait(es_, kNumEvents);
+      CHECK(num_events > 0);
+      CHECK(es_[0].events & EPOLLOUT);
+      CHECK(conn::Poll::EventConn<conn::Pipe>(es_, 0) == &write_pipe_);
+      sent = write_pipe_.Send(&send_buff_);
+    }
+    poll_.Remove(write_pipe_.get_write_fd());
   }
-  int ret = poll_.Add(write_pipe_.get_write_fd(), &write_pipe_, EPOLLOUT);
-  CHECK_EQ(ret, 0);
-  while (!sent) {
-    int num_events = poll_.Wait(es_, kNumEvents);
-    CHECK(num_events > 0);
-    CHECK(es_[0].events & EPOLLOUT);
-    CHECK(conn::Poll::EventConn<conn::Pipe>(es_, 0) == &write_pipe_);
-    sent = write_pipe_.Send(&send_buff_);
-  }
-  poll_.Remove(write_pipe_.get_write_fd());
   send_buff_.reset_sent_sizes();
   send_buff_.clear_to_send();
 

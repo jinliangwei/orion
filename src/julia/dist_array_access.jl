@@ -129,10 +129,10 @@ end
 
 function get_dist_array_access(par_for_loop_entry::BasicBlock,
                                iteration_var::Symbol,
-                               ssa_context::SsaContext)
-    context = GetDistArrayAccessContext(iteration_var,
-                                        ssa_context.ssa_defs)
-    traverse_for_loop(par_for_loop_entry, get_dist_array_access_bb,
-                      context)
-    return context.access_dict
+                               ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
+    da_access_context = GetDistArrayAccessContext(iteration_var, ssa_defs)
+    traverse_for_loop(par_for_loop_entry,
+                      get_dist_array_access_bb,
+                      da_access_context)
+    return da_access_context.access_dict
 end

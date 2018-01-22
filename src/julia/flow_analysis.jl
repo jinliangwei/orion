@@ -166,10 +166,11 @@ function build_flow_graph(expr::Expr, bb::BasicBlock,
     end
     if expr.head == :if
         condition = if_get_condition(expr)
-        push!(bb.stmts, condition)
+        push!(bb.stmts, copy(condition))
         true_bb_entry = create_basic_block(build_context)
 
-        true_bb_exits = build_flow_graph(if_get_true_branch(expr), true_bb_entry,
+        true_bb_exits = build_flow_graph(if_get_true_branch(expr),
+                                         true_bb_entry,
                                          build_context)
         push!(bb.successors, (true, true_bb_entry))
         push!(true_bb_entry.predecessors, bb)
@@ -205,7 +206,7 @@ function build_flow_graph(expr::Expr, bb::BasicBlock,
             push!(loop_condition_bb.predecessors, bb)
         end
         loop_condition_bb.control_flow = expr.head
-        push!(loop_condition_bb.stmts, loop_condition)
+        push!(loop_condition_bb.stmts, copy(loop_condition))
 
         true_bb_entry = create_basic_block(build_context)
         true_bb_exits = build_flow_graph(for_get_loop_body(expr),
@@ -239,7 +240,7 @@ function build_flow_graph(expr::Expr, bb::BasicBlock,
             end
         end
     else
-        push!(bb.stmts, expr)
+        push!(bb.stmts, copy(expr))
         push!(exit_bbs, bb)
     end
     return exit_bbs
@@ -297,7 +298,6 @@ function compute_use_def_expr(stmt, bb::BasicBlock)
                 compute_use_def_expr(assigned_to, bb)
             end
         elseif stmt.head in Set([:call, :invoke, :call1, :foreigncall])
-
             if call_get_func_name(stmt) in Set([:+, :-, :*, :/])
                 for arg in call_get_arguments(stmt)
                     compute_use_def_expr(arg, bb)
@@ -621,7 +621,6 @@ function insert_phi(bb_list::Vector{BasicBlock},
         phis = put_phi_bb[bb]
         for phi in phis
             if phi in bb.uses
-                #println("bb = ", bb.id, " insert ", phi)
                 insert!(bb.stmts, 1, (phi, Vector{Symbol}()))
             end
         end
@@ -629,6 +628,7 @@ function insert_phi(bb_list::Vector{BasicBlock},
 end
 
 type SsaContext
+    # ssa symbol to (variable, variable definition)
     ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}}
     SsaContext() = new(
         Dict{Symbol, Tuple{Symbol, VarDef}}())
@@ -644,10 +644,12 @@ function print_ssa_defs(ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
 end
 
 function compute_ssa_defs(bb_list::Vector{BasicBlock})
+    println("*****compute_ssa_defs********")
     ssa_context = SsaContext()
     for bb in bb_list
         compute_ssa_defs_basic_block(bb, ssa_context)
     end
+    println("*****compute_ssa_defs end*******")
     return ssa_context
 end
 
@@ -660,9 +662,9 @@ function compute_ssa_defs_stmt(stmt,
         def = stmt[2]
         ssa_var = gen_unique_sp_symbol()
         context.ssa_defs[ssa_var] = (sym, VarDef(def))
+        println("add ssa_var = ", ssa_var, " ", stmt)
         push!(bb_ssa_defs, ssa_var)
         sym_to_ssa_var_map[sym] = ssa_var
-        println("define ", sym, " to ", ssa_var)
         return (sym, def, ssa_var)
     elseif isa(stmt, Symbol)
         if stmt in keys(sym_to_ssa_var_map)
@@ -695,6 +697,7 @@ function compute_ssa_defs_stmt(stmt,
             if isa(assigned_to, Symbol)
                 ssa_var = gen_unique_sp_symbol()
                 context.ssa_defs[ssa_var] = (assigned_to, VarDef(assigned_expr))
+                println("add ssa_var = ", ssa_var, " ", stmt)
                 push!(bb_ssa_defs, ssa_var)
                 sym_to_ssa_var_map[assigned_to] = ssa_var
                 return :($ssa_var = $assigned_expr)
@@ -717,6 +720,7 @@ function compute_ssa_defs_stmt(stmt,
                         context.ssa_defs[new_ssa_var][2].mutation = stmt
                         push!(bb_ssa_defs, new_ssa_var)
                     end
+                    println("add ssa_var = ", new_ssa_var, " ", stmt)
                 end
                 if var_mutated != nothing
                     sym_to_ssa_var_map[var_mutated] = new_ssa_var
@@ -765,6 +769,7 @@ function compute_ssa_defs_stmt(stmt,
                             push!(bb_ssa_defs, new_ssa_var)
                         end
                         sym_to_ssa_var_map[var_mutated] = new_ssa_var
+                        println("add ssa_var = ", new_ssa_var, " ", stmt)
                     end
                 end
             end
@@ -850,7 +855,6 @@ function compute_ssa_reaches(bb_list::Vector{BasicBlock},
     for bb in bb_list
         propagate_ssa_reaches(bb, context)
     end
-#    print_flow_graph(bb_list)
 end
 
 function propagate_ssa_reaches_stmt(stmt,
@@ -1006,7 +1010,7 @@ end
 function flow_analysis(expr::Expr)
     flow_graph_entry, flow_graph_exits, context = build_flow_graph(expr)
     bb_list = flow_graph_to_list(flow_graph_entry)
-
+    print_flow_graph(flow_graph_entry)
     compute_use_def(bb_list)
     compute_dominators(bb_list)
     compute_im_doms(bb_list)
@@ -1016,9 +1020,9 @@ function flow_analysis(expr::Expr)
 
     insert_phi(bb_list, put_phi_here)
     ssa_context = compute_ssa_defs(bb_list)
+    print_ssa_defs(ssa_context.ssa_defs)
     compute_ssa_reaches(bb_list, ssa_context)
     compute_stmt_ssa_defuses(bb_list)
-    print_flow_graph(flow_graph_entry)
     return flow_graph_entry, context, ssa_context
 end
 
@@ -1181,7 +1185,6 @@ end
 function get_deleted_syms(bb_list::Vector{BasicBlock})
     syms_deleted = Set{Symbol}()
     for bb in bb_list
-        println(bb.id)
         if !(bb.id in keys(bb_dist_array_access_dict))
             continue
         end
@@ -1332,10 +1335,8 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                 continue
             end
             stmt = stmt_dict[stmt_idx]
-            println(stmt)
             if isa(stmt, Vector)
                 for dist_array_read in stmt
-                    println(dist_array_read)
                     @assert isa(dist_array_read, Tuple)
                     stmt_vec = transform_dist_array_read_func(dist_array_read)
                     append!(stmt_vec, stmt_vec)
@@ -1345,7 +1346,6 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
             end
         end
     end
-    println("appended!")
     push!(appended_bbs, bb.id)
     unhandled_suc = nothing
 
@@ -1443,9 +1443,7 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                                                     appended_bbs)
             end
         end
-        println("before check :for")
         @assert true_unhandled_suc == nothing
-        println("after check :for")
         if !isempty(true_branch_stmt_vec)
             append!(loop_stmt.args[2].args, true_branch_stmt_vec)
             push!(stmt_vec, loop_stmt)
@@ -1479,8 +1477,6 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
             end
         end
 
-         println("num_unappended_preds = ", num_unappended_preds,
-                 "num_backward_edges = ", suc_bb.num_backward_edges)
         if (num_unappended_preds - suc_bb.num_backward_edges) == 0
             unhandled_suc = recreate_stmts_from_flow_graph(suc_bb,
                                                            bb_stmts_dict,
@@ -1500,7 +1496,6 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
     bb_list = flow_graph_to_list(flow_graph)
 
     syms_deleted = get_deleted_syms(bb_list)
-    println(syms_deleted)
 
     bb_stmt_dict = Dict{Int64, Dict{Int64, Any}}()
     syms_to_be_defined = Set{Symbol}()
@@ -1521,7 +1516,6 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                     if !access.is_read
                         continue
                     end
-                    #println("check prefetch for ", da_sym, " ", access)
                     subscripts_vec = Vector{Any}()
                     sub_stmt_defs = Set{Symbol}()
                     sub_stmt_uses = Set{Symbol}()
@@ -1531,7 +1525,6 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                                                       sub_stmt_defs,
                                                       sub_stmt_uses)
                     end
-                    println("add stmt ", bb.id, " ", stmt_idx, " ", (da_sym, subscripts_vec))
                     if stmt_idx in keys(stmt_dict)
                         append!(stmt_dict[stmt_idx], (da_sym, subscripts_vec))
                     else
@@ -1549,7 +1542,6 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                 union!(syms_to_be_defined, stmt_uses)
             end
         end
-        println(stmt_dict)
         if !isempty(stmt_dict)
             bb_stmt_dict[bb.id] = stmt_dict
         end
@@ -1582,7 +1574,6 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                     end
                 end
             end
-            println("branches_in = ", branches_in)
             if branches_in
                 condition_stmt_idx = length(bb.stmts)
                 if bb.id in keys(bb_stmt_dict) &&
@@ -1601,21 +1592,14 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
             end
             for stmt_idx in eachindex(bb.stmts)
                 stmt = bb.stmts[stmt_idx]
-                println("check stmt ", stmt, " idx = ", stmt_idx)
-                if stmt_idx in keys(bb.stmt_ssa_defs)
-                    println("stmt defs = ", bb.stmt_ssa_defs[stmt_idx])
-                end
-
                 if bb.id in keys(bb_stmt_dict) &&
                     stmt_idx in keys(bb_stmt_dict[bb.id])
-                    println("already added, skipping ", bb.id, " ", stmt_idx)
                     continue
                 end
                 if !(stmt_idx in keys(bb.stmt_ssa_defs)) ||
                     isempty(intersect(bb.stmt_ssa_defs[stmt_idx], syms_to_be_defined))
                     continue
                 end
-                println("add stmt ", bb.id, " ", stmt_idx, " ", stmt, " syms def = ", bb.stmt_ssa_defs[stmt_idx])
                 if bb.id in keys(bb_stmt_dict)
                     bb_stmt_dict[bb.id][stmt_idx] = bb.stmts[stmt_idx]
                 else
@@ -1623,15 +1607,10 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                 end
                 if stmt_idx in keys(bb.stmt_ssa_uses)
                     union!(syms_to_be_defined, bb.stmt_ssa_uses[stmt_idx])
-                    println("extended syms to define to ", syms_to_be_defined)
                 end
-                    stmts_are_added = true
+                stmts_are_added = true
             end
         end
-    end
-    for (bb_id, stmt_dict) in bb_stmt_dict
-        println(bb_id)
-        println(stmt_dict)
     end
 
     prefetch_computation_stmts = quote end
@@ -1643,7 +1622,6 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                                                    stmt_vec,
                                                    appended_bbs)
     @assert unhandled_suc == nothing
-    println("recreate things done")
 
     if length(stmt_vec) > 0
         append!(prefetch_computation_stmts.args, stmt_vec)

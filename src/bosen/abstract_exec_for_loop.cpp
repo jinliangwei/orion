@@ -114,30 +114,6 @@ AbstractExecForLoop::HasRecvedAllTimePartitionedDistArrays(
 }
 
 void
-AbstractExecForLoop::ClearForCurrPartition() {
-  for (auto& dist_array_pair : space_partitioned_dist_arrays_) {
-    auto* dist_array = dist_array_pair.second;
-    dist_array->ResetAccessPartition();
-  }
-
-  for (auto& dist_array_pair : time_partitioned_dist_arrays_) {
-    auto* dist_array = dist_array_pair.second;
-    dist_array->ResetAccessPartition();
-  }
-
-  for (auto& dist_array_pair : global_indexed_dist_arrays_) {
-    auto *dist_array = dist_array_pair.second;
-    dist_array->ResetAccessPartition();
-  }
-
-  for (auto& buffer_pair : dist_array_buffers_) {
-    auto* dist_array_buffer = buffer_pair.second;
-    dist_array_buffer->ResetAccessPartition();
-  }
-  curr_partition_prepared_ = false;
-}
-
-void
 AbstractExecForLoop::ComputePrefetchIndinces() {
   PrepareToExecCurrPartition();
   std::vector<int32_t> dist_array_ids_vec;
@@ -157,7 +133,7 @@ AbstractExecForLoop::ExecuteForLoopPartition() {
   //LOG(INFO) << __func__;
   PrepareToExecCurrPartition();
   curr_partition_->Execute(kLoopBatchFuncName);
-  ClearForCurrPartition();
+  ClearCurrPartition();
 }
 
 void

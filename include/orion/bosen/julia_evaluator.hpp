@@ -32,11 +32,14 @@ class JuliaEvaluator {
  public:
   JuliaEvaluator() { }
   ~JuliaEvaluator() { }
-  static void Init(const std::string &orion_home);
+  static void Init(const std::string &orion_home,
+                   size_t num_servers,
+                   size_t num_executors);
   static void AtExitHook() { jl_atexit_hook(0); }
   static void ExecuteTask(JuliaTask* task);
+  static jl_function_t* GetOrionWorkerFunction(const char* func_name);
   static jl_function_t* GetFunction(jl_module_t* module,
-                             const char* func_name);
+                                    const char* func_name);
 
   static void AbortIfException();
   static void BoxValue(
@@ -98,12 +101,13 @@ class JuliaEvaluator {
       size_t num_dims,
       jl_value_t **value_ptr);
 
-  static void DefineDistArray(const std::string &symbol,
+  static void DefineDistArray(int32_t id,
+                              const std::string &symbol,
                               const std::string &serialized_value_type,
                               const std::vector<int64_t> &dims,
                               bool is_dense,
-                              void* access_ptr,
-                              bool is_buffer);
+                              bool is_buffer,
+                              const std::vector<uint8_t> &serialized_init_value_vec);
 
   static void RandNormal(
       type::PrimitiveType value_type,
@@ -117,7 +121,8 @@ class JuliaEvaluator {
 
   static void RunMapGeneric(
       DistArrayMapType map_type,
-      std::vector<int64_t> dims,
+      const std::vector<int64_t> &parent_dims,
+      const std::vector<int64_t> &child_dims,
       size_t num_keys,
       int64_t *keys,
       jl_value_t *input_values,
@@ -128,7 +133,8 @@ class JuliaEvaluator {
       jl_value_t **output_values_ptr);
 
   static void RunMap(
-      std::vector<int64_t> dims,
+      const std::vector<int64_t> &parent_dims,
+      const std::vector<int64_t> &child_dims,
       size_t num_keys,
       int64_t *keys,
       jl_value_t *input_values,
@@ -139,7 +145,7 @@ class JuliaEvaluator {
       jl_value_t **output_values_ptr);
 
   static void RunMapFixedKeys(
-      std::vector<int64_t> dims,
+      const std::vector<int64_t> &parent_dims,
       size_t num_keys,
       int64_t *keys,
       jl_value_t *input_values,
@@ -149,7 +155,7 @@ class JuliaEvaluator {
       jl_value_t **output_values_ptr);
 
   static void RunMapValues(
-      std::vector<int64_t> dims,
+      const std::vector<int64_t> &child_dims,
       size_t num_values,
       jl_value_t *input_values,
       JuliaModule mapper_func_module,
@@ -158,7 +164,7 @@ class JuliaEvaluator {
       jl_value_t **output_values_ptr);
 
   static void RunMapValuesNewKeys(
-      std::vector<int64_t> dims,
+      const std::vector<int64_t> &child_dims,
       size_t num_values,
       jl_value_t *input_values,
       JuliaModule mapper_func_module,

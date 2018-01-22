@@ -54,17 +54,17 @@ extern "C" {
   = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kSpaceTime);
   const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_1D
   = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::k1D);
-  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_HASH
-  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kHash);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_HASH_SERVER
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kHashServer);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_HASH_EXECUTOR
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kHashExecutor);
   const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_RANGE
   = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kRange);
 
   const int32_t ORION_DIST_ARRAY_INDEX_TYPE_NONE
   = static_cast<int32_t>(orion::bosen::DistArrayIndexType::kNone);
-  const int32_t ORION_DIST_ARRAY_INDEX_TYPE_GLOBAL
-  = static_cast<int32_t>(orion::bosen::DistArrayIndexType::kGlobal);
-  const int32_t ORION_DIST_ARRAY_INDEX_TYPE_LOCAL
-  = static_cast<int32_t>(orion::bosen::DistArrayIndexType::kLocal);
+  const int32_t ORION_DIST_ARRAY_INDEX_TYPE_RANGE
+  = static_cast<int32_t>(orion::bosen::DistArrayIndexType::kRange);
 
   const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_1D
   = static_cast<int32_t>(orion::bosen::ForLoopParallelScheme::k1D);

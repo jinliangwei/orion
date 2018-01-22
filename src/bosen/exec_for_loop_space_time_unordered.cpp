@@ -136,28 +136,61 @@ ExecForLoopSpaceTimeUnordered::ComputePartitionIdsAndFindPartitionToExecute() {
 void
 ExecForLoopSpaceTimeUnordered::PrepareToExecCurrPartition() {
   if (curr_partition_prepared_) return;
+  LOG(INFO) << __func__ << " space = " << curr_space_partition_id_
+            << " time = " << curr_time_partition_id_;
   for (auto& dist_array_pair : space_partitioned_dist_arrays_) {
     auto* dist_array = dist_array_pair.second;
-    dist_array->SetAccessPartition(curr_space_partition_id_);
+    auto *access_partition = dist_array->GetLocalPartition(curr_space_partition_id_);
+    access_partition->CreateAccessor();
   }
 
   for (auto& dist_array_pair : time_partitioned_dist_arrays_) {
     auto* dist_array = dist_array_pair.second;
-    dist_array->SetAccessPartition(curr_time_partition_id_);
+    auto *access_partition = dist_array->GetLocalPartition(curr_time_partition_id_);
+    access_partition->CreateAccessor();
   }
 
   for (auto& dist_array_pair : global_indexed_dist_arrays_) {
-    auto *dist_array = dist_array_pair.second;
     auto dist_array_id = dist_array_pair.first;
     auto *cache_partition = dist_array_cache_.at(dist_array_id).second;
-    dist_array->SetAccessPartition(cache_partition);
+    cache_partition->CreateCacheAccessor();
   }
 
   for (auto& buffer_pair : dist_array_buffers_) {
     auto* dist_array_buffer = buffer_pair.second;
-    dist_array_buffer->SetBufferAccessPartition();
+    auto *buffer_partition = dist_array_buffer->GetBufferPartition();
+    buffer_partition->CreateBufferAccessor();
   }
   curr_partition_prepared_ = true;
+}
+
+void
+ExecForLoopSpaceTimeUnordered::ClearCurrPartition() {
+  if (!curr_partition_prepared_) return;
+  for (auto& dist_array_pair : space_partitioned_dist_arrays_) {
+    auto* dist_array = dist_array_pair.second;
+    auto *access_partition = dist_array->GetLocalPartition(curr_space_partition_id_);
+    access_partition->ClearAccessor();
+  }
+
+  for (auto& dist_array_pair : time_partitioned_dist_arrays_) {
+    auto* dist_array = dist_array_pair.second;
+    auto *access_partition = dist_array->GetLocalPartition(curr_time_partition_id_);
+    access_partition->ClearAccessor();
+  }
+
+  for (auto& dist_array_pair : global_indexed_dist_arrays_) {
+    auto dist_array_id = dist_array_pair.first;
+    auto *cache_partition = dist_array_cache_.at(dist_array_id).second;
+    cache_partition->ClearCacheOrBufferAccessor();
+  }
+
+  for (auto& buffer_pair : dist_array_buffers_) {
+    auto* dist_array_buffer = buffer_pair.second;
+    auto *buffer_partition = dist_array_buffer->GetBufferPartition();
+    buffer_partition->ClearCacheOrBufferAccessor();
+  }
+  curr_partition_prepared_ = false;
 }
 
 }

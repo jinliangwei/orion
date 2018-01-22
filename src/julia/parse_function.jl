@@ -11,14 +11,13 @@ function parse_map_new_keys_function(
     func::Function,
     arg_types::Tuple, # may have multiple methods for this function
     flatten::Bool
-)::Tuple{DataType, UInt64}
+)::Tuple{DataType, Int64}
     rettype_array = Base.return_types(func, arg_types)
     if length(rettype_array) == 0
         return (Any, 0)
     end
     @assert length(rettype_array) == 1
     rettype = first(rettype_array)
-    println(rettype)
     if flatten
         @assert issubtype(rettype, Array)
         rettype = rettype.parameters[1]
@@ -28,7 +27,6 @@ function parse_map_new_keys_function(
     @assert length(rettype.parameters) == 2
     key_type = fieldtype(rettype, 1)
     @assert issubtype(key_type, Tuple)
-    println(typeof(first(key_type.parameters)))
     @assert !issubtype(first(key_type.parameters), Vararg) "TODO: the number of dimensions of a key must be a compile time constant"
     num_dims = length(key_type.parameters)
     new_value_type = fieldtype(rettype, 2)
@@ -55,12 +53,10 @@ end
 
 function test_sugar(func::Function, arg_types::Tuple)
     #sugared_func = Sugar.sugared(func, (AbstractString,), code_typed)
-    #println(sugared_func)
     #a = Sugar.get_lambda(code_typed, func, arg_types)
     #println(a)
     println(Base.return_types(func, arg_types))
     println(Sugar.get_static_parameters(func, (String,)))
-    #println(Sugar.get_source(Sugar.get_method(func, (String,))))
     func_ast = Sugar.macro_form(func, (String,))[1]
     println(func_ast)
 

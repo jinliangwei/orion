@@ -36,19 +36,12 @@ class DistArrayPartition : public AbstractDistArrayPartition {
                      JuliaThreadRequester *julia_requester);
   ~DistArrayPartition();
 
+  void CreateAccessor();
+  void ClearAccessor();
+  void CreateCacheAccessor();
+  void CreateBufferAccessor();
+  void ClearCacheOrBufferAccessor();
   void BuildKeyValueBuffersFromSparseIndex();
-  void ReadRangeDense(int64_t key_begin, size_t num_elements, jl_value_t* buff);
-  void ReadRangeSparse(int64_t key_begin, size_t num_elements,
-                       jl_value_t** key_buff, jl_value_t** value_buff);
-  void ReadRangeSparseWithInitValue(
-      int64_t key_begin, size_t num_elements,
-      jl_value_t* value_buff);
-
- void ReadRangeSparseWithRequest(
-      int64_t key_begin, size_t num_elements,
-      jl_value_t** key_buff, jl_value_t** value_buff);
-
-  void WriteRange(int64_t key_begin, size_t num_elements, jl_value_t* buff);
   void BuildIndex();
 
   void Repartition(const int32_t *repartition_ids);
@@ -71,6 +64,7 @@ class DistArrayPartition : public AbstractDistArrayPartition {
 
   void BuildDenseIndex();
   void BuildSparseIndex();
+  void Sort();
 };
 
 /*---- template general implementation -----*/
@@ -84,6 +78,172 @@ DistArrayPartition<ValueType>::DistArrayPartition(
 
 template<typename ValueType>
 DistArrayPartition<ValueType>::~DistArrayPartition() { }
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::CreateAccessor() {
+  jl_value_t **jl_values;
+  JL_GC_PUSHARGS(jl_values, 6);
+  jl_value_t *&value_type_jl = jl_values[0];
+  jl_value_t *&values_array_type_jl = jl_values[1];
+  jl_value_t *&values_array_jl = jl_values[2];
+  jl_value_t *&key_begin_jl = jl_values[3];
+  jl_value_t *&keys_array_type_jl = jl_values[4];
+  jl_value_t *&keys_array_jl = jl_values[5];
+
+  jl_value_t *dist_array_jl = nullptr;
+  auto &dist_array_meta = dist_array_->GetMeta();
+  const std::string &symbol = dist_array_meta.GetSymbol();
+  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  bool is_dense = dist_array_meta.IsDense();
+  value_type_jl = reinterpret_cast<jl_value_t*>(type::GetJlDataType(kValueType));
+  values_array_type_jl = jl_apply_array_type(
+      reinterpret_cast<jl_datatype_t*>(value_type_jl), 1);
+  values_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
+      values_array_type_jl,
+      values_.data(), values_.size(), 0));
+  auto *create_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
+      "create_dist_array_accessor");
+  if (is_dense) {
+    Sort();
+    if (keys_.size() > 0) key_start_ = keys_[0];
+    key_begin_jl = jl_box_int64(key_start_);
+    jl_call3(create_accessor_func, dist_array_jl, key_begin_jl,
+               values_array_jl);
+  } else {
+    keys_array_type_jl = jl_apply_array_type(
+        reinterpret_cast<jl_datatype_t*>(value_type_jl), 1);
+    keys_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
+        keys_array_type_jl,
+        keys_.data(), keys_.size(), 0));
+    jl_call3(create_accessor_func, dist_array_jl, keys_array_jl,
+             values_array_jl);
+  }
+
+  JuliaEvaluator::AbortIfException();
+  JL_GC_POP();
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::ClearAccessor() {
+  auto &dist_array_meta = dist_array_->GetMeta();
+  bool is_dense = dist_array_meta.IsDense();
+  const std::string &symbol = dist_array_meta.GetSymbol();
+  jl_value_t *dist_array_jl = nullptr;
+  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+
+  if (!is_dense) {
+    jl_value_t* keys_array_jl = nullptr;
+    jl_value_t* values_array_jl = nullptr;
+    JL_GC_PUSH2(&keys_array_jl, &values_array_jl);
+
+    auto *get_keys_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
+        "dist_array_get_keys_vec");
+    keys_array_jl = jl_call1(get_keys_vec_func, dist_array_jl);
+    auto *keys_vec = reinterpret_cast<int64_t*>(jl_array_data(keys_array_jl));
+    size_t num_keys = jl_array_len(keys_array_jl);
+
+    auto *get_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
+        "dist_array_get_values_vec");
+    values_array_jl = jl_call1(get_values_vec_func, dist_array_jl);
+    auto *values_vec = reinterpret_cast<ValueType*>(jl_array_data(values_array_jl));
+    keys_.resize(num_keys);
+    values_.resize(num_keys);
+    memcpy(keys_.data(), keys_vec, num_keys * sizeof(int64_t));
+    memcpy(values_.data(), values_vec, num_keys * sizeof(ValueType));
+    sorted_ = false;
+    JL_GC_POP();
+  }
+  auto *delete_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
+      "delete_dist_array_accessor");
+  jl_call1(delete_accessor_func, dist_array_jl);
+  JuliaEvaluator::AbortIfException();
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::CreateCacheAccessor() {
+  jl_value_t **jl_values;
+  JL_GC_PUSHARGS(jl_values, 5);
+  jl_value_t *&value_type_jl = jl_values[0];
+  jl_value_t *&values_array_type_jl = jl_values[1];
+  jl_value_t *&values_array_jl = jl_values[2];
+  jl_value_t *&keys_array_type_jl = jl_values[3];
+  jl_value_t *&keys_array_jl = jl_values[4];
+
+  jl_value_t *dist_array_jl = nullptr;
+  auto &dist_array_meta = dist_array_->GetMeta();
+  const std::string &symbol = dist_array_meta.GetSymbol();
+  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+
+  value_type_jl = reinterpret_cast<jl_value_t*>(type::GetJlDataType(kValueType));
+  values_array_type_jl = jl_apply_array_type(
+      reinterpret_cast<jl_datatype_t*>(value_type_jl), 1);
+  values_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
+      values_array_type_jl,
+      values_.data(), values_.size(), 0));
+  keys_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
+  keys_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
+      keys_array_type_jl,
+      keys_.data(), keys_.size(), 0));
+  auto *create_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
+      "create_dist_array_cache_accessor");
+  jl_call3(create_accessor_func, dist_array_jl, keys_array_jl,
+           values_array_jl);
+  JuliaEvaluator::AbortIfException();
+  JL_GC_POP();
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::CreateBufferAccessor() {
+  jl_value_t *dist_array_jl = nullptr;
+  auto &dist_array_meta = dist_array_->GetMeta();
+  const std::string &symbol = dist_array_meta.GetSymbol();
+  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+
+  auto *create_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
+      "create_dist_array_buffer_accessor");
+  jl_call1(create_accessor_func, dist_array_jl);
+  JuliaEvaluator::AbortIfException();
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::ClearCacheOrBufferAccessor() {
+  jl_value_t* keys_array_jl = nullptr;
+  jl_value_t* values_array_jl = nullptr;
+  JL_GC_PUSH2(keys_array_jl, &values_array_jl);
+
+  auto &dist_array_meta = dist_array_->GetMeta();
+  const std::string &symbol = dist_array_meta.GetSymbol();
+  jl_value_t *dist_array_jl = nullptr;
+  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+
+  auto *get_keys_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
+      "dist_array_get_keys_vec");
+  keys_array_jl = jl_call1(get_keys_vec_func, dist_array_jl);
+  auto *keys_vec = reinterpret_cast<int64_t*>(jl_array_data(keys_array_jl));
+  size_t num_keys = jl_array_len(keys_array_jl);
+
+  auto *get_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
+    "dist_array_get_values_vec");
+  values_array_jl = jl_call1(get_values_vec_func, dist_array_jl);
+  auto *values_vec = reinterpret_cast<ValueType*>(jl_array_data(values_array_jl));
+  keys_.resize(num_keys);
+  values_.resize(num_keys);
+
+  memcpy(keys_.data(), keys_vec, num_keys * sizeof(int64_t));
+  memcpy(values_.data(), values_vec, num_keys * sizeof(ValueType));
+
+  auto *delete_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
+      "delete_dist_array_accessor");
+  jl_call1(delete_accessor_func, dist_array_jl);
+  JuliaEvaluator::AbortIfException();
+  sorted_ = false;
+  JL_GC_POP();
+}
 
 template<typename ValueType>
 void
@@ -106,181 +266,6 @@ DistArrayPartition<ValueType>::BuildKeyValueBuffersFromSparseIndex() {
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::ReadRangeDense(int64_t key_begin, size_t num_elements,
-                                              jl_value_t* buff) {
-  ValueType *mem = reinterpret_cast<ValueType*>(jl_array_data(buff));
-  size_t offset = key_begin - key_start_;
-  memcpy(mem, values_.data() + offset, num_elements * sizeof(ValueType));
-}
-
-template<typename ValueType>
-void
-DistArrayPartition<ValueType>::ReadRangeSparse(int64_t key_begin,
-                                               size_t num_elements,
-                                               jl_value_t** key_buff,
-                                               jl_value_t** value_buff) {
-  jl_value_t* key_array_type = nullptr;
-  jl_value_t* value_array_type = nullptr;
-  JL_GC_PUSH2(&key_array_type, &value_array_type);
-
-  key_array_type = jl_apply_array_type(jl_int64_type, 1);
-  value_array_type = jl_apply_array_type(
-      type::GetJlDataType(kValueType), 1);
-
-  int64_t curr_key = key_begin;
-  int64_t max_key = key_begin + num_elements;
-  int64_t exist_key_begin = curr_key;
-  size_t num_values = 0;
-  auto iter = sparse_index_.find(curr_key);
-  while (iter == sparse_index_.end() &&
-         curr_key + 1 < max_key) {
-    curr_key++;
-    iter = sparse_index_.find(curr_key);
-  }
-
-  // either max_key - 1 or (key_begin, max_key - 1) with an existant entry
-  exist_key_begin = curr_key;
-
-  while (iter != sparse_index_.end()) {
-    curr_key = iter->first;
-    if (curr_key >= max_key) break;
-    num_values++;
-    iter++;
-  }
-
-  *key_buff = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(key_array_type, num_values));
-  *value_buff = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(value_array_type, num_values));
-
-  int64_t *key_mem = reinterpret_cast<int64_t*>(jl_array_data(*key_buff));
-  ValueType *value_mem = reinterpret_cast<ValueType*>(jl_array_data(*value_buff));
-  size_t index = 0;
-  iter = sparse_index_.find(exist_key_begin);
-
-  while (iter != sparse_index_.end()) {
-    curr_key = iter->first;
-    if (curr_key >= max_key) break;
-    ValueType value = iter->second;
-
-    key_mem[index] = curr_key;
-    value_mem[index] = value;
-    iter++;
-    index++;
-  }
-
-  CHECK(index == num_values);
-  JL_GC_POP();
-}
-
-template<typename ValueType>
-void DistArrayPartition<ValueType>::ReadRangeSparseWithInitValue(
-    int64_t key_begin, size_t num_elements,
-    jl_value_t* value_buff) {
-  auto &dist_array_meta = dist_array_->GetMeta();
-
-  ValueType init_value = *reinterpret_cast<const ValueType*>(
-      dist_array_meta.GetInitValue().data());
-
-  int64_t curr_key = key_begin;
-  int64_t max_key = key_begin + num_elements;
-
-  ValueType *value_mem = reinterpret_cast<ValueType*>(jl_array_data(value_buff));
-  size_t index = 0;
-  auto iter = sparse_index_.find(curr_key);
-
-  while (iter == sparse_index_.end() &&
-         curr_key + 1 < max_key) {
-    value_mem[index] = init_value;
-    curr_key++;
-    index++;
-    iter = sparse_index_.find(curr_key);
-  }
-
-  if (iter != sparse_index_.end()) {
-    while (iter != sparse_index_.end() &&
-           iter->first < max_key) {
-      while (curr_key <= iter->first) {
-        value_mem[index] = iter->second;
-        index++;
-        curr_key++;
-      }
-      iter++;
-    }
-    for (; curr_key < max_key; curr_key++) {
-      value_mem[index] = init_value;
-      index++;
-    }
-  } else {
-    value_mem[index] = init_value;
-    index++;
-  }
-
-  CHECK(index == num_elements);
-  JL_GC_POP();
-}
-
-template<typename ValueType>
-void
-DistArrayPartition<ValueType>::ReadRangeSparseWithRequest(
-    int64_t key_begin, size_t num_elements,
-    jl_value_t** key_buff, jl_value_t** value_buff) {
-  jl_value_t* key_array_type = nullptr;
-  jl_value_t* value_array_type = nullptr;
-  jl_value_t* key_jl = nullptr;
-  jl_value_t* temp_value = nullptr;
-  JL_GC_PUSH4(&key_array_type, &value_array_type,
-              &key_jl, &temp_value);
-
-  key_array_type = jl_apply_array_type(jl_int64_type, 1);
-  value_array_type = jl_apply_array_type(type::GetJlDataType(kValueType), 1);
-
-  *key_buff = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(key_array_type, 0));
-  *value_buff = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(value_array_type, 0));
-
-  int64_t curr_key = key_begin;
-  int64_t max_key = key_begin + num_elements;
-  while (curr_key < max_key) {
-    auto iter = sparse_index_.find(curr_key);
-    if (iter == sparse_index_.end()) {
-      julia_requester_->RequestDistArrayData(dist_array_->kId, curr_key,
-                                        kValueType, &temp_value);
-
-    } else {
-      ValueType value = iter->second;
-      JuliaEvaluator::BoxValue(kValueType, reinterpret_cast<uint8_t*>(&value),
-                               &temp_value);
-    }
-    if (temp_value != nullptr) {
-      key_jl = jl_box_int64(iter->first);
-      jl_array_ptr_1d_push(reinterpret_cast<jl_array_t*>(*key_buff), key_jl);
-      jl_array_ptr_1d_push(reinterpret_cast<jl_array_t*>(*value_buff), temp_value);
-    }
-    curr_key++;
-  }
-
-  JL_GC_POP();
-}
-
-template<typename ValueType>
-void
-DistArrayPartition<ValueType>::WriteRange(int64_t key_begin, size_t num_elements,
-                                          jl_value_t* buff) {
-  CHECK(jl_is_array(buff));
-  auto &dist_array_meta = dist_array_->GetMeta();
-  bool is_dense = dist_array_meta.IsDense();
-  CHECK_GE(key_start_, 0) << " key_begin = " << key_begin;
-  ValueType *value_mem = reinterpret_cast<ValueType*>(jl_array_data(buff));
-  if (is_dense) {
-    size_t offset = key_begin - key_start_;
-    memcpy(values_.data() + offset, value_mem, num_elements * sizeof(ValueType));
-  } else {
-    for (size_t i = 0; i < num_elements; i++) {
-      sparse_index_[key_begin + i] = value_mem[i];
-    }
-  }
-}
-
-template<typename ValueType>
-void
 DistArrayPartition<ValueType>::BuildIndex() {
   auto &dist_array_meta = dist_array_->GetMeta();
   bool is_dense = dist_array_meta.IsDense();
@@ -294,27 +279,8 @@ DistArrayPartition<ValueType>::BuildIndex() {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::BuildDenseIndex() {
-  if (keys_.size() == 0) return;
-  int64_t min_key = keys_[0];
-  CHECK(values_.size() == keys_.size());
-  for (auto key : keys_) {
-    min_key = std::min(key, min_key);
-  }
-  key_start_ = min_key;
-  std::vector<size_t> perm(keys_.size());
-  std::vector<ValueType> values_temp(values_);
-
-  std::iota(perm.begin(), perm.end(), 0);
-  std::sort(perm.begin(), perm.end(),
-            [&] (const size_t &i, const size_t &j) {
-              return keys_[i] < keys_[j];
-            });
-  std::transform(perm.begin(), perm.end(), values_.begin(),
-                 [&](size_t i) { return values_temp[i]; });
-
-  for (size_t i = 0; i < keys_.size(); i++) {
-    keys_[i] = min_key + i;
-  }
+  Sort();
+  if (keys_.size() > 0) key_start_ = keys_[0];
 }
 
 template<typename ValueType>
@@ -332,6 +298,33 @@ DistArrayPartition<ValueType>::BuildSparseIndex() {
 
 template<typename ValueType>
 void
+DistArrayPartition<ValueType>::Sort() {
+  if (sorted_) return;
+  if (keys_.size() == 0) return;
+  int64_t min_key = keys_[0];
+  CHECK(values_.size() == keys_.size());
+  for (auto key : keys_) {
+    min_key = std::min(key, min_key);
+  }
+  std::vector<size_t> perm(keys_.size());
+  std::vector<ValueType> values_temp(values_);
+
+  std::iota(perm.begin(), perm.end(), 0);
+  std::sort(perm.begin(), perm.end(),
+            [&] (const size_t &i, const size_t &j) {
+              return keys_[i] < keys_[j];
+            });
+  std::transform(perm.begin(), perm.end(), values_.begin(),
+                 [&](size_t i) { return values_temp[i]; });
+
+  for (size_t i = 0; i < keys_.size(); i++) {
+    keys_[i] = min_key + i;
+  }
+  sorted_ = true;
+}
+
+template<typename ValueType>
+void
 DistArrayPartition<ValueType>::Clear() {
   keys_.clear();
   values_.clear();
@@ -345,12 +338,14 @@ DistArrayPartition<ValueType>::AppendKeyValue(int64_t key,
                                               ValueType value) {
   keys_.push_back(key);
   values_.push_back(value);
+  sorted_ = false;
 }
 
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::AppendValue(ValueType value) {
-  values_.push_back(value);
+    sorted_ = false;
+    values_.push_back(value);
 }
 
 template<typename ValueType>
@@ -402,10 +397,12 @@ DistArrayPartition<ValueType>::Repartition1D(
 template<typename ValueType>
 SendDataBuffer
 DistArrayPartition<ValueType>::Serialize() {
-  size_t num_bytes = sizeof(size_t)
+  size_t num_bytes = sizeof(bool) + sizeof(size_t)
                      + keys_.size() * (sizeof(int64_t) + sizeof(ValueType));
   uint8_t* buff = new uint8_t[num_bytes];
   uint8_t* cursor = buff;
+  *(reinterpret_cast<bool*>(cursor)) = sorted_;
+  cursor += sizeof(bool);
   *(reinterpret_cast<size_t*>(cursor)) = keys_.size();
   cursor += sizeof(size_t);
   memcpy(cursor, keys_.data(), keys_.size() * sizeof(int64_t));
@@ -418,6 +415,8 @@ template<typename ValueType>
 const uint8_t*
 DistArrayPartition<ValueType>::Deserialize(const uint8_t *buffer) {
   const uint8_t* cursor = buffer;
+  sorted_ = *(reinterpret_cast<const bool*>(cursor));
+  cursor += sizeof(bool);
   size_t num_keys = *(reinterpret_cast<const size_t*>(cursor));
   cursor += sizeof(size_t);
   keys_.resize(num_keys);
@@ -433,7 +432,9 @@ DistArrayPartition<ValueType>::Deserialize(const uint8_t *buffer) {
 template<typename ValueType>
 const uint8_t*
 DistArrayPartition<ValueType>::DeserializeAndAppend(const uint8_t *buffer) {
+  sorted_ = false;
   const uint8_t* cursor = buffer;
+  cursor += sizeof(bool);
   size_t num_keys = *(reinterpret_cast<const size_t*>(cursor));
   cursor += sizeof(size_t);
   size_t orig_num_keys = keys_.size();
@@ -468,6 +469,7 @@ DistArrayPartition<ValueType>::AppendJuliaValue(jl_value_t *value) {
   ValueType value_buff;
   JuliaEvaluator::UnboxValue(value, kValueType, reinterpret_cast<uint8_t*>(&value_buff));
   values_.push_back(value_buff);
+  sorted_ = false;
 }
 
 template<typename ValueType>
@@ -478,6 +480,7 @@ DistArrayPartition<ValueType>::AppendJuliaValueArray(jl_value_t *value) {
   for (size_t i = 0; i < num_elements; i++) {
     values_.push_back(value_array[i]);
   }
+  sorted_ = false;
 }
 
 /*----- Specialized for String (const char*) ------*/
@@ -494,18 +497,13 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
                      type::PrimitiveType value_type,
                      JuliaThreadRequester *julia_requester);
   ~DistArrayPartition();
-  void BuildKeyValueBuffersFromSparseIndex();
-  void ReadRangeDense(int64_t key_begin, size_t num_elements, jl_value_t* buff);
-  void ReadRangeSparse(int64_t key_begin, size_t num_elements,
-                       jl_value_t** key_buff, jl_value_t** value_buff);
-  void ReadRangeSparseWithInitValue(
-      int64_t key_begin, size_t num_elements,
-      jl_value_t* value_buff);
- void ReadRangeSparseWithRequest(
-      int64_t key_begin, size_t num_elements,
-      jl_value_t** key_buff, jl_value_t** value_buff);
 
-  void WriteRange(int64_t key_begin, size_t num_elements, jl_value_t* buff);
+  void CreateAccessor();
+  void ClearAccessor();
+  void CreateCacheAccessor();
+  void CreateBufferAccessor();
+  void ClearCacheOrBufferAccessor();
+  void BuildKeyValueBuffersFromSparseIndex();
   void BuildIndex();
 
   void Repartition(const int32_t *repartition_ids);
@@ -527,17 +525,18 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
 
   void BuildDenseIndex();
   void BuildSparseIndex();
+  void Sort();
 };
 
-/*----- Specialized for String (const char*) ------*/
+/*----- Specialized for all other types ------*/
 template<>
 class DistArrayPartition<void> : public AbstractDistArrayPartition {
  private:
   jl_module_t *orion_worker_module_;
   jl_value_t *dist_array_jl_;
   jl_value_t *partition_jl_;
+  jl_value_t *values_array_jl_;
   stx::btree_map<int64_t, size_t> sparse_index_;
-  std::vector<size_t> julia_array_index_;
   bool sparse_index_exists_ {false};
  public:
   DistArrayPartition(DistArray *dist_array,
@@ -545,18 +544,12 @@ class DistArrayPartition<void> : public AbstractDistArrayPartition {
                      type::PrimitiveType value_type,
                      JuliaThreadRequester *julia_requester);
   ~DistArrayPartition();
+  void CreateAccessor();
+  void ClearAccessor();
+  void CreateCacheAccessor();
+  void CreateBufferAccessor();
+  void ClearCacheOrBufferAccessor();
   void BuildKeyValueBuffersFromSparseIndex();
-  void ReadRangeDense(int64_t key_begin, size_t num_elements, jl_value_t* buff);
-  void ReadRangeSparse(int64_t key_begin, size_t num_elements,
-                       jl_value_t** key_buff, jl_value_t** value_buff);
-  void ReadRangeSparseWithInitValue(
-      int64_t key_begin, size_t num_elements,
-      jl_value_t* value_buff);
- void ReadRangeSparseWithRequest(
-      int64_t key_begin, size_t num_elements,
-      jl_value_t** key_buff, jl_value_t** value_buff);
-
-  void WriteRange(int64_t key_begin, size_t num_elements, jl_value_t* buff);
   void BuildIndex();
 
   void Repartition(const int32_t *repartition_ids);
@@ -577,7 +570,7 @@ class DistArrayPartition<void> : public AbstractDistArrayPartition {
 
   void BuildDenseIndex();
   void BuildSparseIndex();
-
+  void Sort();
   void GetJuliaDistArray(jl_value_t** dist_array);
 };
 

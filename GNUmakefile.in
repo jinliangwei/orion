@@ -26,7 +26,6 @@ CFLAGS = $(DFLAGS) -fPIC $(PERF_COUNT_ON_FLAGS) \
 	-fno-builtin-free \
 	-Wno-unused-parameter
 
-
 JULIA_HOME=@JULIA_HOME@
 
 LIBS = -lgtest \
@@ -48,17 +47,12 @@ ifeq (@SANITIZER_ON@,thread)
 SANITIZER_FLAGS = -fsanitize=thread
 endif
 
-ifeq (@SANITIZER_ON@,none)
-ORION_LIB_LINKER_LIBS = $(LIBS)
-endif
-
 CFLAGS += -I$(ORION_HOME)/include -I$(JULIA_HOME)/usr/include -I$(JULIA_HOME)/src -I$(JULIA_HOME)/src/support
 CFLAGS += -I$(ORION_HOME)/deps/include
 
 CFLAGS += -DJULIA_ENABLE_THREADING=1 -DJULIA_INIT_DIR=\"$(JULIA_HOME)/usr/lib\"
 LDFLAGS = -Wl,-rpath,$(ORION_HOME)/lib/ -L$(ORION_HOME)/lib
 LDFLAGS += -Wl,-rpath,$(JULIA_HOME)/usr/lib -L$(JULIA_HOME)/usr/lib
-LIBS += -ljulia
 
 ifneq (@HADOOP_HOME@,)
 CFLAGS += -DORION_USE_HDFS
@@ -67,6 +61,21 @@ LDFLAGS += -Wl,-rpath,@HADOOP_HOME@/lib/native -L@HADOOP_HOME@/lib/native \
 -Wl,-rpath,@JAVA_HOME@/jre/lib/amd64/server -L@JAVA_HOME@/jre/lib/amd64/server
 LIBS += -lhdfs -ljvm
 endif
+
+ifeq (@GPROF_ON@,true)
+CFLAGS += -pg
+LIBS += -pg
+endif
+
+ifeq (@GOOGLE_PROF_ON@,true)
+LIBS += -lprofiler
+endif
+
+ifeq (@SANITIZER_ON@,none)
+ORION_LIB_LINKER_LIBS = $(LIBS)
+endif
+
+LIBS += -ljulia
 
 ORION_LIB_NAME := orion
 ORION_DRIVER_LIB_NAME := orion_driver

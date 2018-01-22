@@ -440,7 +440,7 @@ Driver::CreateDistArray(
 
   auto* msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
       master_recv_temp_buff_);
-  CHECK_EQ(msg->result_bytes/sizeof(int64_t), num_dims);
+  CHECK_EQ(msg->result_bytes / sizeof(int64_t), num_dims);
   if (static_cast<DistArrayParentType>(parent_type) == DistArrayParentType::kTextFile
       && msg->result_bytes > 0) {
     memcpy(dims, result_buff_.GetBytes(), result_buff_.GetSize());

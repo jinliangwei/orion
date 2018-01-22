@@ -2,7 +2,6 @@ export helloworld, local_helloworld, glog_init
 
 function helloworld()
     ccall((:orion_helloworld, lib_path), Void, ())
-    global const num_executors = 4
 end
 
 function local_helloworld()

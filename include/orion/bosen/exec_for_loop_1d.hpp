@@ -39,6 +39,7 @@ class ExecForLoop1D : public AbstractExecForLoop {
   int32_t GetSuccessorToNotify() { return -1; }
   uint64_t GetNoticeToSuccessor() { return 0; }
   void PrepareToExecCurrPartition();
+  void ClearCurrPartition();
 
  private:
   void ComputePartitionIdsAndFindPartitionToExecute();

@@ -39,13 +39,31 @@ esac],[sanitizer=none])
 AC_SUBST(SANITIZER_ON, [$sanitizer])
 
 AC_ARG_ENABLE([perfcount],
-[  --enable-perfcount    Turn on sedna perf count],
+[  --enable-perfcount    Turn on perf count],
 [case "${enableval}" in
   yes) perfcount=true ;;
   no) perfcount=false ;;
   *) AC_MSG_ERROR([bad value ${enableval} for --enable-perfcount]) ;;
-esac],[perfcount=no])
+esac],[perfcount=false])
 AC_SUBST(PERF_COUNT_ON, [$perfcount])
+
+AC_ARG_ENABLE([gprof],
+[  --enable-gprof    Turn on GNU Profiling],
+[case "${enableval}" in
+  yes) gprof=true ;;
+  no) gprof=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-gprof]) ;;
+esac],[gprof=false])
+AC_SUBST(GPROF_ON, [$gprof])
+
+AC_ARG_ENABLE([googleprof],
+[  --enable-googleprof    Turn on Google prof],
+[case "${enableval}" in
+  yes) googleprof=true ;;
+  no) googleprof=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-googleprof]) ;;
+esac],[googleprof=false])
+AC_SUBST(GOOGLE_PROF_ON, [$googleprof])
 
 AC_SUBST(THIRD_PARTY_HOME)
 AC_SUBST(HADOOP_HOME)

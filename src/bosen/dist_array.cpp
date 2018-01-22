@@ -203,6 +203,7 @@ void
 DistArray::Init() {
   size_t num_params = 1;
   for (auto d : dims_) {
+    LOG(INFO) << __func__ << " d = " << d;
     num_params *= d;
   }
   size_t num_params_this_executor = num_params / kConfig.kNumExecutors
@@ -266,8 +267,8 @@ DistArray::ComputeRepartition(const std::string &repartition_func_name) {
     DeletePartition(dist_array_partition);
   }
 
-  bool from_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHash;
-  bool to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHash;
+  bool from_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHashServer;
+  bool to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHashServer;
 
   bool repartition_recv = true;
   if ((to_server && (!kIsServer || (from_server && kConfig.kNumServers == 1))) ||
@@ -485,7 +486,7 @@ DistArray::RepartitionSerializeAndClear1D(
     std::pair<int32_t, SendDataBuffer>
     > send_partition_buffs;
   std::unordered_map<int32_t, size_t> send_buff_sizes;
-  bool send_to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHash;
+  bool send_to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHashServer;
   auto iter = partitions_.begin();
   while (iter != partitions_.end()) {
     auto &partition_pair = *iter;
@@ -601,13 +602,7 @@ DistArray::CheckAndBuildIndex() {
   switch (index_type) {
     case DistArrayIndexType::kNone:
       break;
-    case DistArrayIndexType::kGlobal:
-      {
-        auto partition_scheme = meta_.GetPartitionScheme();
-        CHECK(partition_scheme == DistArrayPartitionScheme::kHash);
-      }
-      // continue to build partition indices
-    case DistArrayIndexType::kLocal:
+    case DistArrayIndexType::kRange:
       {
         BuildPartitionIndices();
       }
@@ -675,42 +670,20 @@ DistArray::GetMaxPartitionIds1D(
 }
 
 void
-DistArray::SetAccessPartition(int32_t partition_id) {
-  auto partition_iter = partitions_.find(partition_id);
-  CHECK(partition_iter != partitions_.end()) << "searching for partition " << partition_id;
-  access_.SetAccessPartition(partition_iter->second);
-}
-
-void
-DistArray::SetAccessPartition(AbstractDistArrayPartition *partition) {
-  access_.SetAccessPartition(partition);
-}
-
-AbstractDistArrayPartition*
-DistArray::GetAccessPartition() {
-  return access_.GetAccessPartition();
-}
-
-void
-DistArray::SetBufferAccessPartition() {
-  SetAccessPartition(buffer_partition_);
-}
-
-void
-DistArray::ResetAccessPartition() {
-  SetAccessPartition(nullptr);
-}
-
-void
 DistArray::CreateDistArrayBuffer(const std::string &serialized_value_type) {
   const auto &symbol = meta_.GetSymbol();
   const auto &dims = meta_.GetDims();
   bool is_dense = meta_.IsDense();
-
-  JuliaEvaluator::DefineDistArray(symbol, serialized_value_type,
-                                  dims, is_dense, &access_, true);
+  const auto &init_value = meta_.GetInitValue();
+  JuliaEvaluator::DefineDistArray(kId, symbol, serialized_value_type,
+                                  dims, is_dense, true, init_value);
   buffer_partition_ = CreatePartition();
   buffer_partition_->BuildIndex();
+}
+
+AbstractDistArrayPartition*
+DistArray::GetBufferPartition() {
+  return buffer_partition_;
 }
 
 void
@@ -748,9 +721,8 @@ DistArray::GcPartitions() {
     auto* gc_partition = gc_partitions_[i];
     jl_arrayset(reinterpret_cast<jl_array_t*>(partition_vec), gc_partition, i);
   }
-  jl_function_t* delete_partitions_func = JuliaEvaluator::GetFunction(
-      jl_main_module,
-      "orionres_dist_array_delete_partitions");
+  jl_function_t* delete_partitions_func = JuliaEvaluator::GetOrionWorkerFunction(
+      "dist_array_delete_partitions");
   jl_call2(delete_partitions_func, dist_array, partition_vec);
   JL_GC_POP();
 }
@@ -777,8 +749,6 @@ DistArray::ComputeMaxPartitionIdsSpaceTime() {
     }
   }
   meta_.SetMaxPartitionIds(max_space_id, max_time_id);
-  LOG(INFO) << __func__ << " max_space_id = " << max_space_id
-            << " max_time_id = " << max_time_id;
 }
 
 void
@@ -789,7 +759,6 @@ DistArray::ComputeMaxPartitionIds1D() {
     if (max_partition_id < partition_id) max_partition_id = partition_id;
   }
   meta_.SetMaxPartitionIds(max_partition_id);
-  LOG(INFO) << __func__ << " max_partition_id = " << max_partition_id;
 }
 
 }

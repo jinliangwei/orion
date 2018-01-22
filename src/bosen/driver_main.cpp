@@ -28,23 +28,5 @@ main(int argc, char* argv[]) {
 
   orion::bosen::Driver driver(driver_config);
   driver.ConnectToMaster();
-  //auto result_type = orion::bosen::type::PrimitiveType::kFloat64;
-  //driver.ExecuteCodeOnOne(0, "sqrt(2.0)", result_type, &ret);
-  /*driver.CreateDistArray(
-      0,
-      orion::bosen::task::TEXT_FILE,
-      true,
-      false,
-      2,
-      orion::bosen::type::PrimitiveType::kFloat64,
-      //      "file:///home/ubuntu/data/ml-1m/ratings.csv",
-      "hdfs:///data/ml-1m/ratings.csv",
-      -1,
-      orion::bosen::task::EMPTY,
-      orion::bosen::JuliaModule::kMain,
-      "parse_line",
-      nullptr);*/
-
   driver.Stop();
-  //while(1);
 }

@@ -26,14 +26,14 @@ enum class DistArrayPartitionScheme {
   kNaive = 0,
     kSpaceTime = 1,
     k1D = 2,
-    kHash = 3,
-    kRange = 4
+    kHashServer = 3,
+    kHashExecutor = 4,
+    kRange = 5
 };
 
 enum class DistArrayIndexType {
   kNone = 0,
-    kGlobal = 1,
-    kLocal = 2
+    kRange = 1,
 };
 
 enum class ForLoopParallelScheme {

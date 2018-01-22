@@ -124,7 +124,7 @@ function gen_map_function(func_name::Symbol,
     loop_stmt = :(for i = 1:length(keys)
                   key = keys[i]
                   value = values[i]
-                  dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+                  dim_keys = OrionWorker.from_int64_to_keys(key, parent_dims)
                   dim_keys = tuple(dim_keys...)
                   end)
     stmt_array_to_append = loop_stmt.args[2].args
@@ -218,7 +218,7 @@ function gen_map_function(func_name::Symbol,
     current_value_sym = Symbol(current_value_var)
 
     append_key_value_stmts = quote
-        key_int64 = OrionWorker.from_keys_to_int64($current_key_sym, dims)
+        key_int64 = OrionWorker.from_keys_to_int64($current_key_sym, child_dims)
         push!(output_keys, key_int64)
         push!(output_values, $current_value_sym)
     end
@@ -226,7 +226,8 @@ function gen_map_function(func_name::Symbol,
 
     map_func = :(
         function $func_name(
-            dims::Vector{Int64},
+            parent_dims::Vector{Int64},
+            child_dims::Vector{Int64},
             keys::Vector{Int64},
             values::Vector,
             output_value_type::DataType)::Tuple{Vector{Int64}, Vector{output_value_type}}
@@ -383,29 +384,21 @@ function gen_dist_array_write_func_call(dist_array_id::Integer,
 end
 
 
-# this is a very incomplete version, just to make MF and LDA work
 function gen_loop_body_function(func_name::Symbol,
-                                loop_body,
-                                par_for_context::ParForContext,
-                                par_for_scope::ScopeContext,
+                                loop_body::Expr,
+                                iteration_space::Symbol,
+                                iteration_var::Symbol,
+                                inherited_vars_to_mark_global::Set{Symbol},
                                 ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
 
     @assert isa(loop_body, Expr)
     @assert loop_body.head == :block
-    iteration_space = par_for_context.iteration_space
     iteration_space_dist_array = eval(current_module(), iteration_space)
-    iter_space_value_type = iteration_space_dist_array.ValueType
-    iteration_var = par_for_context.iteration_var
+    iter_space_value_type = dist_array_get_value_type(iteration_space_dist_array)
     iteration_var_string = string(iteration_var)
 
-    #
-
-    for (var, var_info) in par_for_scope.inherited_var
-        if var_info.is_assigned_to &&
-            !var_info.is_marked_local &&
-            !var_info.is_marked_global
-            push!(loop_body.args, :(global $var))
-        end
+    for var in inherited_vars_to_mark_global
+        insert!(loop_body.args, 1, :(global $var))
     end
 
     loop_body_func = :(

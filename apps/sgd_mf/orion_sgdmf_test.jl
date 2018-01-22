@@ -7,12 +7,12 @@ Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 # test library path
 Orion.helloworld()
 
-#const master_ip = "127.0.0.1"
-const master_ip = "10.117.1.28"
+const master_ip = "127.0.0.1"
+#const master_ip = "10.117.1.28"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 128
-const num_servers = 8
+const num_executors = 1
+const num_servers = 1
 
 # initialize logging of the runtime library
 Orion.glog_init()
@@ -25,7 +25,7 @@ Orion.init(master_ip, master_port, comm_buff_capacity,
 const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/ml-10M100K/ratings.csv"
 const K = 1000
-const num_iterations = 20
+const num_iterations = 1
 const step_size = 1e-2
 
 @Orion.accumulator line_cnt = 0
@@ -47,8 +47,8 @@ Orion.@share function map_init_param(value::Float32)::Float32
     return value / 10
 end
 
-x_tile_size = 920
-y_tile_size = 33
+x_tile_size = 30000
+y_tile_size = 3000
 
 #x_tile_size = 1000
 #y_tile_size = 500
@@ -98,13 +98,13 @@ W_dist_array_partition_info = Orion.DistArrayPartitionInfo(Orion.DistArrayPartit
                                                            string(W_param_partition_func_name),
                                                            (2,),
                                                            (x_tile_size,),
-                                                           Orion.DistArrayIndexType_local)
+                                                           Orion.DistArrayIndexType_none)
 
 H_dist_array_partition_info = Orion.DistArrayPartitionInfo(Orion.DistArrayPartitionType_1d,
                                                            string(H_param_partition_func_name),
                                                            (2,),
                                                            (y_tile_size,),
-                                                           Orion.DistArrayIndexType_local)
+                                                           Orion.DistArrayIndexType_none)
 
 @Orion.dist_array W = Orion.randn(K, dim_x)
 @Orion.dist_array W = Orion.map(W, map_init_param, map_values = true)

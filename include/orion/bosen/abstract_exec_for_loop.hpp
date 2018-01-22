@@ -76,13 +76,14 @@ class AbstractExecForLoop {
   virtual int32_t GetSuccessorToNotify() = 0;
   virtual uint64_t GetNoticeToSuccessor() = 0;
   virtual void PrepareToExecCurrPartition() = 0;
+  virtual void ClearCurrPartition() = 0;
+
   bool SendGlobalIndexedDistArrays() const { return !global_indexed_dist_arrays_.empty(); }
   void SentAllPrefetchRequests();
   bool HasSentAllPrefetchRequests() const;
   bool HasRecvedAllPrefetches() const;
   bool HasRecvedAllTimePartitionedDistArrays(int32_t time_partition_id) const;
 
-  void ClearForCurrPartition();
   void ComputePrefetchIndinces();
   void ExecuteForLoopPartition();
   void ClearSendBuffer();

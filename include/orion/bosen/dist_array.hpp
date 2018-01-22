@@ -8,9 +8,9 @@
 #include <orion/bosen/julia_module.hpp>
 #include <orion/bosen/blob.hpp>
 #include <orion/bosen/dist_array_meta.hpp>
-#include <orion/bosen/dist_array_access.hpp>
 #include <orion/bosen/send_data_buffer.hpp>
 #include <orion/bosen/peer_recv_buffer.hpp>
+#include <orion/bosen/julia_thread_requester.hpp>
 
 namespace orion {
 namespace bosen {
@@ -58,8 +58,6 @@ class DistArray {
   PartitionMap partitions_;
   std::vector<int64_t> dims_;
   DistArrayMeta meta_;
-  //DistArrayPartitionScheme partition_scheme_;
-  DistArrayAccess access_;
   JuliaThreadRequester *julia_requester_;
   std::vector<jl_value_t*> gc_partitions_;
   AbstractDistArrayPartition *buffer_partition_ {nullptr};
@@ -117,17 +115,11 @@ class DistArray {
   void CheckAndBuildIndex();
 
   void GetMaxPartitionIds(std::vector<int32_t>* ids);
-
-  DistArrayAccess *GetAccessPtr() { return &access_; }
-  void SetAccessPartition(int32_t partition_id);
-  void SetAccessPartition(AbstractDistArrayPartition *partition);
-  void SetBufferAccessPartition();
-  void ResetAccessPartition();
-  AbstractDistArrayPartition* GetAccessPartition();
   void DeletePartition(int32_t partition_id);
   void DeletePartition(AbstractDistArrayPartition *partition);
 
   void CreateDistArrayBuffer(const std::string &serialized_value_type);
+  AbstractDistArrayPartition* GetBufferPartition();
   void GcPartitions();
  private:
   DISALLOW_COPY(DistArray);

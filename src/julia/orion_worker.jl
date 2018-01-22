@@ -1,8 +1,16 @@
 module OrionWorker
 
+include("src/julia/dist_array_accessor.jl")
 include("src/julia/dist_array.jl")
 include("src/julia/constants.jl")
 include("src/julia/dist_array_buffer.jl")
+
+function worker_init(_num_executors::Integer,
+                     _num_servers::Integer)
+    global const num_executors = _num_executors
+    global const num_servers = _num_servers
+    load_constants()
+end
 
 function helloworld()
     ccall((:orion_helloworld, lib_path), Void, ())
@@ -12,50 +20,30 @@ end
 
 using OrionWorker
 
-function orionres_define_dist_array(ValueType::DataType,
+function orionres_define_dist_array(id::Int32,
+                                    ValueType::DataType,
                                     symbol::AbstractString,
                                     dims::Vector{Int64},
                                     is_dense::Bool,
-                                    access_ptr,
-                                    is_buffer::Bool)
-    dist_array = OrionWorker.create_dist_array_for_access(ValueType,
-                                                          symbol,
-                                                          dims,
-                                                          is_dense,
-                                                          access_ptr,
-                                                          is_buffer)
+                                    is_buffer::Bool,
+                                    init_value)
+    dist_array = OrionWorker.create_dist_array_on_worker(id,
+                                                         ValueType,
+                                                         symbol,
+                                                         dims,
+                                                         is_dense,
+                                                         is_buffer,
+                                                         init_value)
     dist_array_symbol = Symbol(symbol)
     eval(:(global $dist_array_symbol = $dist_array))
 end
 
 
-function orionres_set_dist_array_dims(dist_array::DistArray,
+function orionres_set_dist_array_dims(dist_array::OrionWorker.AbstractDistArray,
                                       dims::Vector{Int64})
     dist_array.dims = copy(dims)
 end
 
-function orionres_get_dist_array_value_type(dist_array::DistArray)::DataType
-    return dist_array.ValueType
-end
-
-function orionres_dist_array_create_and_append_partition(dist_array::DistArray)::Vector
-    partition = Vector{dist_array.ValueType}()
-    push!(dist_array.partitions, partition)
-    return partition
-end
-
-function orionres_dist_array_delete_partitions(dist_array::DistArray,
-                                               partitions::Vector{Any})
-    index_vec = Vector{Int64}()
-    for partition_idx in eachindex(dist_array.partitions)
-        partition = dist_array.partitions[partition_idx]
-        if partition in partitions
-            push!(index_vec, partition_idx)
-        end
-    end
-    deleteat!(dist_array.partitions, index_vec)
-end
-
-function orionres_dist_array_clear_partition(partition::Vector)
-    resize!(partition, 0)
+function orionres_get_dist_array_value_type{T, N}(dist_array::OrionWorker.AbstractDistArray{T, N})::DataType
+    return T
 end

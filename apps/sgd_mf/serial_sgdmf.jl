@@ -1,6 +1,6 @@
-#const data_path = "/users/jinlianw/ratings.csv"
+const data_path = "/users/jinlianw/ratings.csv"
 #const data_path = "/home/ubuntu/data/ml-1m/ratings.csv"
-const data_path = "/proj/BigLearning/jinlianw/data/netflix.csv"
+#const data_path = "/proj/BigLearning/jinlianw/data/netflix.csv"
 const K = 100
 const num_iterations = 1
 const step_size = 0.001
@@ -50,7 +50,7 @@ W = rand(K, dim_x)
 H = rand(K, dim_y)
 
 for i = 1:num_iterations
-@time for rating in ratings
+    @time for rating in ratings
 	x_idx = rating[1] + 1
 	y_idx = rating[2] + 1
 	rv = rating[3]

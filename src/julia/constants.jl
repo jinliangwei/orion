@@ -24,7 +24,6 @@ function load_module_int32()
 end
 
 function load_type_int32()
-    println(lib_path)
     ptr_val = cglobal((:ORION_TYPE_VOID, lib_path), Int32)
     global const type_void_int32 = unsafe_load(ptr_val)
     ptr_val = cglobal((:ORION_TYPE_INT8, lib_path), Int32)
@@ -89,8 +88,10 @@ function load_dist_array_partition_scheme_int32()
     global const dist_array_partition_scheme_space_time = unsafe_load(ptr_val)
     ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_1D, lib_path), Int32)
     global const dist_array_partition_scheme_1d = unsafe_load(ptr_val)
-    ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_HASH, lib_path), Int32)
-    global const dist_array_partition_scheme_hash = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_HASH_SERVER, lib_path), Int32)
+    global const dist_array_partition_scheme_hash_server = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_HASH_EXECUTOR, lib_path), Int32)
+    global const dist_array_partition_scheme_hash_executor = unsafe_load(ptr_val)
     ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_RANGE, lib_path), Int32)
     global const dist_array_partition_scheme_range = unsafe_load(ptr_val)
 end
@@ -98,10 +99,8 @@ end
 function load_dist_array_index_type_int32()
     ptr_val = cglobal((:ORION_DIST_ARRAY_INDEX_TYPE_NONE, lib_path), Int32)
     global const dist_array_index_type_none = unsafe_load(ptr_val)
-    ptr_val = cglobal((:ORION_DIST_ARRAY_INDEX_TYPE_GLOBAL, lib_path), Int32)
-    global const dist_array_index_type_global = unsafe_load(ptr_val)
-    ptr_val = cglobal((:ORION_DIST_ARRAY_INDEX_TYPE_LOCAL, lib_path), Int32)
-    global const dist_array_index_type_local = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_INDEX_TYPE_RANGE, lib_path), Int32)
+    global const dist_array_index_type_range = unsafe_load(ptr_val)
 end
 
 function load_for_loop_parallel_scheme_int32()
@@ -164,8 +163,10 @@ function dist_array_partition_type_to_int32(partition_type::DistArrayPartitionTy
         return dist_array_partition_scheme_space_time
     elseif partition_type == DistArrayPartitionType_range
         return dist_array_partition_scheme_range
-    elseif partition_type == DistArrayPartitionType_hash
-        return dist_array_partition_scheme_hash
+    elseif partition_type == DistArrayPartitionType_hash_server
+        return dist_array_partition_scheme_hash_server
+    elseif partition_type == DistArrayPartitionType_hash_executor
+        return dist_array_partition_scheme_hash_executor
     else
         error("unknown ", partition_type)
     end
@@ -175,10 +176,8 @@ end
 function dist_array_index_type_to_int32(index_type::DistArrayIndexType)
     if index_type == DistArrayIndexType_none
         return dist_array_index_type_none
-    elseif index_type == DistArrayIndexType_global
-        return dist_array_index_type_global
-    elseif index_type == DistArrayIndexType_local
-        return dist_array_index_type_local
+    elseif index_type == DistArrayIndexType_range
+        return dist_array_index_type_range
     else
         error("unknown ", index_type)
     end

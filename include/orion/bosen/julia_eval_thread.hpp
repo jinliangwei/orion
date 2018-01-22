@@ -32,6 +32,8 @@ class JuliaEvalThread {
   epoll_event es_[kNumEvents];
 
   const std::string kOrionHome;
+  const size_t kNumServers;
+  const size_t kNumExecutors;
   JuliaThreadRequester julia_requester_;
 
  private:
@@ -61,10 +63,14 @@ class JuliaEvalThread {
 
  public:
   JuliaEvalThread(size_t send_buff_capacity,
-                  const std::string &orion_home):
+                  const std::string &orion_home,
+                  size_t num_servers,
+                  size_t num_executors):
       send_mem_(send_buff_capacity),
       send_buff_(send_mem_.data(), send_buff_capacity),
       kOrionHome(orion_home),
+      kNumServers(num_servers),
+      kNumExecutors(num_executors),
       julia_requester_(write_pipe_,
                        send_mem_,
                        send_buff_,
@@ -105,7 +111,8 @@ class JuliaEvalThread {
   }
 
   void operator() () {
-    JuliaEvaluator::Init(kOrionHome);
+    JuliaEvaluator::Init(kOrionHome, kNumServers,
+                         kNumExecutors);
     while (true) {
       std::unique_lock<std::mutex> lock(mtx_);
       cv_.wait(lock, [this]{ return this->stop_ || (this->task_queue_.size() > 0); });

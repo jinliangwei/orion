@@ -10,7 +10,9 @@ std::string JuliaEvaluator::lib_path_;
 std::string JuliaEvaluator::orion_home_;
 
 void
-JuliaEvaluator::Init(const std::string &orion_home) {
+JuliaEvaluator::Init(const std::string &orion_home,
+                     size_t num_servers,
+                     size_t num_executors) {
   jl_init(NULL);
   orion_home_ = orion_home;
   lib_path_ = orion_home + "/lib/liborion.so";
@@ -21,14 +23,18 @@ JuliaEvaluator::Init(const std::string &orion_home) {
   SetOrionWorkerModule(orion_worker_module_);
 
   jl_value_t *lib_path_str = nullptr;
+  jl_value_t *num_servers_jl = nullptr;
+  jl_value_t *num_executors_jl = nullptr;
   JL_GC_PUSH1(&lib_path_str);
   lib_path_str = jl_cstr_to_string(lib_path_.c_str());
   jl_function_t *set_lib_path_func
       = GetFunction(orion_worker_module_, "set_lib_path");
   jl_call1(set_lib_path_func, lib_path_str);
-  jl_function_t *helloworld_func
-      = GetFunction(orion_worker_module_, "helloworld");
-  jl_call0(helloworld_func);
+  jl_function_t *worker_init_func
+      = GetFunction(orion_worker_module_, "worker_init");
+  num_servers_jl = jl_box_uint64(num_servers);
+  num_executors_jl = jl_box_uint64(num_executors);
+  jl_call2(worker_init_func, num_servers_jl, num_executors_jl);
   JL_GC_POP();
 }
 
@@ -219,28 +225,12 @@ JuliaEvaluator::EvalExpr(const std::string &serialized_expr,
       = GetFunction(jl_base_module, "deserialize");
   CHECK(deserialize_func != nullptr);
   expr = jl_call1(deserialize_func, serialized_expr_buff);
-
-  jl_value_t* exception_jl = jl_exception_occurred();
-  if (exception_jl) {
-    jl_function_t *show_error_func
-        = GetFunction(jl_base_module, "showerror");
-    jl_call2(show_error_func, jl_stdout_obj(), exception_jl);
-    LOG(FATAL) << "julia exception occurs: " << jl_typeof_str(exception_jl)
-               << " " << jl_typename_str(exception_jl);
-  }
-  CHECK(!jl_exception_occurred());
-
-  if (jl_exception_occurred())
-        LOG(INFO) << "julia exception occurs: " << jl_typeof_str(jl_exception_occurred());
-  jl_function_t *eval_func
-      = GetFunction(jl_core_module, "eval");
-  CHECK(eval_func != nullptr);
-
+  AbortIfException();
+  jl_function_t *eval_func = GetFunction(jl_core_module, "eval");
   jl_module_t *jl_module = GetJlModule(module);
   CHECK(jl_module != nullptr);
   ret = jl_call2(eval_func, reinterpret_cast<jl_value_t*>(jl_module), expr);
-  if (jl_exception_occurred())
-    LOG(INFO) << "julia exception occurs: " << jl_typeof_str(jl_exception_occurred());
+  AbortIfException();
   buff = jl_call0(io_buffer_func);
 
   jl_function_t *serialize_func
@@ -258,6 +248,13 @@ JuliaEvaluator::EvalExpr(const std::string &serialized_expr,
   memcpy(result_buff->data(), array_bytes, result_array_length);
   JL_GC_POP();
   AbortIfException();
+}
+
+jl_function_t*
+JuliaEvaluator::GetOrionWorkerFunction(const char* func_name) {
+  auto* func = jl_get_function(orion_worker_module_, func_name);
+  CHECK(func != nullptr) << "func_name = " << func_name;
+  return func;
 }
 
 jl_function_t*
@@ -508,42 +505,48 @@ JuliaEvaluator::ParseStringValueOnlyWithLineNumber(
 
 void
 JuliaEvaluator::DefineDistArray(
+    int32_t id,
     const std::string &symbol,
     const std::string &serialized_value_type,
     const std::vector<int64_t> &dims,
     bool is_dense,
-    void* access_ptr,
-    bool is_buffer) {
+    bool is_buffer,
+    const std::vector<uint8_t> &serialized_init_value) {
+
   jl_value_t **jl_values;
-  JL_GC_PUSHARGS(jl_values, 10);
+  JL_GC_PUSHARGS(jl_values, 13);
   jl_value_t* &symbol_jl = jl_values[0];
   jl_value_t* &value_type_jl = jl_values[1];
   jl_value_t* &dims_vec_jl = jl_values[2];
   jl_value_t* &is_dense_jl = jl_values[3];
-  jl_value_t* &access_ptr_jl = jl_values[4];
-  jl_value_t* &dims_vec_array_type_jl = jl_values[5];
-  jl_value_t* &serialized_value_type_buff = jl_values[6];
-  jl_value_t* &serialized_value_type_array = jl_values[7];
-  jl_value_t* &serialized_value_type_array_type = jl_values[8];
-  jl_value_t* &is_buffer_jl = jl_values[9];
+  jl_value_t* &dims_vec_array_type_jl = jl_values[4];
+  jl_value_t* &serialized_value_type_buff = jl_values[5];
+  jl_value_t* &serialized_value_type_array = jl_values[6];
+  jl_value_t* &serialized_value_type_array_type = jl_values[7];
+  jl_value_t* &is_buffer_jl = jl_values[8];
+  jl_value_t* &serialized_init_value_buff = jl_values[9];
+  jl_value_t* &serialized_init_value_array = jl_values[10];
+  jl_value_t* &init_value_jl = jl_values[11];
+  jl_value_t* &id_jl = jl_values[12];
 
   serialized_value_type_array_type = jl_apply_array_type(jl_uint8_type, 1);
   std::vector<uint8_t> temp_serialized_value_type(serialized_value_type.size());
-  memcpy(temp_serialized_value_type.data(), serialized_value_type.data(),
+  memcpy(temp_serialized_value_type.data(),
+         serialized_value_type.data(),
          serialized_value_type.size());
   serialized_value_type_array = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       serialized_value_type_array_type,
       temp_serialized_value_type.data(),
       temp_serialized_value_type.size(), 0));
 
-  jl_function_t *io_buffer_func
-      = GetFunction(jl_base_module, "IOBuffer");
+  jl_function_t *io_buffer_func = GetFunction(jl_base_module, "IOBuffer");
   CHECK(io_buffer_func != nullptr);
   serialized_value_type_buff = jl_call1(io_buffer_func,
                                         reinterpret_cast<jl_value_t*>(serialized_value_type_array));
   jl_function_t *deserialize_func
       = GetFunction(jl_base_module, "deserialize");
   value_type_jl = jl_call1(deserialize_func, serialized_value_type_buff);
+  AbortIfException();
 
   symbol_jl = jl_cstr_to_string(symbol.c_str());
   dims_vec_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
@@ -552,20 +555,38 @@ JuliaEvaluator::DefineDistArray(
       jl_ptr_to_array_1d(dims_vec_array_type_jl,
                          tmp_dims.data(), tmp_dims.size(), 0));
   is_dense_jl = jl_box_bool(is_dense);
-  access_ptr_jl = jl_box_voidpointer(access_ptr);
+
+  if (is_buffer) {
+    auto temp_serialized_init_value = serialized_init_value;
+    serialized_init_value_array = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
+        serialized_value_type_array_type,
+        temp_serialized_init_value.data(),
+        temp_serialized_init_value.size(), 0));
+    serialized_init_value_buff = jl_call1(io_buffer_func,
+                                          reinterpret_cast<jl_value_t*>(serialized_init_value_array));
+    init_value_jl = jl_call1(deserialize_func, serialized_init_value_buff);
+  } else {
+    init_value_jl = jl_nothing;
+  }
+  AbortIfException();
+  LOG(INFO) << "orionres_define_dist_array";
   is_buffer_jl = jl_box_bool(is_buffer);
+  id_jl = jl_box_int32(id);
   jl_function_t *create_dist_array_func = GetFunction(
       jl_main_module, "orionres_define_dist_array");
-  jl_value_t* args[6];
-  args[0] = value_type_jl;
-  args[1] = symbol_jl;
-  args[2] = dims_vec_jl;
-  args[3] = is_dense_jl;
-  args[4] = access_ptr_jl;
+  jl_value_t* args[7];
+  args[0] = id_jl;
+  args[1] = value_type_jl;
+  args[2] = symbol_jl;
+  args[3] = dims_vec_jl;
+  args[4] = is_dense_jl;
   args[5] = is_buffer_jl;
-  jl_call(create_dist_array_func, args, 6);
+  args[6] = init_value_jl;
+
+  jl_call(create_dist_array_func, args, 7);
   JL_GC_POP();
   AbortIfException();
+  LOG(INFO) << __func__ << " done!";
 }
 
 void
@@ -615,7 +636,8 @@ JuliaEvaluator::RandUniform(
 void
 JuliaEvaluator::RunMapGeneric(
     DistArrayMapType map_type,
-    std::vector<int64_t> dims,
+    const std::vector<int64_t> &parent_dims,
+    const std::vector<int64_t> &child_dims,
     size_t num_keys,
     int64_t *keys,
     jl_value_t* input_values,
@@ -630,7 +652,8 @@ JuliaEvaluator::RunMapGeneric(
       break;
     case DistArrayMapType::kMap:
       {
-        RunMap(dims,
+        RunMap(parent_dims,
+               child_dims,
                num_keys,
                keys,
                input_values,
@@ -644,7 +667,7 @@ JuliaEvaluator::RunMapGeneric(
       }
     case DistArrayMapType::kMapFixedKeys:
       {
-        RunMapFixedKeys(dims,
+        RunMapFixedKeys(parent_dims,
                         num_keys,
                         keys,
                         input_values,
@@ -658,7 +681,7 @@ JuliaEvaluator::RunMapGeneric(
       }
     case DistArrayMapType::kMapValues:
       {
-        RunMapValues(dims,
+        RunMapValues(child_dims,
                      num_keys,
                      input_values,
                      mapper_func_module,
@@ -671,7 +694,7 @@ JuliaEvaluator::RunMapGeneric(
       }
     case DistArrayMapType::kMapValuesNewKeys:
       {
-        RunMapValuesNewKeys(dims,
+        RunMapValuesNewKeys(child_dims,
                             num_keys,
                             input_values,
                             mapper_func_module,
@@ -689,7 +712,8 @@ JuliaEvaluator::RunMapGeneric(
 
 void
 JuliaEvaluator::RunMap(
-    std::vector<int64_t> dims,
+    const std::vector<int64_t> &parent_dims,
+    const std::vector<int64_t> &child_dims,
     size_t num_keys,
     int64_t *keys,
     jl_value_t *input_values,
@@ -701,28 +725,36 @@ JuliaEvaluator::RunMap(
 
   jl_value_t *key_array_type = nullptr,
                *key_array_jl = nullptr,
-               *dim_array_jl = nullptr,
+         *parent_dim_array_jl = nullptr,
+         *child_dim_array_jl = nullptr,
             *output_tuple_jl = nullptr;
 
-  JL_GC_PUSH4(&key_array_type,
+  JL_GC_PUSH5(&key_array_type,
               &key_array_jl,
-              &dim_array_jl,
+              &parent_dim_array_jl,
+              &child_dim_array_jl,
               &output_tuple_jl);
 
+  auto temp_parent_dims = parent_dims;
+  auto temp_child_dims = child_dims;
+
   key_array_type = jl_apply_array_type(jl_int64_type, 1);
-  dim_array_jl = reinterpret_cast<jl_value_t*>(
-      jl_ptr_to_array_1d(key_array_type, dims.data(), dims.size(), 0));
+  parent_dim_array_jl = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(key_array_type, temp_parent_dims.data(), temp_parent_dims.size(), 0));
+  child_dim_array_jl = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(key_array_type, temp_child_dims.data(), temp_child_dims.size(), 0));
   key_array_jl = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(key_array_type, keys, num_keys, 0));
   jl_function_t *mapper_func = GetFunction(
       GetJlModule(mapper_func_module), mapper_func_name.c_str());
   {
-    jl_value_t *args[4];
-    args[0] = dim_array_jl;
-    args[1] = key_array_jl;
-    args[2] = input_values;
-    args[3] = output_value_type;
-    output_tuple_jl = jl_call(mapper_func, args, 4);
+    jl_value_t *args[5];
+    args[0] = parent_dim_array_jl;
+    args[1] = child_dim_array_jl;
+    args[2] = key_array_jl;
+    args[3] = input_values;
+    args[4] = output_value_type;
+    output_tuple_jl = jl_call(mapper_func, args, 5);
   }
 
   jl_value_t *output_key_array_jl = jl_get_nth_field(output_tuple_jl, 0);
@@ -741,7 +773,7 @@ JuliaEvaluator::RunMap(
 
 void
 JuliaEvaluator::RunMapFixedKeys(
-    std::vector<int64_t> dims,
+    const std::vector<int64_t> &parent_dims,
     size_t num_keys,
     int64_t *keys,
     jl_value_t *input_values,
@@ -758,10 +790,10 @@ JuliaEvaluator::RunMapFixedKeys(
               &key_array_jl,
               &dim_array_jl,
               &output_tuple_jl);
-
+  auto temp_parent_dims = parent_dims;
   key_array_type = jl_apply_array_type(jl_int64_type, 1);
   dim_array_jl = reinterpret_cast<jl_value_t*>(
-      jl_ptr_to_array_1d(key_array_type, dims.data(), dims.size(), 0));
+      jl_ptr_to_array_1d(key_array_type, temp_parent_dims.data(), temp_parent_dims.size(), 0));
   key_array_jl = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(key_array_type, keys, num_keys, 0));
   jl_function_t *mapper_func = GetFunction(
@@ -783,30 +815,27 @@ JuliaEvaluator::RunMapFixedKeys(
 
 void
 JuliaEvaluator::RunMapValues(
-    std::vector<int64_t> dims,
-      size_t num_values,
-      jl_value_t *input_values,
-      JuliaModule mapper_func_module,
-      const std::string &mapper_func_name,
-      jl_value_t *output_value_type,
-      jl_value_t **output_values_ptr) {
+    const std::vector<int64_t> &child_dims,
+    size_t num_values,
+    jl_value_t *input_values,
+    JuliaModule mapper_func_module,
+    const std::string &mapper_func_name,
+    jl_value_t *output_value_type,
+    jl_value_t **output_values_ptr) {
   jl_value_t *key_array_type = nullptr,
             *output_tuple_jl = nullptr,
                 *dim_array_jl = nullptr;
   JL_GC_PUSH3(&key_array_type,
               &output_tuple_jl,
               &dim_array_jl);
-
+  auto temp_child_dims = child_dims;
   key_array_type = jl_apply_array_type(jl_int64_type, 1);
   dim_array_jl = reinterpret_cast<jl_value_t*>(
-      jl_ptr_to_array_1d(key_array_type, dims.data(), dims.size(), 0));
+      jl_ptr_to_array_1d(key_array_type, temp_child_dims.data(), temp_child_dims.size(), 0));
   jl_function_t *mapper_func = GetFunction(
       GetJlModule(mapper_func_module), mapper_func_name.c_str());
   output_tuple_jl = jl_call3(mapper_func, dim_array_jl, input_values,
                              reinterpret_cast<jl_value_t*>(output_value_type));
-  LOG(INFO) << __func__
-            << " map_func_name = " << mapper_func_name
-            << " output_tuple_jl = " << (void*) output_tuple_jl;
   CHECK(jl_is_tuple(output_tuple_jl));
 
   *output_values_ptr = jl_get_nth_field(output_tuple_jl, 1);
@@ -817,14 +846,14 @@ JuliaEvaluator::RunMapValues(
 
 void
 JuliaEvaluator::RunMapValuesNewKeys(
-      std::vector<int64_t> dims,
-      size_t num_values,
-      jl_value_t *input_values,
-      JuliaModule mapper_func_module,
-      const std::string &mapper_func_name,
-      std::vector<int64_t>* output_keys,
-      jl_value_t *output_value_type,
-      jl_value_t **output_values_ptr) {
+    const std::vector<int64_t> &child_dims,
+    size_t num_values,
+    jl_value_t *input_values,
+    JuliaModule mapper_func_module,
+    const std::string &mapper_func_name,
+    std::vector<int64_t>* output_keys,
+    jl_value_t *output_value_type,
+    jl_value_t **output_values_ptr) {
 
   jl_value_t *key_array_type = nullptr,
                *dim_array_jl = nullptr,
@@ -836,11 +865,11 @@ JuliaEvaluator::RunMapValuesNewKeys(
               &dim_array_jl,
               &output_key_array_jl,
               &output_tuple_jl);
-
+  auto temp_child_dims = child_dims;
   key_array_type = jl_apply_array_type(jl_int64_type, 1);
 
   dim_array_jl = reinterpret_cast<jl_value_t*>(
-      jl_ptr_to_array_1d(key_array_type, dims.data(), dims.size(), 0));
+      jl_ptr_to_array_1d(key_array_type, temp_child_dims.data(), temp_child_dims.size(), 0));
 
   jl_function_t *mapper_func = GetFunction(
       GetJlModule(mapper_func_module), mapper_func_name.c_str());
@@ -974,11 +1003,6 @@ JuliaEvaluator::CombineVarValue(
   original_value_jl = jl_get_global(jl_main_module, symbol_jl);
   jl_function_t *combiner_func = GetFunction(jl_base_module, combiner.c_str());
   new_value_jl = jl_call2(combiner_func, original_value_jl, value_to_combine_jl);
-  LOG(INFO) << __func__
-            << " symbol = " << symbol
-            << " original_value = " << jl_unbox_int64(original_value_jl)
-            << " to_combine = " << jl_unbox_int64(value_to_combine_jl)
-            << " new_value = " << jl_unbox_int64(new_value_jl);
   jl_set_global(jl_main_module, symbol_jl, new_value_jl);
   JL_GC_POP();
   AbortIfException();

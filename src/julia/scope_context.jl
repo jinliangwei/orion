@@ -18,7 +18,6 @@ function string(info::VarInfo)
     str *= "[is_mutated=" * string(info.is_mutated) * "], "
     str *= "[is_marked_local=" * string(info.is_marked_local) * "]}"
     str *= "[is_marked_global=" * string(info.is_marked_global) * "]}"
-#    println(str)
 end
 
 @enum DistArrayAccessSubscript_value DistArrayAccessSubscript_value_any =
@@ -41,22 +40,6 @@ type DistArrayAccess
         new(dist_array,
             Vector{DistArrayAccessSubscript}(),
             is_read)
-end
-
-type ParForContext
-    iteration_var::Symbol
-    iteration_space::Symbol
-    loop_stmt::Expr
-    dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}}
-    is_ordered::Bool
-    ParForContext(iteration_var::Symbol,
-                  iteration_space::Symbol,
-                  loop_stmt,
-                  is_ordered::Bool) = new(iteration_var,
-                                          iteration_space,
-                                          loop_stmt,
-                                          Dict{Symbol, Vector{DistArrayAccess}}(),
-                                          is_ordered)
 end
 
 type AccumulatorInfo
@@ -103,18 +86,6 @@ function print(scope_context::ScopeContext, indent = 0)
             println(indent_str * (" " ^ 2), "...")
             print(scope, indent + 2)
             println(indent_str * (" " ^ 2), "...")
-        end
-    end
-end
-
-function print(par_for_context::ParForContext, indent = 0)
-    indent_str = " " ^ indent
-    println(indent_str, "iteration_space: ", par_for_context.iteration_space)
-    println(indent_str, "iteration_var: ", par_for_context.iteration_var)
-    for da_access_vec in values(par_for_context.dist_array_access_dict)
-        for da_access in da_access_vec
-            println(indent_str, "dist_array_access: (", da_access.dist_array, " subscripts: ",
-                    da_access.subscripts, " is_read: ", da_access.is_read, ")")
         end
     end
 end

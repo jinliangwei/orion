@@ -211,7 +211,7 @@ MasterThread::~MasterThread() { }
 
 void
 MasterThread::operator() () {
-  JuliaEvaluator::Init(kOrionHome);
+  JuliaEvaluator::Init(kOrionHome, kNumServers, kNumExecutors);
 
   InitListener();
   listen_poll_conn_ = {&listen_, PollConn::ConnType::listen};

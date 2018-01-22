@@ -25,57 +25,50 @@ macro accumulator(expr::Expr)
     return ret
 end
 
-function parallelize_for_loop(loop_stmt, is_ordered::Bool)
+function parallelize_for_loop(loop_stmt::Expr, is_ordered::Bool)
+    println("parallelize_for loop")
     @assert is_for_loop(loop_stmt)
     iteration_var = for_get_iteration_var(loop_stmt)
     iteration_space = for_get_iteration_space(loop_stmt)
 
     @assert isa(iteration_space, Symbol)
-    println(iteration_space)
     @assert isdefined(current_module(), iteration_space)
     @assert isa(eval(current_module(), iteration_space), DistArray)
 
-    par_for_context = ParForContext(iteration_var,
-                                    iteration_space,
-                                    loop_stmt,
-                                    is_ordered)
-
+    # find variables that need to be broadcast and marked global
     @time scope_context = get_scope_context!(nothing, loop_stmt)
+    bc_vars = get_vars_to_broadcast(scope_context)
 
-    @time (flow_graph, flow_graph_context, ssa_context) = flow_analysis(loop_stmt)
-    parallelized_loop = gen_parallelized_loop(loop_stmt, scope_context, par_for_context,
-                                             flow_graph,
-                                             flow_graph_context, ssa_context)
-    println(parallelized_loop)
-    return parallelized_loop
-end
+    loop_body = for_get_loop_body(loop_stmt)
+    @time (flow_graph, _, ssa_context) = flow_analysis(loop_stmt)
 
-function gen_parallelized_loop(expr::Expr,
-                              par_for_scope::ScopeContext,
-                              par_for_context::ParForContext,
-                              flow_graph::BasicBlock,
-                              flow_graph_context::FlowGraphContext,
-                              ssa_context::SsaContext)
+    inherited_var = scope_context.inherited_var
+    inherited_vars_to_mark_global = Set{Symbol}()
+    for (var, var_info) in inherited_var
+        if var_info.is_assigned_to &&
+            !var_info.is_marked_local &&
+            !var_info.is_marked_global
+            push!(inherited_vars_to_mark_global, var)
+        end
+    end
+
+
     parallelized_loop = quote end
-    bc_vars = get_vars_to_broadcast(par_for_scope)
     define_dynamic_bc_vars_stmt = :(Orion.define_vars($bc_vars))
     push!(parallelized_loop.args, define_dynamic_bc_vars_stmt)
-    par_for_context.dist_array_access_dict =
-        get_dist_array_access(flow_graph, par_for_context.iteration_var, ssa_context)
-    println(par_for_context.dist_array_access_dict)
-    exec_loop_stmts = static_parallelize(par_for_context, par_for_scope, ssa_context, flow_graph)
+    exec_loop_stmts = static_parallelize(iteration_space,
+                                         iteration_var,
+                                         inherited_vars_to_mark_global,
+                                         loop_body,
+                                         is_ordered,
+                                         ssa_context.ssa_defs,
+                                         flow_graph)
 
     if exec_loop_stmts == nothing
         error("loop not parallelizable")
     end
     push!(parallelized_loop.args, exec_loop_stmts)
     return parallelized_loop
-end
-
-macro objective(expr::Expr)
-end
-
-macro evaluate(args...)
 end
 
 macro dist_array(expr::Expr)

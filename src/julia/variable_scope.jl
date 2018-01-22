@@ -116,7 +116,7 @@ function add_local_var!(scope_context::ScopeContext,
     end
 end
 
-function get_vars_to_broadcast(scope_context::ScopeContext)
+function get_vars_to_broadcast(scope_context::ScopeContext)::Set{Symbol}
     bc_vars = Set{Symbol}()
     accumulator_vars = Set{Symbol}()
     for (var, info) in scope_context.inherited_var

@@ -50,6 +50,7 @@ class ExecForLoopSpaceTimeOrdered : public AbstractExecForLoop {
   uint64_t GetNoticeToSuccessor() {
     return (static_cast<uint64_t>(clock_) << 32) || space_sub_clock_; }
   void PrepareToExecCurrPartition();
+  void ClearCurrPartition();
 
  private:
   void ComputePartitionIdsAndFindPartitionToExecute();

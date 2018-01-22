@@ -30,6 +30,8 @@ class AbstractDistArrayPartition {
   std::vector<char> char_buff_;
   std::vector<int64_t> key_buff_;
   int64_t key_start_ { -1 }; // used (set to nonnegative when a dense index is built)
+  bool sorted_ { false };
+
  public:
   AbstractDistArrayPartition(DistArray* dist_array,
                              const Config &config,
@@ -37,7 +39,6 @@ class AbstractDistArrayPartition {
                              JuliaThreadRequester *julia_requester);
   virtual ~AbstractDistArrayPartition() { }
 
-  bool IsGlobalIndexed();
   bool LoadTextFile(const std::string &path, int32_t partition_id);
   void ParseText(Blob *max_key, size_t line_num_start);
   size_t CountNumLines() const;
@@ -56,23 +57,12 @@ class AbstractDistArrayPartition {
                                RangeQueryKeyDistArrayMap *range_key_vec_map);
   void Execute(const std::string &loop_batch_func_name);
 
+  virtual void CreateAccessor() = 0;
+  virtual void ClearAccessor() = 0;
+  virtual void CreateCacheAccessor() = 0;
+  virtual void CreateBufferAccessor() = 0;
+  virtual void ClearCacheOrBufferAccessor() = 0;
   virtual void BuildKeyValueBuffersFromSparseIndex() = 0;
-
-  // user creates buff
-  virtual void ReadRangeDense(int64_t key_begin, size_t num_elements, jl_value_t* buff) = 0;
-  // I create buff
-  virtual void ReadRangeSparse(int64_t key_begin, size_t num_elements,
-                               jl_value_t** key_buff, jl_value_t** value_buff) = 0;
-  // user creates buff
-  virtual void ReadRangeSparseWithInitValue(
-      int64_t key_begin, size_t num_elements,
-      jl_value_t* value_buff) = 0;
-
-  virtual void ReadRangeSparseWithRequest(
-      int64_t key_begin, size_t num_elements,
-      jl_value_t** key_buff, jl_value_t** value_buff) = 0;
-
-  virtual void WriteRange(int64_t key_begin, size_t num_elements, jl_value_t* buff) = 0;
   virtual void BuildIndex() = 0;
 
   virtual SendDataBuffer Serialize() = 0;

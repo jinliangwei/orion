@@ -19,11 +19,6 @@ AbstractDistArrayPartition::AbstractDistArrayPartition(
     dist_array_(dist_array),
     julia_requester_(julia_requester) { }
 
-bool
-AbstractDistArrayPartition::IsGlobalIndexed() {
-  return dist_array_->GetMeta().GetIndexType() == DistArrayIndexType::kGlobal;
-}
-
 const std::string &
 AbstractDistArrayPartition::GetDistArraySymbol() {
   return dist_array_->GetMeta().GetSymbol();
@@ -106,9 +101,9 @@ AbstractDistArrayPartition::ParseText(Blob *max_key,
                                                              &value);
           key_buff_.push_back(line_number);
           AppendJuliaValue(value);
+          line = strtok(nullptr, "\n");
+          line_number++;
         }
-         line = strtok(nullptr, "\n");
-        line_number++;
       }
       break;
     case DistArrayMapType::kMapValues:
@@ -124,8 +119,8 @@ AbstractDistArrayPartition::ParseText(Blob *max_key,
             AppendJuliaValueArray(value);
           else
             AppendJuliaValue(value);
+          line = strtok(nullptr, "\n");
         }
-        line = strtok(nullptr, "\n");
       }
       break;
     case DistArrayMapType::kMapValuesNewKeys:
@@ -159,12 +154,23 @@ AbstractDistArrayPartition::ParseText(Blob *max_key,
             *(reinterpret_cast<int64_t*>(max_key->data()) + i) = std::max(
                 key_ith, *(reinterpret_cast<int64_t*>(max_key->data()) + i));
             i = (i + 1) % num_dims;
-            }
+          }
           line = strtok(nullptr, "\n");
         }
       }
       break;
     case DistArrayMapType::kNoMap:
+      {
+        jl_value_t *string_jl = nullptr;
+        JL_GC_PUSH1(&string_jl);
+        char *line = strtok(char_buff_.data(), "\n");
+        while (line != nullptr) {
+          string_jl = jl_cstr_to_string(line);
+          line = strtok(nullptr, "\n");
+          AppendJuliaValue(value);
+        }
+        JL_GC_POP();
+      }
       break;
     default:
       LOG(FATAL) << "shouldn't happend";
@@ -382,6 +388,7 @@ AbstractDistArrayPartition::Init(int64_t key_begin,
     JuliaEvaluator::RunMapGeneric(
         map_type,
         dims,
+        dims,
         keys_.size(),
         keys_.data(),
         init_values,
@@ -409,7 +416,7 @@ AbstractDistArrayPartition::Map(AbstractDistArrayPartition *child_partition) {
   GetJuliaValueArray(&input_values);
   auto *child_dist_array = child_partition->dist_array_;
   auto &dist_array_meta = child_dist_array->GetMeta();
-  const auto &dims = dist_array_meta.GetDims();
+  const auto &child_dims = dist_array_meta.GetDims();
   auto map_func_module = dist_array_meta.GetMapFuncModule();
   const auto &map_func_name = dist_array_meta.GetMapFuncName();
   const auto &dist_array_sym = dist_array_meta.GetSymbol();
@@ -417,16 +424,18 @@ AbstractDistArrayPartition::Map(AbstractDistArrayPartition *child_partition) {
   JuliaEvaluator::GetDistArrayValueType(dist_array_sym,
                                      reinterpret_cast<jl_datatype_t**>(&dist_array_value_type));
   std::vector<int64_t> output_keys;
+  const auto &parent_dims = GetDims();
   JuliaEvaluator::RunMapGeneric(map_type,
-                             dims,
-                             keys_.size(),
-                             keys_.data(),
-                             init_values,
-                             map_func_module,
-                             map_func_name,
-                             &output_keys,
-                             dist_array_value_type,
-                             &output_values);
+                                parent_dims,
+                                child_dims,
+                                keys_.size(),
+                                keys_.data(),
+                                init_values,
+                                map_func_module,
+                                map_func_name,
+                                &output_keys,
+                                dist_array_value_type,
+                                &output_values);
   child_partition->keys_ = output_keys;
   child_partition->AppendJuliaValueArray(output_values);
   JL_GC_POP();
@@ -565,6 +574,7 @@ AbstractDistArrayPartition::ComputePrefetchIndinces(
 void
 AbstractDistArrayPartition::Execute(
     const std::string &loop_batch_func_name) {
+  LOG(INFO) << __func__ << " " << loop_batch_func_name << " start!";
   jl_value_t *dims_vec_jl = nullptr,
               *keys_vec_jl = nullptr,
            *values_vec_jl = nullptr,
@@ -594,6 +604,7 @@ AbstractDistArrayPartition::Execute(
   jl_call3(exec_loop_func, keys_vec_jl, values_vec_jl, dims_vec_jl);
   JuliaEvaluator::AbortIfException();
   JL_GC_POP();
+  LOG(INFO) << __func__ << " " << loop_batch_func_name << " end!";
 }
 
 }

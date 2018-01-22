@@ -30,6 +30,7 @@
 #include <orion/bosen/abstract_exec_for_loop.hpp>
 #include <orion/bosen/exec_for_loop_1d.hpp>
 #include <orion/bosen/exec_for_loop_space_time_unordered.hpp>
+#include <orion/bosen/worker.h>
 
 namespace orion {
 namespace bosen {
@@ -326,11 +327,14 @@ Executor::Executor(const Config& config,
     thread_pool_(config.kExecutorThreadPoolSize, config.kCommBuffCapacity),
     julia_eval_recv_mem_(kCommBuffCapacity),
     julia_eval_send_mem_(kCommBuffCapacity),
-    julia_eval_thread_(kCommBuffCapacity, config.kOrionHome),
+    julia_eval_thread_(kCommBuffCapacity, config.kOrionHome,
+                       kNumServers, kNumExecutors),
     julia_requester_(julia_eval_thread_.GetJuliaThreadRequester()),
     host_info_(kNumExecutors + config.kNumServers),
     prt_send_mem_(kCommBuffCapacity),
-    prt_recv_mem_(kCommBuffCapacity) { }
+    prt_recv_mem_(kCommBuffCapacity) {
+  set_julia_thread_requester(julia_requester_);
+}
 
 Executor::~Executor() { }
 
@@ -1436,12 +1440,14 @@ Executor::CreateDistArray() {
     else
       return false;
   }
-
+  LOG(INFO) << __func__ << " parent_type = "
+            << static_cast<int32_t>(parent_type);
   switch (parent_type) {
     case DistArrayParentType::kTextFile:
       {
+        LOG(INFO) << __func__ << " before file_path";
         std::string file_path = create_dist_array.file_path();
-
+        LOG(INFO) << __func__ << " file_path = " << file_path;
         auto cpp_func = std::bind(
             &DistArray::LoadPartitionsFromTextFile,
             &dist_array,
@@ -1463,6 +1469,7 @@ Executor::CreateDistArray() {
       break;
     case DistArrayParentType::kInit:
       {
+        LOG(INFO) << __func__ << " scheduling Init";
         dist_array.SetDims(create_dist_array.dims().data(), create_dist_array.num_dims());
         auto cpp_func = std::bind(&DistArray::Init, &dist_array);
         exec_cpp_func_task_.func = cpp_func;
@@ -1552,8 +1559,8 @@ Executor::RepartitionDistArray() {
   auto &meta = dist_array_to_repartition.GetMeta();
   auto orig_partition_scheme = meta.GetPartitionScheme();
 
-  bool from_server = orig_partition_scheme == DistArrayPartitionScheme::kHash;
-  bool to_server = partition_scheme == DistArrayPartitionScheme::kHash;
+  bool from_server = orig_partition_scheme == DistArrayPartitionScheme::kHashServer;
+  bool to_server = partition_scheme == DistArrayPartitionScheme::kHashServer;
 
   repartition_recv_ = true;
   if ((to_server && (!kIsServer || (from_server && kConfig.kNumServers == 1))) ||
@@ -1578,12 +1585,17 @@ Executor::RepartitionDistArray() {
         partition_func_name);
   } else if (partition_scheme == DistArrayPartitionScheme::kRange) {
     LOG(FATAL);
-  } else {
-    CHECK(partition_scheme == DistArrayPartitionScheme::kHash);
+  } else if (partition_scheme == DistArrayPartitionScheme::kHashServer){
     cpp_func = std::bind(
         &DistArray::ComputeHashRepartition,
         &dist_array_to_repartition,
         kConfig.kNumServers);
+  } else {
+    CHECK(partition_scheme == DistArrayPartitionScheme::kHashExecutor);
+    cpp_func = std::bind(
+        &DistArray::ComputeHashRepartition,
+        &dist_array_to_repartition,
+        kConfig.kNumExecutors);
   }
 
   exec_cpp_func_task_.func = cpp_func;
@@ -1599,11 +1611,12 @@ Executor::RepartitionDistArraySerialize(int32_t dist_array_id,
   auto partition_scheme = meta.GetPartitionScheme();
   if ((partition_scheme == DistArrayPartitionScheme::kSpaceTime ||
        partition_scheme == DistArrayPartitionScheme::k1D ||
-       partition_scheme == DistArrayPartitionScheme::kRange) &&
+       partition_scheme == DistArrayPartitionScheme::kRange ||
+       partition_scheme == DistArrayPartitionScheme::kHashExecutor) &&
       (!kIsServer && kNumExecutors == 1)) {
     return false;
   }
-  if ((partition_scheme == DistArrayPartitionScheme::kHash) &&
+  if ((partition_scheme == DistArrayPartitionScheme::kHashServer) &&
       (kIsServer && kNumServers == 1)) {
     return false;
   }
@@ -1626,7 +1639,7 @@ Executor::RepartitionDistArraySend() {
   auto &meta = dist_array_to_repartition.GetMeta();
   auto partition_scheme = meta.GetPartitionScheme();
 
-  bool to_server = partition_scheme == DistArrayPartitionScheme::kHash;
+  bool to_server = partition_scheme == DistArrayPartitionScheme::kHashServer;
   size_t num_receivers = to_server ? kNumServers : kNumExecutors;
   size_t skip_id = num_receivers;
 
@@ -1736,16 +1749,16 @@ Executor::DefineJuliaDistArray() {
 
   auto &meta = dist_array.GetMeta();
   auto &dims = meta.GetDims();
-  void *access_ptr = dist_array.GetAccessPtr();
-
+  const auto &init_value = meta.GetInitValue();
   auto cpp_func = std::bind(
       JuliaEvaluator::DefineDistArray,
+      id,
       symbol,
       serialized_value_type,
       dims,
       is_dense,
-      access_ptr,
-      false);
+      false,
+      init_value);
 
   exec_cpp_func_task_.func = cpp_func;
   exec_cpp_func_task_.label = TaskLabel::kDefineJuliaDistArray;

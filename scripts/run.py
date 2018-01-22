@@ -76,6 +76,10 @@ def get_default_config():
         'name_node' : "hdfs://localhost:9000",
         'hadoop_classpath_file' : None
     }
+    config['googleprof'] = {
+        'master_output_dir' : '/tmp/master.prof',
+        'worker_output_dir' : '/tmp/worker.prof'
+    }
     return config
 
 def get_env_str(pargs):
@@ -186,6 +190,13 @@ if __name__ == "__main__":
           + " " + master_arg_str
         cmd_worker = env_vars_str + " valgrind " + valgrind_arg_str + " " + path_worker \
           + " " + worker_arg_str
+    elif args.profile == "googleprof":
+        cmd_master = env_vars_str + " LD_PRELOAD=" + pargs['googleprof']['profiler_lib'] \
+                     + " CPUPROFILE=" + pargs['googleprof']['master_output_dir'] \
+                     + " " + path_master + " " + master_arg_str
+        cmd_worker = env_vars_str + " LD_PRELOAD=" + pargs['googleprof']['profiler_lib'] \
+                     + " CPUPROFILE=" + pargs['googleprof']['worker_output_dir'] \
+                     + " " + path_worker + " " + worker_arg_str
     else:
         print ("unsupported profile option %s" % args.profile)
         sys.exit(1)
@@ -195,8 +206,8 @@ if __name__ == "__main__":
     else:
         print ("Warning: profiling in cluster mode might not work")
 
-#    print(cmd_master)
-#    print(cmd_worker)
+    print(cmd_master)
+    print(cmd_worker)
 
     master_proc = subprocess.Popen(cmd_master, stdout=subprocess.PIPE, shell=True)
 #    time.sleep(5)
