@@ -878,6 +878,7 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         auto *ack_msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgRepartitionDistArrayAck>(recv_buff);
         num_recved_executor_acks_++;
+        LOG(INFO) << "num_recved_acks = " << num_recved_executor_acks_;
         int dist_array_id = ack_msg->dist_array_id;
         size_t num_dims = ack_msg->num_dims;
         int32_t *max_ids = ack_msg->max_ids;

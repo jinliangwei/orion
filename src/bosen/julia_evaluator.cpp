@@ -1011,15 +1011,12 @@ JuliaEvaluator::CombineVarValue(
 void
 JuliaEvaluator::SetDistArrayDims(
     const std::string &dist_array_sym,
-    std::vector<int64_t> &dims) {
-  LOG(INFO) << __func__;
-  for (auto i : dims) {
-    LOG(INFO) << i;
-  }
+    const std::vector<int64_t> &dims) {
   jl_sym_t *dist_array_sym_jl = nullptr;
   jl_value_t *dist_array_jl = nullptr;
   jl_value_t* dims_vec_jl = nullptr;
   jl_value_t* dims_vec_array_type_jl = nullptr;
+  auto temp_dims = dims;
   JL_GC_PUSH4(reinterpret_cast<jl_value_t**>(&dist_array_sym_jl),
               &dist_array_jl,
               &dims_vec_jl,
@@ -1030,7 +1027,7 @@ JuliaEvaluator::SetDistArrayDims(
   dims_vec_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
   dims_vec_jl = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(dims_vec_array_type_jl,
-                         dims.data(), dims.size(), 0));
+                         temp_dims.data(), temp_dims.size(), 0));
 
   jl_function_t *set_dist_array_dims_func = GetFunction(
       jl_main_module, "orionres_set_dist_array_dims");
@@ -1083,6 +1080,56 @@ JuliaEvaluator::GetDistArrayValueType(
       jl_call1(get_dist_array_value_type_func,
                dist_array_jl));
   AbortIfException();
+}
+
+void
+JuliaEvaluator::GetAndSerializeValue(DistArray *dist_array,
+                                     int64_t key,
+                                     Blob *bytes_buff) {
+  return dist_array->GetAndSerializeValue(key, bytes_buff);
+}
+
+void
+JuliaEvaluator::GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *dist_arrays,
+                                      const uint8_t *request,
+                                      Blob *bytes_buff) {
+  LOG(INFO) << __func__;
+  const auto *cursor = request;
+  size_t num_dist_arrays = *(reinterpret_cast<const size_t*>(cursor));
+  cursor += sizeof(size_t);
+  std::vector<Blob> buff_vec(num_dist_arrays);
+  std::vector<int32_t> dist_array_ids(num_dist_arrays);
+  size_t accum_size = 0;
+  for (size_t i = 0; i < num_dist_arrays; i++) {
+    int32_t dist_array_id = *reinterpret_cast<const int32_t*>(cursor);
+    cursor += sizeof(int32_t);
+    size_t num_keys = *reinterpret_cast<const size_t*>(cursor);
+    cursor += sizeof(size_t);
+    const int64_t *keys = reinterpret_cast<const int64_t*>(cursor);
+    cursor += sizeof(int64_t) * num_keys;
+    auto dist_array_iter = dist_arrays->find(dist_array_id);
+    CHECK(dist_array_iter != dist_arrays->end());
+    auto *dist_array_ptr = &dist_array_iter->second;
+    LOG(INFO) << __func__ << " num_keys = " << num_keys;
+    dist_array_ptr->GetAndSerializeValues(keys, num_keys, &buff_vec[i]);
+    accum_size += buff_vec[i].size() + sizeof(int32_t);
+    dist_array_ids[i] = dist_array_id;
+  }
+
+  bytes_buff->resize(accum_size + sizeof(size_t));
+  LOG(INFO) << "byte_buff->size = " << bytes_buff->size();
+  auto *write_cursor = bytes_buff->data();
+  *reinterpret_cast<size_t*>(write_cursor) = num_dist_arrays;
+  write_cursor += sizeof(size_t);
+  for (size_t i = 0; i < num_dist_arrays; i++) {
+    auto &buff = buff_vec[i];
+    int32_t dist_array_id = dist_array_ids[i];
+    *reinterpret_cast<int32_t*>(write_cursor) = dist_array_id;
+    write_cursor += sizeof(int32_t);
+    LOG(INFO) << "cursor offset = " << write_cursor - bytes_buff->data();
+    memcpy(write_cursor, buff.data(), buff.size());
+    write_cursor += buff.size();
+  }
 }
 
 }

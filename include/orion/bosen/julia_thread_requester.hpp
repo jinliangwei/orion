@@ -24,18 +24,24 @@ class JuliaThreadRequester {
   Blob requested_value_;
   std::mutex request_mtx_;
   std::condition_variable request_cv_;
+  const int32_t kMyExecutorOrServerId;
+  const bool kIsExecutor;
  public:
   JuliaThreadRequester(conn::Pipe &write_pipe,
                        std::vector<uint8_t> &send_mem,
                        conn::SendBuffer &send_buff,
                        conn::Poll &poll,
                        size_t num_events,
-                       epoll_event* es): write_pipe_(write_pipe),
-                                         send_mem_(send_mem),
-                                         send_buff_(send_buff),
-                                         poll_(poll),
-                                         kNumEvents(num_events),
-                                         es_(es) { }
+                       epoll_event* es,
+                       int32_t my_executor_or_server_id,
+                       bool is_executor): write_pipe_(write_pipe),
+                                          send_mem_(send_mem),
+                                          send_buff_(send_buff),
+                                          poll_(poll),
+                                          kNumEvents(num_events),
+                                          es_(es),
+                                          kMyExecutorOrServerId(my_executor_or_server_id),
+                                          kIsExecutor(is_executor) { }
   ~JuliaThreadRequester() { }
 
   void RequestDistArrayData(

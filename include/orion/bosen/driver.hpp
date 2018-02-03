@@ -511,36 +511,26 @@ Driver::CreateDistArrayBuffer(
   }
   create_dist_array_buffer.set_is_dense(is_dense);
   create_dist_array_buffer.set_value_type(value_type);
-  auto my_value_type = static_cast<type::PrimitiveType>(value_type);
 
-  if (my_value_type == type::PrimitiveType::kString ||
-      my_value_type == type::PrimitiveType::kVoid) {
-    jl_value_t *buff = nullptr;
-    jl_value_t *serialized_result_array = nullptr;
-    JL_GC_PUSH2(&buff, &serialized_result_array);
-    jl_function_t *io_buffer_func
-        = JuliaEvaluator::GetFunction(jl_base_module, "IOBuffer");
+  jl_value_t *buff = nullptr;
+  jl_value_t *serialized_result_array = nullptr;
+  JL_GC_PUSH2(&buff, &serialized_result_array);
+  jl_function_t *io_buffer_func
+      = JuliaEvaluator::GetFunction(jl_base_module, "IOBuffer");
 
-    buff = jl_call0(io_buffer_func);
-    jl_function_t *serialize_func
-        = JuliaEvaluator::GetFunction(jl_base_module, "serialize");
-    CHECK(serialize_func != nullptr);
-    jl_call2(serialize_func, buff, init_value);
-    jl_function_t *takebuff_array_func
-        = JuliaEvaluator::GetFunction(jl_base_module, "takebuf_array");
-    serialized_result_array = jl_call1(takebuff_array_func, buff);
-    size_t result_array_length = jl_array_len(serialized_result_array);
-    uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
-    create_dist_array_buffer.set_serialized_init_value(
-        array_bytes, result_array_length);
-    JL_GC_POP();
-  } else {
-    std::vector<uint8_t> buff(type::SizeOf(my_value_type));
-    JuliaEvaluator::UnboxValue(init_value, my_value_type,
-                               buff.data());
-    create_dist_array_buffer.set_serialized_init_value(
-        buff.data(), buff.size());
-  }
+  buff = jl_call0(io_buffer_func);
+  jl_function_t *serialize_func
+      = JuliaEvaluator::GetFunction(jl_base_module, "serialize");
+  CHECK(serialize_func != nullptr);
+  jl_call2(serialize_func, buff, init_value);
+  jl_function_t *takebuff_array_func
+      = JuliaEvaluator::GetFunction(jl_base_module, "takebuf_array");
+  serialized_result_array = jl_call1(takebuff_array_func, buff);
+  size_t result_array_length = jl_array_len(serialized_result_array);
+  uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
+  create_dist_array_buffer.set_serialized_init_value(
+      array_bytes, result_array_length);
+  JL_GC_POP();
 
   create_dist_array_buffer.set_symbol(symbol);
   create_dist_array_buffer.set_serialized_value_type(
@@ -588,6 +578,7 @@ Driver::ExecForLoop(
     const char *loop_batch_func_name,
     const char *prefetch_batch_func_name,
     bool is_ordered) {
+  LOG(INFO) << __func__;
   task::ExecForLoop exec_for_loop_task;
   exec_for_loop_task.set_iteration_space_id(iteration_space_id);
   exec_for_loop_task.set_parallel_scheme(parallel_scheme);

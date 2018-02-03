@@ -22,15 +22,21 @@ class AbstractExecForLoop {
       kSkip = 5
                 };
 
+  enum class PrefetchStatus {
+    kNotPrefetched = 0,
+      kPrefetchSent = 1,
+      kPrefetchRecved = 2
+                     };
+
  protected:
   PointQueryKeyDistArrayMap point_prefetch_dist_array_map_;
-  RangeQueryKeyDistArrayMap range_prefetch_dist_array_map_;
-  ExecutorSendBufferMap send_buffer_map_;
+  size_t num_pending_prefetch_requests_ {0};
+  PrefetchStatus prefetch_status_ {PrefetchStatus::kNotPrefetched};
 
   std::unordered_map<int32_t, DistArray*> space_partitioned_dist_arrays_;
   std::unordered_map<int32_t, DistArray*> time_partitioned_dist_arrays_;
   std::unordered_map<int32_t, DistArray*> global_indexed_dist_arrays_;
-  std::unordered_map<int32_t, DistArrayCache> dist_array_cache_;
+  std::unordered_map<int32_t, std::unique_ptr<AbstractDistArrayPartition>> dist_array_cache_;
   std::unordered_map<int32_t, DistArray*> dist_array_buffers_;
   std::unordered_map<int32_t, std::vector<int32_t>> dist_array_to_buffers_map_;
 
@@ -43,7 +49,7 @@ class AbstractExecForLoop {
   bool curr_partition_prepared_ { false };
   uint8_t *time_partitions_serialized_bytes_ { nullptr };
   size_t time_partitions_serialized_size_ { 0 };
-  AbstractDistArrayPartition* curr_partition_ {nullptr};
+  AbstractDistArrayPartition* curr_partition_ { nullptr };
 
  public:
   AbstractExecForLoop(
@@ -66,7 +72,7 @@ class AbstractExecForLoop {
       std::unordered_map<int32_t, DistArray> *dist_arrays,
       std::unordered_map<int32_t, DistArray> *dist_array_buffers);
 
-  virtual ~AbstractExecForLoop() { }
+  virtual ~AbstractExecForLoop();
 
   virtual void FindNextToExecPartition() = 0;
   virtual RunnableStatus GetCurrPartitionRunnableStatus() = 0;
@@ -87,8 +93,9 @@ class AbstractExecForLoop {
   void ComputePrefetchIndinces();
   void ExecuteForLoopPartition();
   void ClearSendBuffer();
-  void SerializeAndClearPrefetchIds();
-  void DeserializePrefetchedData(const uint8_t* bytes);
+  void SerializeAndClearPrefetchIds(ExecutorSendBufferMap *send_buffer_map);
+  void CachePrefetchDistArrayValues(PeerRecvGlobalIndexedDistArrayDataBuffer **buff_vec,
+                                    size_t num_buffs);
 
   void SerializeAndClearGlobalPartitionedDistArrays();
 

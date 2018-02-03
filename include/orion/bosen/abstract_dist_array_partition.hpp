@@ -42,7 +42,7 @@ class AbstractDistArrayPartition {
   bool LoadTextFile(const std::string &path, int32_t partition_id);
   void ParseText(Blob *max_key, size_t line_num_start);
   size_t CountNumLines() const;
-  std::vector<int64_t>& GetDims();
+  const std::vector<int64_t>& GetDims() const;
   void Init(int64_t key_begin, size_t num_elements);
   void Map(AbstractDistArrayPartition *child_partition);
   void ComputeKeysFromBuffer(const std::vector<int64_t> &dims);
@@ -53,19 +53,23 @@ class AbstractDistArrayPartition {
       const std::string &repartition_func_name);
   void ComputePrefetchIndinces(const std::string &prefetch_batch_func_name,
                                const std::vector<int32_t> &dist_array_ids_vec,
-                               PointQueryKeyDistArrayMap *point_key_vec_map,
-                               RangeQueryKeyDistArrayMap *range_key_vec_map);
+                               const std::unordered_map<int32_t, DistArray*> &global_indexed_dist_arrays,
+                               PointQueryKeyDistArrayMap *point_key_vec_map);
   void Execute(const std::string &loop_batch_func_name);
+  void BuildIndex();
 
   virtual void CreateAccessor() = 0;
   virtual void ClearAccessor() = 0;
   virtual void CreateCacheAccessor() = 0;
   virtual void CreateBufferAccessor() = 0;
-  virtual void ClearCacheOrBufferAccessor() = 0;
+  virtual void ClearCacheAccessor() = 0;
+  virtual void ClearBufferAccessor() = 0;
   virtual void BuildKeyValueBuffersFromSparseIndex() = 0;
-  virtual void BuildIndex() = 0;
-
+  virtual void GetAndSerializeValue(int64_t key, Blob *bytes_buff) = 0;
+  virtual void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
+                                     Blob *bytes_buff) = 0;
   virtual SendDataBuffer Serialize() = 0;
+  //virtual void HashSerialize(ExecutorDataBufferMap *data_buffer_map) = 0;
   virtual const uint8_t* Deserialize(const uint8_t *buffer) = 0;
   virtual const uint8_t* DeserializeAndAppend(const uint8_t *buffer) = 0;
   virtual jl_value_t *GetGcPartition() = 0;

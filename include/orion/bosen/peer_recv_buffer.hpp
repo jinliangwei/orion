@@ -19,7 +19,7 @@ struct PeerRecvPipelinedTimePartitionsBuffer {
 
 struct PeerRecvGlobalIndexedDistArrayDataBuffer {
   int32_t server_id;
-  ByteBuffer byte_buff;
+  Blob byte_buff;
 };
 
 }

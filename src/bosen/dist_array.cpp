@@ -44,8 +44,6 @@ DistArray::DistArray(
           is_dense,
           symbol),
     julia_requester_(julia_requester) {
-  if (num_dims > 0)
-    dims_.resize(num_dims);
 }
 
 DistArray::~DistArray() {
@@ -202,8 +200,8 @@ DistArray::GetPartitionTextBufferNumLines(std::vector<int64_t> *partition_ids,
 void
 DistArray::Init() {
   size_t num_params = 1;
-  for (auto d : dims_) {
-    LOG(INFO) << __func__ << " d = " << d;
+  const auto &dims = meta_.GetDims();
+  for (auto d : dims) {
     num_params *= d;
   }
   size_t num_params_this_executor = num_params / kConfig.kNumExecutors
@@ -246,6 +244,7 @@ DistArray::Map(DistArray* child_dist_array) {
 
 void
 DistArray::ComputeHashRepartition(size_t num_partitions) {
+  LOG(INFO) << __func__;
   std::vector<AbstractDistArrayPartition*> partition_buff;
   GetAndClearLocalPartitions(&partition_buff);
 
@@ -285,26 +284,25 @@ DistArray::ComputeRepartition(const std::string &repartition_func_name) {
 
 void
 DistArray::SetDims(const std::vector<int64_t> &dims) {
-  dims_ = dims;
-  for (auto partition : partitions_) {
-    partition.second->ComputeKeysFromBuffer(dims_);
-  }
   meta_.AssignDims(dims.data());
+  const auto &my_dims = meta_.GetDims();
+  for (auto partition : partitions_) {
+    partition.second->ComputeKeysFromBuffer(my_dims);
+  }
 }
 
 void
 DistArray::SetDims(const int64_t* dims, size_t num_dims) {
-  dims_.resize(num_dims);
-  memcpy(dims_.data(), dims, num_dims * sizeof(int64_t));
-  for (auto partition : partitions_) {
-    partition.second->ComputeKeysFromBuffer(dims_);
-  }
   meta_.AssignDims(dims);
+  const auto &my_dims = meta_.GetDims();
+  for (auto partition : partitions_) {
+    partition.second->ComputeKeysFromBuffer(my_dims);
+  }
 }
 
-std::vector<int64_t> &
-DistArray::GetDims() {
-  return dims_;
+const std::vector<int64_t> &
+DistArray::GetDims() const {
+  return meta_.GetDims();
 }
 
 DistArrayMeta &
@@ -544,6 +542,7 @@ DistArray::RepartitionSerializeAndClear1D(
 void
 DistArray::RepartitionDeserialize(
     PeerRecvRepartitionDistArrayDataBuffer *data_buff_ptr) {
+  LOG(INFO) << __func__;
   auto byte_buffs = data_buff_ptr->byte_buffs;
   for (auto &buff_pair : byte_buffs) {
     auto &buff = buff_pair.second;
@@ -589,6 +588,7 @@ DistArray::RepartitionDeserialize1D(
   const uint8_t *cursor = mem;
   while (cursor - mem < mem_size) {
     int32_t partition_id = *reinterpret_cast<const int32_t*>(cursor);
+    LOG(INFO) << __func__ << " partition_id = " << partition_id;
     cursor += sizeof(int32_t);
     auto partition_pair = GetAndCreateLocalPartition(partition_id);
     auto *partition = partition_pair.first;
@@ -599,6 +599,7 @@ DistArray::RepartitionDeserialize1D(
 void
 DistArray::CheckAndBuildIndex() {
   auto index_type = meta_.GetIndexType();
+  LOG(INFO) << __func__ << " index_type = " << static_cast<int>(index_type);
   switch (index_type) {
     case DistArrayIndexType::kNone:
       break;
@@ -627,6 +628,26 @@ DistArray::BuildPartitionIndices() {
       partition->BuildIndex();
     }
   }
+}
+
+void
+DistArray::GetAndSerializeValue(int64_t key, Blob *bytes_buff) {
+  auto iter = partitions_.begin();
+  CHECK(iter != partitions_.end());
+  auto *partition = iter->second;
+  Blob temp_buff;
+  partition->GetAndSerializeValue(key, bytes_buff);
+}
+
+void
+DistArray::GetAndSerializeValues(const int64_t *keys,
+                                 size_t num_keys,
+                                 Blob *bytes_buff) {
+  LOG(INFO) << __func__;
+  auto iter = partitions_.begin();
+  CHECK(iter != partitions_.end());
+  auto *partition = iter->second;
+  partition->GetAndSerializeValues(keys, num_keys, bytes_buff);
 }
 
 void

@@ -15,15 +15,17 @@ const num_servers = 1
 
 # initialize logging of the runtime library
 Orion.glog_init()
-Orion.init(master_ip, master_port, comm_buff_capacity, num_executors,
-           num_servers)
+Orion.init(master_ip, master_port, comm_buff_capacity,
+           num_executors, num_servers)
 
 #const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
 #const data_path = "file:///home/ubuntu/data/ml-10M100K/ratings.csv"
 const data_path = "file:///users/jinlianw/ratings.csv"
-const K = 100
-const num_iterations = 1
-const step_size = 0.001
+#const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
+#const data_path = "file:///proj/BigLearning/jinlianw/data/ml-20m/ratings_p.csv"
+const K = 1000
+const num_iterations = 64
+const step_size = 0.01
 
 Orion.@accumulator err = 0
 Orion.@accumulator line_cnt = 0
@@ -59,9 +61,12 @@ Orion.@dist_array H = Orion.randn(K, dim_y)
 Orion.@dist_array H = Orion.map(H, map_init_param, map_values = true)
 Orion.materialize(H)
 
-error_vec = Vector{Float64}()
+#Orion.dist_array_set_num_partitions_per_dim(ratings, num_executors * 4)
 
-for iteration = 1:num_iterations
+error_vec = Vector{Float64}()
+time_vec = Vector{Float64}()
+start_time = now()
+@time for iteration = 1:num_iterations
     Orion.@parallel_for for rating in ratings
         x_idx = rating[1][1]
         y_idx = rating[1][2]
@@ -76,8 +81,9 @@ for iteration = 1:num_iterations
         W[:, x_idx] = W_row - step_size .* W_grad
         H[:, y_idx] = H_row - step_size .* H_grad
     end
-    if iteration % 4 == 1 ||
+    @time if iteration % 4 == 1 ||
         iteration == num_iterations
+        println("evaluate model")
         Orion.@parallel_for for rating in ratings
             x_idx = rating[1][1]
             y_idx = rating[1][2]
@@ -85,15 +91,18 @@ for iteration = 1:num_iterations
             W_row = W[:, x_idx]
             H_row = H[:, y_idx]
             pred = dot(W_row, H_row)
-            err += rv - pred
+            err += (rv - pred) ^ 2
         end
         err = Orion.get_aggregated_value(:err, :+)
-        println("iteration = ", iteration, " err = ", err)
+        curr_time = now()
+        elapsed = Int(curr_time - start_time) / 1000
+        println("iteration = ", iteration, " elapsed = ", elapsed, " err = ", err)
         Orion.reset_accumulator(:err)
         push!(error_vec, err)
+        push!(time_vec, elapsed)
     end
 end
 println(error_vec)
-
+println(time_vec)
 Orion.stop()
 exit()

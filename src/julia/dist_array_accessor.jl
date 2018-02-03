@@ -1,19 +1,22 @@
-import Base: linearindexing, size, getindex, setindex!
+import Base: linearindexing, size, getindex, setindex!, similar
 abstract DistArrayAccessor{T, N} <: AbstractArray{T, N}
 
 immutable DenseDistArrayAccessor{T, N} <: DistArrayAccessor{T, N}
     key_begin::Int64
     values::Vector{T}
     dims::NTuple{N, Int64}
+    access_buff::Vector{T}
     DenseDistArrayAccessor(key_begin::Int64,
                            values::Vector{T},
                            dims::Vector{Int64}) = new(key_begin,
                                                       values,
-                                                      tuple(dims...))
+                                                      tuple(dims...),
+                                                      Vector{T}(dims[1]))
 
     DenseDistArrayAccessor(dims::Vector{Int64}) = new(0,
                                                       Vector{T}(reduce(*, dims)),
-                                                      tuple(dims...))
+                                                      tuple(dims...),
+                                                      Vector{T}(dims[1]))
 end
 
 immutable SparseDistArrayAccessor{T, N} <: DistArrayAccessor{T, N}
@@ -95,9 +98,14 @@ function Base.setindex!(accessor::DenseDistArrayAccessor,
     accessor.values[i - accessor.key_begin] = v
 end
 
-function Base.similar{T, N}(accessor::DenseDistArrayAccessor{T, N},
-                            ::Type{T}, dims::NTuple{N, Int64})
-    return DenseDistArrayAccessor{T, N}(dims)
+function Base.similar{T}(accessor::DenseDistArrayAccessor,
+                         ::Type{T}, dims::Dims)
+    if dims == size(accessor.access_buff)
+        return accessor.access_buff
+    else
+        return Array{T, N}(dims)
+    end
+
 end
 
 function getindex(accessor::SparseDistArrayAccessor,
@@ -110,11 +118,6 @@ function setindex!(accessor::SparseDistArrayAccessor,
     accessor.key_value[i] = v
 end
 
-function Base.similar{T, N}(accessor::SparseDistArrayAccessor{T, N},
-                            ::Type{T}, dims::NTuple{N, Int64})
-    return SparseDistArrayAccessor{T, N}(dims)
-end
-
 function getindex(accessor::SparseInitDistArrayAccessor,
                   i::Int64)
     return get(accessor.key_value, i, accessor.init_value)
@@ -125,18 +128,13 @@ function setindex!(accessor::SparseInitDistArrayAccessor,
     return accessor.key_value[i] = v
 end
 
-function Base.similar{T, N}(accessor::SparseInitDistArrayAccessor{T, N},
-                            ::Type{T}, dims::NTuple{N, Int64})
-    return SparseInitDistArrayAccessor{T, N}(accessor.init_value, dims)
-end
-
 function getindex{T, N}(accessor::DistArrayCacheAccessor{T, N},
                   i::Int64)
     if haskey(accessor.key_value, i)
         return accessor.key_value[i]
     else
         value = dist_array_cache_fetch(accessor.dist_array_id,
-                                       key,
+                                       i,
                                        T)
         @assert value != nothing
         key_value[i] = value
@@ -149,19 +147,14 @@ function setindex!(accessor::DistArrayCacheAccessor,
     accessor.key_value[i] = v
 end
 
-function Base.similar{T, N}(accessor::DistArrayCacheAccessor{T, N},
-                            ::Type{T}, dims::NTuple{N, Int64})
-    return DistArrayCacheAccessor{T, N}(accessor.dist_array_id, dims)
-end
-
 function dist_array_accessor_get_values_vec(dist_array_accessor::DenseDistArrayAccessor)::Vector
     return dist_array_accessor.values
 end
 
 function dist_array_accessor_get_keys_vec(dist_array_accessor::DistArrayAccessor)::Vector{Int64}
-    return [k in keys(dist_array_accessor.key_value)]
+    return [k for k in keys(dist_array_accessor.key_value)]
 end
 
 function dist_array_accessor_get_values_vec(dist_array_accessor::DistArrayAccessor)::Vector
-    return [v in values(dist_array_accessor.key_value)]
+    return [v for v in values(dist_array_accessor.key_value)]
 end

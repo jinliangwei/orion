@@ -4,7 +4,7 @@ abstract DistArrayBuffer{T, N} <: AbstractDistArray{T, N}
 type DenseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
     id::Int32
     dims::Vector{Int64}
-    init_value::Nullable{T}
+    init_value::T
     symbol::Nullable{Symbol}
     partitions::Vector{DistArrayPartition{T}}
     accessor::Nullable{DenseDistArrayAccessor{T, N}}
@@ -14,7 +14,7 @@ type DenseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
                          init_value::T) = new(
                              id,
                              copy(dims),
-                             Nullable{T}(init_value),
+                             init_value,
                              Nullable{Symbol}(),
                              Vector{DistArrayPartition{T}}(),
                              Nullable{DenseDistArrayAccessor{T, N}}(),
@@ -24,7 +24,7 @@ end
 type SparseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
     id::Int32
     dims::Vector{Int64}
-    init_value::Nullable{T}
+    init_value::T
     symbol::Nullable{Symbol}
     partitions::Vector{DistArrayPartition{T}}
     accessor::Nullable{SparseInitDistArrayAccessor{T, N}}
@@ -34,11 +34,25 @@ type SparseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
                           init_value::T) = new(
                               id,
                               copy(dims),
-                              Nullable{T}(init_value),
+                              init_value,
                               Nullable{Symbol}(),
                               Vector{DistArrayPartition{T}}(),
                               Nullable{SparseInitDistArrayAccessor{T, N}}(),
                               false)
+end
+
+function Base.getindex(dist_array::DistArrayBuffer,
+                       I...)
+    @assert !isnull(dist_array.accessor)
+    accessor = get(dist_array.accessor)
+    return getindex(accessor, I...)
+end
+
+function Base.setindex!(dist_array::DistArrayBuffer,
+                        v, I...)
+    @assert !isnull(dist_array.accessor)
+    accessor = get(dist_array.accessor)
+    setindex!(accessor, v, I...)
 end
 
 function materialize{T, N}(dist_array_buffer::DistArrayBuffer{T, N})
@@ -62,24 +76,32 @@ function materialize{T, N}(dist_array_buffer::DistArrayBuffer{T, N})
           dist_array_buffer.dims,
           N,
           isa(dist_array_buffer, DenseDistArrayBuffer),
-          data_type_to_int32(dist_array_get_value_type(dist_array_buffer)),
+          data_type_to_int32(T),
           dist_array_buffer.init_value,
-          dist_array_buffer.symbol,
+          string(get(dist_array_buffer.symbol)),
           buff_array,
           length(buff_array))
     dist_array_buffer.is_materialized = true
 end
 
-function create_dist_array_buffer{T, N}(dims::NTuple{N, Int64},
-                                     init_value::T,
-                                     is_dense::Bool = false)
+function create_dense_dist_array_buffer{T, N}(dims::NTuple{N, Int64},
+                                              init_value::T)
     global dist_array_id_counter
     id = dist_array_id_counter
     dist_array_id_counter += 1
-    dist_array_buffer = DistArrayBuffer{T, N}(id,
-                                              [dims...],
-                                              is_dense,
-                                              init_value)
+    dist_array_buffer = DenseDistArrayBuffer{T, N}(id,
+                                                   [dims...],
+                                                   init_value)
+end
+
+function create_sparse_dist_array_buffer{T, N}(dims::NTuple{N, Int64},
+                                              init_value::T)
+    global dist_array_id_counter
+    id = dist_array_id_counter
+    dist_array_id_counter += 1
+    dist_array_buffer = SparseDistArrayBuffer{T, N}(id,
+                                                   [dims...],
+                                                   init_value)
 end
 
 function Base.size(dist_array_buffer::DistArrayBuffer)
@@ -92,16 +114,28 @@ function create_dist_array_buffer_accessor{T, N}(dist_array_buffer::DenseDistArr
     for i = 1:num_values
         values[i] = dist_array_buffer.init_value
     end
-    dist_array.accessor = Nullable{DenseDistArrayAccessor{T, N}}(
-        DenseDistArrayAccessor{T}(0, values,
-                                  dist_array_buffer.dims))
+    dist_array_buffer.accessor = Nullable{DenseDistArrayAccessor{T, N}}(
+        DenseDistArrayAccessor{T, N}(0, values,
+                                  [dist_array_buffer.dims...]))
 end
 
 function create_dist_array_buffer_accessor{T, N}(dist_array_buffer::SparseDistArrayBuffer{T, N})
-    dist_array.accessor = Nullable{SparseInitDistArrayAccessor{T, N}}(
+    dist_array_buffer.accessor = Nullable{SparseInitDistArrayAccessor{T, N}}(
         SparseInitDistArrayAccessor{T, N}(keys, values,
-                                          dist_array_buffer.dims))
+                                          [dist_array_buffer.dims...]))
 
+end
+
+function delete_dist_array_accessor{T, N}(dist_array_buffer::DistArrayBuffer{T, N})
+    dist_array_buffer.accessor = Nullable{DistArrayAccessor{T, N}}()
+end
+
+function dist_array_get_accessor_keys_vec(dist_array_buffer::DistArrayBuffer)::Vector{Int64}
+    dist_array_accessor_get_keys_vec(get(dist_array_buffer.accessor))
+end
+
+function dist_array_get_accessor_values_vec(dist_array_buffer::DistArrayBuffer)::Vector
+    dist_array_accessor_get_values_vec(get(dist_array_buffer.accessor))
 end
 
 function create_dist_array_on_worker(id::Int32,
@@ -114,10 +148,15 @@ function create_dist_array_on_worker(id::Int32,
 
     local dist_array
     if is_buffer
-        dist_array = DistArrayBuffer{ValueType, length(dims)}(id,
-                                                              dims,
-                                                              is_dense,
-                                                              init_value)
+        if is_dense
+            dist_array = DenseDistArrayBuffer{ValueType, length(dims)}(id,
+                                                                       dims,
+                                                                       init_value)
+        else
+            dist_array = SparseDistArrayBuffer{ValueType, length(dims)}(id,
+                                                                       dims,
+                                                                       init_value)
+        end
     else
         if is_dense
             dist_array = DenseDistArray{ValueType, length(dims)}(id,

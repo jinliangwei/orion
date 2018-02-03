@@ -65,7 +65,9 @@ class JuliaEvalThread {
   JuliaEvalThread(size_t send_buff_capacity,
                   const std::string &orion_home,
                   size_t num_servers,
-                  size_t num_executors):
+                  size_t num_executors,
+                  int32_t my_executor_or_server_id,
+                  bool is_executor):
       send_mem_(send_buff_capacity),
       send_buff_(send_mem_.data(), send_buff_capacity),
       kOrionHome(orion_home),
@@ -76,7 +78,9 @@ class JuliaEvalThread {
                        send_buff_,
                        poll_,
                        kNumEvents,
-                       es_) {
+                       es_,
+                       my_executor_or_server_id,
+                       is_executor) {
     int ret = conn::Pipe::CreateUniPipe(&read_pipe_, &write_pipe_);
     CHECK_EQ(ret, 0) << "create pipe failed";
     ret = poll_.Init();

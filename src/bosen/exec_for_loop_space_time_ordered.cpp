@@ -140,12 +140,6 @@ ExecForLoopSpaceTimeOrdered::PrepareToExecCurrPartition() {
     access_partition->CreateAccessor();
   }
 
-  for (auto& dist_array_pair : global_indexed_dist_arrays_) {
-    auto dist_array_id = dist_array_pair.first;
-    auto *cache_partition = dist_array_cache_.at(dist_array_id).second;
-    cache_partition->CreateCacheAccessor();
-  }
-
   for (auto& buffer_pair : dist_array_buffers_) {
     auto* dist_array_buffer = buffer_pair.second;
     auto *buffer_partition = dist_array_buffer->GetBufferPartition();
@@ -171,16 +165,17 @@ ExecForLoopSpaceTimeOrdered::ClearCurrPartition() {
 
   for (auto& dist_array_pair : global_indexed_dist_arrays_) {
     auto dist_array_id = dist_array_pair.first;
-    auto *cache_partition = dist_array_cache_.at(dist_array_id).second;
-    cache_partition->ClearCacheOrBufferAccessor();
+    auto *cache_partition = dist_array_cache_.at(dist_array_id).get();
+    cache_partition->ClearCacheAccessor();
   }
 
   for (auto& buffer_pair : dist_array_buffers_) {
     auto* dist_array_buffer = buffer_pair.second;
     auto *buffer_partition = dist_array_buffer->GetBufferPartition();
-    buffer_partition->ClearCacheOrBufferAccessor();
+    buffer_partition->ClearBufferAccessor();
   }
   curr_partition_prepared_ = false;
+  prefetch_status_ = PrefetchStatus::kNotPrefetched;
 }
 
 }

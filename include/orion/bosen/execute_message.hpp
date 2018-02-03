@@ -233,12 +233,12 @@ struct ExecuteMsgRequestExecForLoopPredecessorCompletion {
   }
 };
 
-struct ExecuteMsgReplyPipelinedTimePartitions {
+struct ExecuteMsgReplyExecForLoopPipelinedTimePartitions {
  public:
   void *data_buff_vec;
   size_t num_data_buffs;
  private:
-  ExecuteMsgReplyPipelinedTimePartitions() = default;
+  ExecuteMsgReplyExecForLoopPipelinedTimePartitions() = default;
   friend class DefaultMsgCreator;
 
  public:
@@ -248,23 +248,26 @@ struct ExecuteMsgReplyPipelinedTimePartitions {
     num_data_buffs = _num_data_buffs;
   }
   static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kReplyPipelinedTimePartitions;
+    return ExecuteMsgType::kReplyExecForLoopPipelinedTimePartitions;
   }
 };
 
-struct ExecuteMsgReplyGlobalIndexedDistArrayData {
+struct ExecuteMsgReplyExecForLoopGlobalIndexedDistArrayData {
  public:
-  void *data_buff;
+  void *data_buff_vec;
+  size_t num_data_buffs;
  private:
-  ExecuteMsgReplyGlobalIndexedDistArrayData() = default;
+  ExecuteMsgReplyExecForLoopGlobalIndexedDistArrayData() = default;
   friend class DefaultMsgCreator;
 
  public:
-  void Init(void *_data_buff) {
-    data_buff = _data_buff;
+  void Init(void *_data_buff_vec,
+            size_t _num_data_buffs) {
+    data_buff_vec = _data_buff_vec;
+    num_data_buffs = _num_data_buffs;
   }
   static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kReplyGlobalIndexedDistArrayData;
+    return ExecuteMsgType::kReplyExecForLoopGlobalIndexedDistArrayData;
   }
 };
 
@@ -318,28 +321,68 @@ struct ExecuteMsgCreateDistArrayBufferAck {
 struct ExecuteMsgRequestDistArrayValue {
   int32_t dist_array_id;
   int64_t key;
+  int32_t requester_id; // executor id or server id
+  bool is_requester_executor;
  private:
   ExecuteMsgRequestDistArrayValue() = default;
   friend class DefaultMsgCreator;
  public:
   void Init(int32_t _dist_array_id,
-            int64_t _key) {
+            int64_t _key,
+            int32_t _requester_id,
+            bool _is_requester_executor) {
     dist_array_id = _dist_array_id;
     key = _key;
+    requester_id = _requester_id;
+    is_requester_executor = _is_requester_executor;
   }
   static constexpr ExecuteMsgType get_type() {
     return ExecuteMsgType::kRequestDistArrayValue;
   }
 };
 
-struct ExecuteMsgPredCompletion {
+struct ExecuteMsgRequestDistArrayValues {
+  size_t request_size;
+  int32_t requester_id;
+  bool is_requester_executor;
  private:
-  ExecuteMsgPredCompletion() = default;
+  ExecuteMsgRequestDistArrayValues() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _request_size,
+            int32_t _requester_id,
+            bool _is_requester_executor) {
+    request_size = _request_size;
+    requester_id = _requester_id;
+    is_requester_executor = _is_requester_executor;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kRequestDistArrayValues;
+  }
+};
+
+struct ExecuteMsgReplyDistArrayValues {
+  size_t reply_size;
+ private:
+  ExecuteMsgReplyDistArrayValues() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _reply_size) {
+    reply_size = _reply_size;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kReplyDistArrayValues;
+  }
+};
+
+struct ExecuteMsgReplyExecForLoopPredecessorCompletion {
+ private:
+  ExecuteMsgReplyExecForLoopPredecessorCompletion() = default;
   friend class DefaultMsgCreator;
  public:
   void Init() { }
   static constexpr ExecuteMsgType get_type() {
-    return ExecuteMsgType::kPredCompletion;
+    return ExecuteMsgType::kReplyExecForLoopPredecessorCompletion;
   }
 };
 

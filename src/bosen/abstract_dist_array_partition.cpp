@@ -24,13 +24,12 @@ AbstractDistArrayPartition::GetDistArraySymbol() {
   return dist_array_->GetMeta().GetSymbol();
 }
 
-std::vector<int64_t>&
-AbstractDistArrayPartition::GetDims() { return dist_array_->GetDims(); }
+const std::vector<int64_t>&
+AbstractDistArrayPartition::GetDims() const { return dist_array_->GetDims(); }
 
 void
 AbstractDistArrayPartition::ParseText(Blob *max_key,
                                       size_t line_number_start) {
-  LOG(INFO) << __func__ << " on partition " << (void*) this;
   jl_value_t *value = nullptr, *dist_array_value_type = nullptr;
 
   JL_GC_PUSH2(&value, &dist_array_value_type);
@@ -368,8 +367,8 @@ AbstractDistArrayPartition::Init(int64_t key_begin,
     case DistArrayInitType::kUniformRandom:
       {
         JuliaEvaluator::RandNormal(random_init_type,
-                                &init_values,
-                                num_elements);
+                                   &init_values,
+                                   num_elements);
       }
       break;
     default:
@@ -458,7 +457,7 @@ AbstractDistArrayPartition::ComputeHashRepartitionIdsAndRepartition(size_t num_p
   std::vector<int32_t> repartition_ids(keys_.size());
   for (size_t i = 0; i < keys_.size(); i++) {
     int32_t repartition_id = keys_[i] % num_partitions;
-    keys_[i] = repartition_id;
+    repartition_ids[i] = repartition_id;
   }
   Repartition(repartition_ids.data());
 }
@@ -471,15 +470,16 @@ AbstractDistArrayPartition::ComputeRepartitionIdsAndRepartition(
             *dims_vec_jl = nullptr,
  *repartition_ids_vec_jl = nullptr;
   JL_GC_PUSH4(&array_type, &keys_vec_jl, &dims_vec_jl, &repartition_ids_vec_jl);
-  auto &dims = dist_array_->GetDims();
-
+  const auto &dims = dist_array_->GetDims();
+  auto temp_dims = dims;
   array_type = jl_apply_array_type(jl_int64_type, 1);
   keys_vec_jl = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(array_type, keys_.data(), keys_.size(), 0));
   dims_vec_jl = reinterpret_cast<jl_value_t*>(
-      jl_ptr_to_array_1d(array_type, dims.data(), dims.size(), 0));
+      jl_ptr_to_array_1d(array_type, temp_dims.data(), temp_dims.size(), 0));
 
-  jl_function_t *repartition_func = JuliaEvaluator::GetFunction(jl_main_module, repartition_func_name.c_str());
+  jl_function_t *repartition_func = JuliaEvaluator::GetFunction(jl_main_module,
+                                                                repartition_func_name.c_str());
   repartition_ids_vec_jl = jl_call2(repartition_func, keys_vec_jl, dims_vec_jl);
   CHECK(!jl_exception_occurred()) << jl_typeof_str(jl_exception_occurred());
   int32_t *repartition_ids = reinterpret_cast<int32_t*>(jl_array_data(repartition_ids_vec_jl));
@@ -491,48 +491,76 @@ void
 AbstractDistArrayPartition::ComputePrefetchIndinces(
     const std::string &prefetch_batch_func_name,
     const std::vector<int32_t> &dist_array_ids_vec,
-    PointQueryKeyDistArrayMap *point_key_vec_map,
-    RangeQueryKeyDistArrayMap *range_key_vec_map) {
+    const std::unordered_map<int32_t, DistArray*> &global_indexed_dist_arrays,
+    PointQueryKeyDistArrayMap *point_key_vec_map) {
   jl_value_t **jl_values;
-  JL_GC_PUSHARGS(jl_values, 7);
+  JL_GC_PUSHARGS(jl_values, 10);
 
   jl_value_t* &dims_vec_jl = jl_values[0];
   jl_value_t* &keys_vec_jl = jl_values[1];
   jl_value_t* &values_vec_jl = jl_values[2];
   jl_value_t* &keys_array_type_jl = jl_values[3];
   jl_value_t* &ids_array_type_jl = jl_values[4];
-  jl_value_t* &ids_array_jl = jl_values[5];
-  jl_value_t* &ret_jl = jl_values[6];
+  jl_value_t* &dims_array_type_jl = jl_values[5];
+  jl_value_t* &ids_array_jl = jl_values[7];
+  jl_value_t* &ret_jl = jl_values[8];
+  jl_value_t* &global_indexed_dist_array_dims_jl = jl_values[8];
+  jl_value_t* &global_indexed_dist_array_dims_vec_jl = jl_values[9];
 
   std::vector<int32_t> temp_dist_array_ids_vec = dist_array_ids_vec;
 
-  auto &dims = GetDims();
+  const auto &dims = GetDims();
+  auto temp_dims = dims;
   keys_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
   ids_array_type_jl = jl_apply_array_type(jl_int32_type, 1);
+  dims_array_type_jl = jl_apply_array_type(reinterpret_cast<jl_datatype_t*>(keys_array_type_jl), 1);
 
   dims_vec_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
-      keys_array_type_jl, dims.data(), dims.size(), 0));
+      keys_array_type_jl, temp_dims.data(), temp_dims.size(), 0));
   keys_vec_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       keys_array_type_jl, keys_.data(), keys_.size(), 0));
   ids_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       ids_array_type_jl, temp_dist_array_ids_vec.data(),
       temp_dist_array_ids_vec.size(), 0));
+  global_indexed_dist_array_dims_vec_jl = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(
+      dims_array_type_jl, dist_array_ids_vec.size()));
+  std::vector<std::vector<int64_t>> global_indexed_dist_array_dims_array(
+      dist_array_ids_vec.size());
+  for (size_t i = 0; i < dist_array_ids_vec.size(); i++) {
+    auto dist_array_id = dist_array_ids_vec[i];
+    LOG(INFO) << " i = " << i
+              << " dist_array_id = " << dist_array_id;
+    const auto *global_indexed_dist_array = global_indexed_dist_arrays.at(dist_array_id);
+    const auto &global_indexed_dist_array_dims = global_indexed_dist_array->GetDims();
+    global_indexed_dist_array_dims_array[i] = global_indexed_dist_array_dims;
+    global_indexed_dist_array_dims_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
+        keys_array_type_jl, global_indexed_dist_array_dims_array[i].data(),
+        global_indexed_dist_array_dims_array[i].size(), 0));
+    jl_arrayset(reinterpret_cast<jl_array_t*>(global_indexed_dist_array_dims_vec_jl),
+                global_indexed_dist_array_dims_jl, i);
+  }
 
   GetJuliaValueArray(&values_vec_jl);
-  jl_value_t *args[4];
+  LOG(INFO) << "Got Julia value array " << (void*) values_vec_jl;
+  jl_value_t *args[5];
   args[0] = keys_vec_jl;
   args[1] = values_vec_jl;
   args[2] = dims_vec_jl;
   args[3] = ids_array_jl;
+  args[4] = global_indexed_dist_array_dims_vec_jl;
+
   jl_function_t *prefetch_batch_func
       = JuliaEvaluator::GetFunction(jl_main_module,
                                     prefetch_batch_func_name.c_str());
-  ret_jl = jl_call(prefetch_batch_func, args, 4);
-  jl_value_t *point_key_dist_array_vec_jl =  jl_get_nth_field(ret_jl, 0);
-  jl_value_t *range_key_dist_array_vec_jl = jl_get_nth_field(ret_jl, 1);
+  ret_jl = jl_call(prefetch_batch_func, args, 5);
+  JuliaEvaluator::AbortIfException();
+  LOG(INFO) << "prefetch function finished ret = " << (void*) ret_jl;
+  jl_value_t *point_key_dist_array_vec_jl =  ret_jl;
 
   for (size_t i = 0; i < dist_array_ids_vec.size(); i++) {
-    int32_t dist_array_id = dist_array_ids_vec[0];
+    int32_t dist_array_id = dist_array_ids_vec[i];
+    LOG(INFO) << "i = " << i
+              << " dist_array_id = " << dist_array_id;
     {
       auto iter_pair = point_key_vec_map->emplace(dist_array_id, PointQueryKeyVec());
       auto iter = iter_pair.first;
@@ -545,26 +573,6 @@ AbstractDistArrayPartition::ComputePrefetchIndinces(
             reinterpret_cast<jl_array_t*>(my_point_key_vec_jl), j);
         int64_t point_key = jl_unbox_int64(point_key_jl);
         key_vec.push_back(point_key);
-      }
-    }
-
-    {
-      auto iter_pair = range_key_vec_map->emplace(dist_array_id, RangeQueryKeyVec());
-      auto iter = iter_pair.first;
-      auto &range_key_vec = iter->second;
-      jl_value_t *my_range_key_vec_jl = jl_arrayref(
-          reinterpret_cast<jl_array_t*>(range_key_dist_array_vec_jl), i);
-      size_t num_keys = jl_array_len(my_range_key_vec_jl);
-      for (size_t j = 0; j < num_keys; j++) {
-        jl_value_t *range_key_tuple_jl = jl_arrayref(
-            reinterpret_cast<jl_array_t*>(my_range_key_vec_jl), j);
-        jl_value_t *range_key_jl = jl_get_nth_field(
-            range_key_tuple_jl, 0);
-        jl_value_t *range_num_keys_jl = jl_get_nth_field(
-            range_key_tuple_jl, 1);
-        int64_t point_key = jl_unbox_int64(range_key_jl);
-        size_t num_keys = jl_unbox_uint64(range_num_keys_jl);
-        range_key_vec.emplace_back(point_key, num_keys);
       }
     }
   }
@@ -587,25 +595,34 @@ AbstractDistArrayPartition::Execute(
               &dims_array_type_jl,
               &keys_array_type_jl);
 
-  auto &dims = GetDims();
+  const auto &dims = GetDims();
+  auto temp_dims = dims;
   dims_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
   keys_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
 
   dims_vec_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
-      dims_array_type_jl, dims.data(), dims.size(), 0));
+      dims_array_type_jl, temp_dims.data(), temp_dims.size(), 0));
   keys_vec_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       keys_array_type_jl, keys_.data(), keys_.size(), 0));
+  LOG(INFO) << "num_elements = " << keys_.size();
 
   GetJuliaValueArray(&values_vec_jl);
-
+  JuliaEvaluator::AbortIfException();
+  LOG(INFO) << "calling loop func";
   jl_function_t *exec_loop_func
       = JuliaEvaluator::GetFunction(jl_main_module,
                                     loop_batch_func_name.c_str());
   jl_call3(exec_loop_func, keys_vec_jl, values_vec_jl, dims_vec_jl);
   JuliaEvaluator::AbortIfException();
   JL_GC_POP();
-  LOG(INFO) << __func__ << " " << loop_batch_func_name << " end!";
 }
+
+void
+AbstractDistArrayPartition::BuildIndex() {
+  LOG(INFO) << __func__;
+  BuildSparseIndex();
+}
+
 
 }
 }

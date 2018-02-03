@@ -1,5 +1,6 @@
 #include <orion/bosen/abstract_exec_for_loop.hpp>
 #include <vector>
+#include <memory>
 namespace orion {
 namespace bosen {
 
@@ -28,6 +29,8 @@ AbstractExecForLoop::AbstractExecForLoop(
     kLoopBatchFuncName(loop_batch_func_name),
     kPrefetchBatchFuncName(prefetch_batch_func_name) {
 
+  LOG(INFO) << __func__ << " num_buffered_dist_arrays = " << num_buffered_dist_arrays;
+
   auto iter = dist_arrays->find(iteration_space_id);
   CHECK(iter != dist_arrays->end());
   iteration_space_ = &(iter->second);
@@ -52,15 +55,16 @@ AbstractExecForLoop::AbstractExecForLoop(
     CHECK(iter != dist_arrays->end());
     auto *dist_array_ptr = &(iter->second);
     global_indexed_dist_arrays_.emplace(std::make_pair(id, dist_array_ptr));
-    dist_array_cache_.emplace(
-        std::make_pair(id, std::make_pair(PrefetchStatus::kNotPrefetched,
-                                          dist_array_ptr->CreatePartition())));
+    dist_array_cache_.emplace(id,
+                              std::unique_ptr<AbstractDistArrayPartition>(dist_array_ptr->CreatePartition()));
   }
 
   size_t dist_array_buffer_index = 0;
   for (size_t i = 0; i < num_buffered_dist_arrays; i++) {
     int32_t dist_array_id = buffered_dist_array_ids[i];
+    LOG(INFO) << "dist_array_id = " << dist_array_id;
     size_t num_buffers = num_buffers_each_dist_array[i];
+    LOG(INFO) << "num_buffers = " << num_buffers;
     auto iter_pair = dist_array_to_buffers_map_.emplace(dist_array_id, std::vector<int32_t>());
     auto buff_vec_iter = iter_pair.first;
     auto buff_vec = buff_vec_iter->second;
@@ -71,6 +75,7 @@ AbstractExecForLoop::AbstractExecForLoop(
       auto *dist_array_buffer = &(iter->second);
       auto buff_iter = dist_array_buffers_.find(dist_array_buffer_id);
       if (buff_iter == dist_array_buffers_.end()) {
+        LOG(INFO) << "emplace " << dist_array_buffer_id;
         dist_array_buffers_.emplace(dist_array_buffer_id, dist_array_buffer);
       }
       dist_array_buffer_index++;
@@ -78,28 +83,21 @@ AbstractExecForLoop::AbstractExecForLoop(
   }
 }
 
+AbstractExecForLoop::~AbstractExecForLoop() { }
+
 void
 AbstractExecForLoop::SentAllPrefetchRequests() {
-  for (auto &cache_pair : dist_array_cache_) {
-    cache_pair.second.first = PrefetchStatus::kPrefetchSent;
-  }
+  prefetch_status_ = PrefetchStatus::kPrefetchSent;
 }
 
 bool
 AbstractExecForLoop::HasSentAllPrefetchRequests() const {
-  for (auto &cache_pair : dist_array_cache_) {
-    if (cache_pair.second.first != PrefetchStatus::kNotPrefetched)
-      return false;
-  }
-  return true;
+  return (prefetch_status_ != PrefetchStatus::kNotPrefetched);
 }
 
 bool
 AbstractExecForLoop::HasRecvedAllPrefetches() const {
-  for (auto &cache_pair : dist_array_cache_) {
-    if (cache_pair.second.first != PrefetchStatus::kPrefetchRecved) return false;
-  }
-  return true;
+  return (prefetch_status_ == PrefetchStatus::kPrefetchRecved);
 }
 
 bool
@@ -121,11 +119,12 @@ AbstractExecForLoop::ComputePrefetchIndinces() {
   for (const auto &dist_array_pair : global_indexed_dist_arrays_) {
     dist_array_ids_vec.push_back(dist_array_pair.first);
   }
+
   curr_partition_->ComputePrefetchIndinces(
       kPrefetchBatchFuncName,
       dist_array_ids_vec,
-      &point_prefetch_dist_array_map_,
-      &range_prefetch_dist_array_map_);
+      global_indexed_dist_arrays_,
+      &point_prefetch_dist_array_map_);
 }
 
 void
@@ -137,10 +136,10 @@ AbstractExecForLoop::ExecuteForLoopPartition() {
 }
 
 void
-AbstractExecForLoop::SerializeAndClearPrefetchIds() {
-  send_buffer_map_.clear();
+AbstractExecForLoop::SerializeAndClearPrefetchIds(ExecutorSendBufferMap *send_buffer_map) {
+  LOG(INFO) << __func__;
+  // server id -> (dist_array_id -> keys)
   std::unordered_map<int32_t, PointQueryKeyDistArrayMap> server_point_key_map;
-  std::unordered_map<int32_t, RangeQueryKeyDistArrayMap> server_range_key_map;
 
   for (const auto &dist_array_key_pair : point_prefetch_dist_array_map_) {
     int32_t dist_array_id = dist_array_key_pair.first;
@@ -151,112 +150,36 @@ AbstractExecForLoop::SerializeAndClearPrefetchIds() {
     }
   }
 
-  for (const auto &dist_array_key_pair : range_prefetch_dist_array_map_) {
-    int32_t dist_array_id = dist_array_key_pair.first;
-    const auto &range_key_vec = dist_array_key_pair.second;
-    for (const auto &range_key_pair : range_key_vec) {
-      int64_t key = range_key_pair.first;
-      size_t num_keys = range_key_pair.second;
-      if (num_keys <= kNumServers) {
-        for (size_t i = 0; i < num_keys; i++) {
-          int64_t key_i = key + i;
-          int32_t server_id = key_i % kNumServers;
-          server_point_key_map[server_id][dist_array_id].push_back(key);
-        }
-      } else {
-        for (size_t i = 0; i < kNumServers; i++) {
-          server_range_key_map[i][dist_array_id].emplace_back(key, num_keys);
-        }
-      }
-    }
-  }
-
-  std::unordered_map<int32_t, size_t> server_num_bytes;
+  num_pending_prefetch_requests_ = server_point_key_map.size();
   for (const auto &server_point_key_pair : server_point_key_map) {
     int32_t server_id = server_point_key_pair.first;
     const auto &dist_array_point_key_map = server_point_key_pair.second;
-    server_num_bytes[server_id] += sizeof(QueryDelimiter) + sizeof(size_t); // num_dist_arrays
+    size_t server_num_bytes = sizeof(size_t); // num_dist_arrays
     for (const auto &dist_array_point_key_pair : dist_array_point_key_map) {
       const auto &point_key_vec = dist_array_point_key_pair.second;
       // dist_array_id, num_keys, key_vec
-      server_num_bytes[server_id] += sizeof(int32_t) + sizeof(size_t) + point_key_vec.size() * sizeof(int64_t);
+      server_num_bytes += sizeof(int32_t) + sizeof(size_t)
+                          + point_key_vec.size() * sizeof(int64_t);
     }
-  }
-
-  for (const auto &server_range_key_pair : server_range_key_map) {
-    int32_t server_id = server_range_key_pair.first;
-    const auto &dist_array_range_key_map = server_range_key_pair.second;
-    server_num_bytes[server_id] += sizeof(QueryDelimiter) + sizeof(size_t); // num_dist_arrays
-    for (const auto &dist_array_range_key_pair : dist_array_range_key_map) {
-      const auto &range_key_vec = dist_array_range_key_pair.second;
-      // dist_array_id, num_keys, key_vec
-      server_num_bytes[server_id] += sizeof(int32_t) + sizeof(size_t)
-                                     + range_key_vec.size() * (sizeof(int64_t) + sizeof(size_t));
-    }
-  }
-
-  for (const auto &server_num_bytes_pair : server_num_bytes) {
-    int32_t server_id = server_num_bytes_pair.first;
-    size_t num_bytes = server_num_bytes_pair.second;
-    uint8_t *server_buff = new uint8_t[num_bytes];
-    send_buffer_map_[server_id] = std::make_pair(server_buff, num_bytes);
+    uint8_t *server_buff = new uint8_t[server_num_bytes];
+    (*send_buffer_map)[server_id] = std::make_pair(server_buff, server_num_bytes);
     uint8_t *cursor = server_buff;
+    // num_dist_arrays
+    *reinterpret_cast<size_t*>(cursor) = dist_array_point_key_map.size();
+    cursor += sizeof(size_t);
 
-    auto point_key_iter = server_point_key_map.find(server_id);
-    if (point_key_iter != server_point_key_map.end()) {
-      *reinterpret_cast<QueryDelimiter*>(cursor) = QueryDelimiter::kPointQueryStart;
-      cursor += sizeof(QueryDelimiter);
-      const auto &dist_array_point_key_map = point_key_iter->second;
-      *reinterpret_cast<size_t*>(cursor) = dist_array_point_key_map.size();
+    for (const auto &dist_array_point_key_pair : dist_array_point_key_map) {
+      int32_t dist_array_id = dist_array_point_key_pair.first;
+      const auto &point_key_vec = dist_array_point_key_pair.second;
+      *reinterpret_cast<int32_t*>(cursor) = dist_array_id;
+      cursor += sizeof(int32_t);
+      *reinterpret_cast<size_t*>(cursor) = point_key_vec.size();
       cursor += sizeof(size_t);
-
-      for (const auto &dist_array_point_key_pair : dist_array_point_key_map) {
-        int32_t dist_array_id = dist_array_point_key_pair.first;
-        const auto &point_key_vec = dist_array_point_key_pair.second;
-        *reinterpret_cast<int32_t*>(cursor) = dist_array_id;
-        cursor += sizeof(int32_t);
-        *reinterpret_cast<size_t*>(cursor) = point_key_vec.size();
-        cursor += sizeof(size_t);
-        for (auto &key : point_key_vec) {
-          *reinterpret_cast<int64_t*>(cursor) = key;
-          cursor += sizeof(int64_t);
-        }
-      }
-    }
-
-    auto range_key_iter = server_range_key_map.find(server_id);
-    if (range_key_iter != server_range_key_map.end()) {
-      *reinterpret_cast<QueryDelimiter*>(cursor) = QueryDelimiter::kRangeQueryStart;
-      cursor += sizeof(QueryDelimiter);
-      const auto &dist_array_range_key_map = range_key_iter->second;
-      *reinterpret_cast<size_t*>(cursor) = dist_array_range_key_map.size();
-      cursor += sizeof(size_t);
-
-      for (const auto &dist_array_range_key_pair : dist_array_range_key_map) {
-        int32_t dist_array_id = dist_array_range_key_pair.first;
-        const auto &range_key_vec = dist_array_range_key_pair.second;
-        *reinterpret_cast<int32_t*>(cursor) = dist_array_id;
-        cursor += sizeof(int32_t);
-        *reinterpret_cast<size_t*>(cursor) = range_key_vec.size();
-        cursor += sizeof(size_t);
-        for (auto &key_pair : range_key_vec) {
-          int64_t key = key_pair.first;
-          size_t num_keys = key_pair.second;
-          *reinterpret_cast<int64_t*>(cursor) = key;
-          cursor += sizeof(int64_t);
-          *reinterpret_cast<size_t*>(cursor) = num_keys;
-          cursor += sizeof(size_t);
-        }
-      }
+      memcpy(cursor, point_key_vec.data(), point_key_vec.size() * sizeof(int64_t));
+      cursor += sizeof(int64_t) * point_key_vec.size();
     }
   }
   point_prefetch_dist_array_map_.clear();
-  range_prefetch_dist_array_map_.clear();
-}
-
-void
-AbstractExecForLoop::DeserializePrefetchedData(const uint8_t* bytes) {
-
 }
 
 void
@@ -273,8 +196,6 @@ AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
   std::unordered_map<int32_t, SendDataBuffer> data_buffers;
   for (auto &dist_array_pair : time_partitioned_dist_arrays_) {
     int32_t dist_array_id = dist_array_pair.first;
-    //LOG(INFO) << __func__ << " dist_array_id = " << dist_array_id
-    //<< " time_partition_id = " << time_partition_id_to_send;
 
     auto *dist_array = dist_array_pair.second;
     auto *dist_array_partition = dist_array->GetLocalPartition(
@@ -353,11 +274,48 @@ AbstractExecForLoop::DeserializePipelinedTimePartitionsBuffVec(
 
 SendDataBuffer
 AbstractExecForLoop::GetAndResetSerializedTimePartitions() {
-  auto send_data_buffer =  std::make_pair(time_partitions_serialized_bytes_,
+  auto send_data_buffer = std::make_pair(time_partitions_serialized_bytes_,
                                           time_partitions_serialized_size_);
   time_partitions_serialized_bytes_ = nullptr;
   time_partitions_serialized_size_ = 0;
   return send_data_buffer;
+}
+
+void
+AbstractExecForLoop::CachePrefetchDistArrayValues(
+    PeerRecvGlobalIndexedDistArrayDataBuffer **buff_vec,
+    size_t num_buffs) {
+  LOG(INFO) << __func__;
+  CHECK(num_pending_prefetch_requests_ > 0);
+  for (size_t i = 0; i < num_buffs; i++) {
+    auto *buff = buff_vec[i];
+    LOG(INFO) << "i = " << i << " " << (void*) buff;
+    const auto *bytes = buff->byte_buff.data();
+    LOG(INFO) << "bytes->size() = " << buff->byte_buff.size();
+    const auto *cursor = bytes;
+    size_t num_dist_arrays = *reinterpret_cast<const size_t*>(cursor);
+    cursor += sizeof(size_t);
+    for (size_t j = 0; j < num_dist_arrays; j++) {
+      int32_t dist_array_id = *reinterpret_cast<const int32_t*>(cursor);
+      cursor += sizeof(int32_t);
+      auto iter = dist_array_cache_.find(dist_array_id);
+      CHECK(iter != dist_array_cache_.end()) << " dist_array_id = " << dist_array_id;
+      auto *cache_partition = iter->second.get();
+      LOG(INFO) << "cursor offset = " << cursor - bytes;
+      cursor = cache_partition->DeserializeAndAppend(cursor);
+    }
+    delete buff;
+  }
+  delete[] buff_vec;
+  num_pending_prefetch_requests_ -= 1;
+  if (num_pending_prefetch_requests_ == 0) {
+    prefetch_status_ = PrefetchStatus::kPrefetchRecved;
+    for (auto& dist_array_pair : global_indexed_dist_arrays_) {
+      auto dist_array_id = dist_array_pair.first;
+      auto *cache_partition = dist_array_cache_.at(dist_array_id).get();
+      cache_partition->CreateCacheAccessor();
+    }
+  }
 }
 
 }

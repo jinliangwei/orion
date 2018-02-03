@@ -74,24 +74,22 @@ void
 ExecForLoop1D::ComputePartitionIdsAndFindPartitionToExecute() {
   curr_partition_id_ = clock_ * kNumExecutors + kExecutorId;
   curr_partition_ = iteration_space_->GetLocalPartition(curr_partition_id_);
+  LOG(INFO) << __func__ << " curr_partition_id = " << curr_partition_id_
+            << " curr_partition_ = " << (void*) curr_partition_;
 }
 
 void
 ExecForLoop1D::PrepareToExecCurrPartition() {
   if (curr_partition_prepared_) return;
+  LOG(INFO) << __func__;
   for (auto& dist_array_pair : space_partitioned_dist_arrays_) {
     auto* dist_array = dist_array_pair.second;
     auto *access_partition = dist_array->GetLocalPartition(curr_partition_id_);
     access_partition->CreateAccessor();
   }
 
-  for (auto& dist_array_pair : global_indexed_dist_arrays_) {
-    auto dist_array_id = dist_array_pair.first;
-    auto *cache_partition = dist_array_cache_.at(dist_array_id).second;
-    cache_partition->CreateCacheAccessor();
-  }
-
   for (auto& buffer_pair : dist_array_buffers_) {
+    LOG(INFO) << "prepare buffer " << buffer_pair.first;
     auto* dist_array_buffer = buffer_pair.second;
     auto *buffer_partition = dist_array_buffer->GetBufferPartition();
     buffer_partition->CreateBufferAccessor();
@@ -102,24 +100,29 @@ ExecForLoop1D::PrepareToExecCurrPartition() {
 void
 ExecForLoop1D::ClearCurrPartition() {
   if (!curr_partition_prepared_) return;
+  LOG(INFO) << __func__;
   for (auto& dist_array_pair : space_partitioned_dist_arrays_) {
     auto* dist_array = dist_array_pair.second;
     auto *access_partition = dist_array->GetLocalPartition(curr_partition_id_);
     access_partition->ClearAccessor();
+    LOG(INFO) << "cleared dist_array " << dist_array_pair.first;
   }
 
   for (auto& dist_array_pair : global_indexed_dist_arrays_) {
     auto dist_array_id = dist_array_pair.first;
-    auto *cache_partition = dist_array_cache_.at(dist_array_id).second;
-    cache_partition->ClearCacheOrBufferAccessor();
+    auto *cache_partition = dist_array_cache_.at(dist_array_id).get();
+    cache_partition->ClearCacheAccessor();
+    LOG(INFO) << "cleared dist_array cache " << dist_array_pair.first;
   }
 
   for (auto& buffer_pair : dist_array_buffers_) {
     auto* dist_array_buffer = buffer_pair.second;
     auto *buffer_partition = dist_array_buffer->GetBufferPartition();
-    buffer_partition->ClearCacheOrBufferAccessor();
+    buffer_partition->ClearBufferAccessor();
+    LOG(INFO) << "cleared dist_array buffer " << buffer_pair.first;
   }
-  curr_partition_prepared_ = true;
+  curr_partition_prepared_ = false;
+  prefetch_status_ = PrefetchStatus::kNotPrefetched;
 }
 
 }

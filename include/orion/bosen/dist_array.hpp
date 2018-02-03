@@ -56,7 +56,6 @@ class DistArray {
  private:
   SpaceTimePartitionMap space_time_partitions_;
   PartitionMap partitions_;
-  std::vector<int64_t> dims_;
   DistArrayMeta meta_;
   JuliaThreadRequester *julia_requester_;
   std::vector<jl_value_t*> gc_partitions_;
@@ -96,7 +95,7 @@ class DistArray {
 
   void SetDims(const std::vector<int64_t> &dims);
   void SetDims(const int64_t* dims, size_t num_dims);
-  std::vector<int64_t> &GetDims();
+  const std::vector<int64_t> &GetDims() const;
   DistArrayMeta &GetMeta();
   type::PrimitiveType GetValueType();
   AbstractDistArrayPartition *GetLocalPartition(int32_t partition_id);
@@ -113,6 +112,11 @@ class DistArray {
   void RepartitionDeserialize(PeerRecvRepartitionDistArrayDataBuffer *data_buff_ptr);
 
   void CheckAndBuildIndex();
+
+  void GetAndSerializeValue(int64_t key, Blob *bytes_buff);
+  void GetAndSerializeValues(const int64_t *keys,
+                             size_t num_keys,
+                             Blob *bytes_buff);
 
   void GetMaxPartitionIds(std::vector<int32_t>* ids);
   void DeletePartition(int32_t partition_id);

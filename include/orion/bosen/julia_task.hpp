@@ -28,10 +28,10 @@ enum class TaskLabel {
     kSerializeGlobalIndexedDistArrays = 15,
     kSerializeDistArrayTimePartitions = 16,
     kDeserializeGlobalIndexedDistArrays = 17,
-    kDeserializeDistArrayTimePartitions = 18
-};
-
-class JuliaEvaluator;
+    kDeserializeDistArrayTimePartitions = 18,
+    kGetAndSerializeDistArrayValues = 19,
+    kCachePrefetchDistArrayValues = 20
+          };
 
 class JuliaTask {
  protected:

@@ -190,7 +190,7 @@ class JuliaEvaluator {
 
   static void SetDistArrayDims(
       const std::string &dist_array_sym,
-      std::vector<int64_t> &dims);
+      const std::vector<int64_t> &dims);
 
   static void GetDistArray(
       const std::string &dist_array_sym,
@@ -204,6 +204,11 @@ class JuliaEvaluator {
       jl_value_t *dist_array_jl,
       jl_datatype_t **value_type_ptr);
 
+  static void GetAndSerializeValue(DistArray *dist_array,
+                                   int64_t key, Blob *bytes_buff);
+  static void GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *dist_arrays,
+                                    const uint8_t *request,
+                                    Blob *bytes_buff);
 };
 
 }

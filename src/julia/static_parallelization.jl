@@ -254,6 +254,7 @@ function parallelize_1d(iteration_space::Symbol,
                         par_dims::Vector{Int64},
                         ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                         flow_graph::BasicBlock)
+    println("parallelize_1d")
     space_partition_dim = par_dims[end]
     iteration_space_dist_array = eval(current_module(), iteration_space)
     iteration_space_dims = get(iteration_space_dist_array.iterate_dims)
@@ -323,7 +324,7 @@ function parallelize_1d(iteration_space::Symbol,
             end
         end
     end
-
+    println("generate loop body function")
     loop_body_func_name = gen_unique_symbol()
     loop_batch_func_name = gen_unique_symbol()
     loop_body_func = gen_loop_body_function(loop_body_func_name,
@@ -343,12 +344,13 @@ function parallelize_1d(iteration_space::Symbol,
                                                                  iter_space_value_type,
                                                                  length(get(iteration_space_dist_array.iterate_dims)))
     end
-
+    println("generate prefetch_function")
     prefetch_func = nothing
     prefetch_batch_func = nothing
     prefetch = false
     if !isempty(global_indexed_dist_array_syms)
-        prefetch_stmts = get_prefetch_stmts(flow_graph, global_indexed_dist_array_syms)
+        prefetch_stmts = get_prefetch_stmts(flow_graph, global_indexed_dist_array_syms,
+                                            ssa_defs)
         if prefetch_stmts != nothing
             prefetch = true
             prefetch_func_name = gen_unique_symbol()
@@ -356,6 +358,7 @@ function parallelize_1d(iteration_space::Symbol,
             prefetch_func = gen_prefetch_function(prefetch_func_name,
                                                   iteration_var,
                                                   prefetch_stmts)
+            prefetch_func.args[2] = remap_ssa_vars(prefetch_func.args[2], ssa_defs)
             if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
                 prefetch_batch_func = gen_prefetch_batch_function(prefetch_batch_func_name,
                                                                   prefetch_func_name,
@@ -368,13 +371,14 @@ function parallelize_1d(iteration_space::Symbol,
             end
         end
     end
-    remap_ssa_vars(loop_body_func.args[2], ssa_defs)
-    if prefetch_func != nothing
-        remap_ssa_vars(prefetch_func.args[2], ssa_defs)
-    end
+
     eval_expr_on_all(loop_partition_func, :Main)
     for partition_func in partition_func_set
         eval_expr_on_all(partition_func, :Main)
+    end
+    if prefetch
+        eval_expr_on_all(prefetch_func, :Main)
+        eval_expr_on_all(prefetch_batch_func, :Main)
     end
     eval_expr_on_all(loop_body_func, :Main)
     eval_expr_on_all(loop_batch_func, :Main)
@@ -383,13 +387,14 @@ function parallelize_1d(iteration_space::Symbol,
     prefetch_batch_func_name_str = prefetch ? string(prefetch_batch_func_name) : ""
     buffered_dist_array_ids = Vector{Int32}()
     dist_array_buffer_ids = Vector{Int32}()
-    num_buffers_each_dist_array = Vector{Int32}()
+    num_buffers_each_dist_array = Vector{UInt64}()
 
     for dist_array_id in global_indexed_dist_array_ids
         if dist_array_id in keys(dist_array_buffer_map)
             push!(buffered_dist_array_ids, dist_array_id)
             buff_info = dist_array_buffer_map[dist_array_id]
-            push!(num_buffers_each_dist_array, length(buff_info.helper_buffer_vec))
+            push!(num_buffers_each_dist_array, length(buff_info.helper_buffer_vec) + 1)
+            push!(dist_array_buffer_ids, buff_info.buffer_id)
             append!(dist_array_buffer_ids, buff_info.helper_buffer_vec)
         end
     end
@@ -397,7 +402,7 @@ function parallelize_1d(iteration_space::Symbol,
     exec_loop_stmt = :(Orion.exec_for_loop($(iteration_space_dist_array.id),
                                            Orion.ForLoopParallelScheme_1d,
                                            $(space_partitioned_dist_array_ids),
-                                           Vector{Int64}(),
+                                           Vector{Int32}(),
                                            $(global_indexed_dist_array_ids),
                                            $(buffered_dist_array_ids),
                                            $(dist_array_buffer_ids),
@@ -530,7 +535,8 @@ function parallelize_2d(iteration_space::Symbol,
     prefetch_func = nothing
     prefetch = false
     if !isempty(global_indexed_dist_array_syms)
-        prefetch_stmts = get_prefetch_stmts(flow_graph, global_indexed_dist_array_syms)
+        prefetch_stmts = get_prefetch_stmts(flow_graph, global_indexed_dist_array_syms,
+                                            ssa_defs)
         if prefetch_stmts != nothing
             prefetch = true
             prefetch_func_name = gen_unique_symbol()
@@ -538,6 +544,7 @@ function parallelize_2d(iteration_space::Symbol,
             prefetch_func = gen_prefetch_function(prefetch_func_name,
                                                   iteration_var,
                                                   prefetch_stmts)
+            prefetch_func.args[2] = remap_ssa_vars(prefetch_func.args[2], ssa_defs)
             if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
                 prefetch_batch_func = gen_prefetch_batch_function(prefetch_batch_func_name,
                                                                   prefetch_func_name,
@@ -554,6 +561,10 @@ function parallelize_2d(iteration_space::Symbol,
     eval_expr_on_all(loop_partition_func, :Main)
     for partition_func in partition_func_set
         eval_expr_on_all(partition_func, :Main)
+    end
+    if prefetch
+        eval_expr_on_all(prefetch_func, :Main)
+        eval_expr_on_all(prefetch_batch_func, :Main)
     end
     eval_expr_on_all(loop_body_func, :Main)
     eval_expr_on_all(loop_batch_func, :Main)
@@ -659,9 +670,12 @@ function static_parallelize(iteration_space::Symbol,
     iteration_space = iteration_space
     iteration_space_dist_array = eval(current_module(), iteration_space)
     num_dims = length(get(iteration_space_dist_array.iterate_dims))
+    println("get_dist_array_access")
     dist_array_access_dict = get_dist_array_access(flow_graph, iteration_var, ssa_defs)
+    println("compute_dependence_vectors")
     dep_vecs = compute_dependence_vectors(dist_array_access_dict, is_ordered)
     par_scheme = determine_parallelization_scheme(dep_vecs, num_dims)
+
     if par_scheme[1] == ForLoopParallelScheme_naive
         println("parallel naive")
         return parallelize_naive(iteration_space,

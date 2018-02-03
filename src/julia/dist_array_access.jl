@@ -1,3 +1,4 @@
+import Base: linearindexing, size, getindex, setindex!
 type GetDistArrayAccessContext
     iteration_var::Symbol
     ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}}
@@ -31,7 +32,6 @@ function get_dist_array_access_visit(expr,
                     if referenced_var in keys(ssa_defs)
                         referenced_var = ssa_defs[referenced_var][1]
                     end
-                    println("referencing ", referenced_var)
                     if isdefined(current_module(), referenced_var) &&
                         isa(eval(current_module(), referenced_var), DistArray)
                         da_access = DistArrayAccess(referenced_var, false)
@@ -131,8 +131,9 @@ function get_dist_array_access(par_for_loop_entry::BasicBlock,
                                iteration_var::Symbol,
                                ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
     da_access_context = GetDistArrayAccessContext(iteration_var, ssa_defs)
-    traverse_for_loop(par_for_loop_entry,
-                      get_dist_array_access_bb,
-                      da_access_context)
+    traverse_flow_graph(par_for_loop_entry,
+                        get_dist_array_access_bb,
+                        da_access_context)
+    println("before return")
     return da_access_context.access_dict
 end

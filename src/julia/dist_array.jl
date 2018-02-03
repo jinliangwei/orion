@@ -354,6 +354,11 @@ function dist_array_get_value_type{T, N}(dist_array::AbstractDistArray{T, N})
     return T
 end
 
+function dist_array_set_num_partitions_per_dim(dist_array::AbstractDistArray,
+                                               num_partitions_per_dim::Int)
+    return dist_array.num_partitions_per_dim = num_partitions_per_dim
+end
+
 function text_file(file_path::AbstractString,
                    map_func::Function;
                    is_dense::Bool = false,
@@ -381,9 +386,13 @@ function text_file(file_path::AbstractString,
         map_type = DistArrayMapType_map_values
     end
 
-    if new_keys && num_dims == 0
-        @assert key_num_dims > 0
-        num_dims = key_num_dims
+    if new_keys
+        if num_dims == 0
+            @assert key_num_dims > 0
+            num_dims = key_num_dims
+        else
+            @assert key_num_dims == num_dims
+        end
     end
 
     global dist_array_id_counter
@@ -460,7 +469,7 @@ function rand(ValueType::DataType, dims...)::DenseDistArray
     global dist_array_id_counter
     id = dist_array_id_counter
     dist_array_id_counter += 1
-    dist_array = DenseDistArray{ValueType}(
+    dist_array = DenseDistArray{ValueType, length(dims)}(
         id,
         DistArrayParentType_init,
         DistArrayMapType_no_map)
@@ -472,7 +481,7 @@ function rand(ValueType::DataType, dims...)::DenseDistArray
     dist_array.partition_info = DistArrayPartitionInfo(DistArrayPartitionType_range,
                                                        DistArrayIndexType_none)
 
-    dist_array.dims = Nullable{Vector{Int64}}([dims...])
+    dist_array.dims = [dims...]
     dist_array.iterate_dims = Nullable{Vector{Int64}}([dims...])
     dist_arrays[id] = dist_array
     return dist_array
@@ -808,7 +817,7 @@ end
 
 function check_and_repartition(dist_array::DistArray,
                                partition_info::DistArrayPartitionInfo)
-    println("check_and_repartition ", dist_array.id)
+    println("check_and_repartition ", dist_array.id, " ", partition_info.partition_type)
     curr_partition_info = dist_array.partition_info
     dist_array.target_partition_info = Nullable{DistArrayPartitionInfo}()
     repartition = false
@@ -914,31 +923,38 @@ end
 function create_dist_array_cache_accessor{T, N}(
     dist_array::DistArray{T, N},
     keys::Vector{Int64},
-    values::Vector)
-    dist_array.accessor = Nullable{DistArrayCacheAccessor{T, N}}(
+    values::Vector{T})
+    dist_array.cache_accessor = Nullable{DistArrayCacheAccessor{T, N}}(
         DistArrayCacheAccessor{T, N}(dist_array.id,
                                      keys, values,
                                      dist_array.dims))
 
 end
 
-function delete_dist_array_accessor{T, N}(dist_array::AbstractDistArray{T, N})
+function delete_dist_array_accessor{T, N}(dist_array::DistArray{T, N})
     dist_array.accessor = Nullable{DistArrayAccessor{T, N}}()
+    dist_array.cache_accessor = Nullable{DistArrayAccessor{T, N}}()
 end
 
-function dist_array_get_accessor_keys_vec(dist_array::AbstractDistArray)::Vector{Int64}
-    dist_array_accessor_get_keys_vec(get(dist_array.accessor))
+function dist_array_get_accessor_keys_vec(dist_array::DistArray)::Vector{Int64}
+    accessor = isnull(dist_array.cache_accessor) ?
+        get(dist_array.accessor) :
+        get(dist_array.cache_accessor)
+    dist_array_accessor_get_keys_vec(accessor)
 end
 
-function dist_array_get_accessor_values_vec(dist_array::AbstractDistArray)::Vector
-    dist_array_accessor_get_values_vec(get(dist_array.accessor))
+function dist_array_get_accessor_values_vec(dist_array::DistArray)::Vector
+    accessor = isnull(dist_array.cache_accessor) ?
+        get(dist_array.accessor) :
+        get(dist_array.cache_accessor)
+    dist_array_accessor_get_values_vec(accessor)
 end
 
 function Base.size(dist_array::AbstractDistArray)
     return tuple(dist_array.dims...)
 end
 
-function Base.getindex(dist_array::AbstractDistArray,
+function Base.getindex(dist_array::DistArray,
                        I...)
     if !isnull(dist_array.cache_accessor)
         accessor = get(dist_array.cache_accessor)
@@ -950,8 +966,7 @@ function Base.getindex(dist_array::AbstractDistArray,
 
 end
 
-
-function Base.setindex!(dist_array::AbstractDistArray,
+function Base.setindex!(dist_array::DistArray,
                         v, I...)
     accessor = get(dist_array.accessor)
     setindex!(accessor, v, I...)
@@ -978,4 +993,78 @@ end
 
 function dist_array_clear_partition(partition::DistArrayPartition)
     resize!(partition.values, 0)
+end
+
+immutable DistArrayAccessSetRecorder{N} <: AbstractArray{Int32, N}
+    keys_set::Set{Int64}
+    dims::NTuple{N, Int64}
+    DistArrayAccessSetRecorder(dims::Vector{Int64}) = new(Set{Int64}(),
+                                                          tuple(dims...))
+
+    DistArrayAccessSetRecorder(dims::NTuple{N, Int64}) = new(Set{Int64}(),
+                                                             dims)
+end
+
+function Base.linearindexing{T<:DistArrayAccessSetRecorder}(::Type{T})
+    return Base.LinearFast()
+end
+
+function Base.size(access_recorder::DistArrayAccessSetRecorder)
+    return access_recorder.dims
+end
+
+function Base.getindex(access_recorder::DistArrayAccessSetRecorder,
+                       i::Int)
+    push!(access_recorder.keys_set, i)
+    return 0
+end
+
+function Base.setindex!(access_reorder::DistArrayAccessSetRecorder,
+                        v,
+                        i::Int)
+    @assert false "no writes supported"
+end
+
+function Base.similar{T, N}(access_recorder::DistArrayAccessSetRecorder{N},
+                            ::Type{T}, dims::NTuple{N, Int64})
+    return DistArrayAccessSetRecorder{N}(dims)
+end
+
+immutable DistArrayAccessCountRecorder{N} <: AbstractArray{Int32, N}
+    keys_dict::Dict{Int64, UInt64}
+    dims::NTuple{N, Int64}
+    DistArrayAccessCountRecorder(dims::Vector{Int64}) = new(Dict{Int64, UInt64}(),
+                                                            tuple(dims...))
+
+    DistArrayAccessCountRecorder(dims::NTuple{N, Int64}) = new(Dict{Int64, UInt64}(),
+                                                               dims)
+end
+
+function Base.linearindexing{T<:DistArrayAccessCountRecorder}(::Type{T})
+    return Base.LinearFast()
+end
+
+function Base.size(access_recorder::DistArrayAccessCountRecorder)
+    return access_recorder.dims
+end
+
+function Base.getindex(access_recorder::DistArrayAccessCountRecorder,
+                       i::Int)
+    if i in keys(access_recorder.keys_dict)
+        access_recorder.keys_dict[i] += 1
+    else
+        access_recorder.keys_dict[i] = 1
+    end
+    return 0
+end
+
+function Base.setindex!(access_reorder::DistArrayAccessCountRecorder,
+                        v,
+                        i::Int)
+    @assert false "no writes supported"
+end
+
+function Base.similar{T, N}(access_recorder::DistArrayAccessCountRecorder{N},
+                            ::Type{T}, dims::NTuple{N, Int64})
+    return DistArrayAccessCountRecorder{N}(dims)
 end

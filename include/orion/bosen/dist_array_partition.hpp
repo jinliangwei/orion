@@ -40,9 +40,12 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   void ClearAccessor();
   void CreateCacheAccessor();
   void CreateBufferAccessor();
-  void ClearCacheOrBufferAccessor();
+  void ClearCacheAccessor();
+  void ClearBufferAccessor();
   void BuildKeyValueBuffersFromSparseIndex();
-  void BuildIndex();
+  void GetAndSerializeValue(int64_t key, Blob *bytes_buff);
+  void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
+                             Blob *bytes_buff);
 
   void Repartition(const int32_t *repartition_ids);
   SendDataBuffer Serialize();
@@ -139,13 +142,13 @@ DistArrayPartition<ValueType>::ClearAccessor() {
     JL_GC_PUSH2(&keys_array_jl, &values_array_jl);
 
     auto *get_keys_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
-        "dist_array_get_keys_vec");
+        "dist_array_get_accessor_keys_vec");
     keys_array_jl = jl_call1(get_keys_vec_func, dist_array_jl);
     auto *keys_vec = reinterpret_cast<int64_t*>(jl_array_data(keys_array_jl));
     size_t num_keys = jl_array_len(keys_array_jl);
 
     auto *get_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
-        "dist_array_get_values_vec");
+        "dist_array_get_accesor_values_vec");
     values_array_jl = jl_call1(get_values_vec_func, dist_array_jl);
     auto *values_vec = reinterpret_cast<ValueType*>(jl_array_data(values_array_jl));
     keys_.resize(num_keys);
@@ -211,7 +214,7 @@ DistArrayPartition<ValueType>::CreateBufferAccessor() {
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::ClearCacheOrBufferAccessor() {
+DistArrayPartition<ValueType>::ClearCacheAccessor() {
   jl_value_t* keys_array_jl = nullptr;
   jl_value_t* values_array_jl = nullptr;
   JL_GC_PUSH2(keys_array_jl, &values_array_jl);
@@ -222,20 +225,61 @@ DistArrayPartition<ValueType>::ClearCacheOrBufferAccessor() {
   JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
 
   auto *get_keys_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
-      "dist_array_get_keys_vec");
+      "dist_array_get_accessor_keys_vec");
   keys_array_jl = jl_call1(get_keys_vec_func, dist_array_jl);
+  JuliaEvaluator::AbortIfException();
+  LOG(INFO) << "call done";
   auto *keys_vec = reinterpret_cast<int64_t*>(jl_array_data(keys_array_jl));
   size_t num_keys = jl_array_len(keys_array_jl);
+  keys_.resize(num_keys);
 
   auto *get_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
-    "dist_array_get_values_vec");
+    "dist_array_get_accessor_values_vec");
   values_array_jl = jl_call1(get_values_vec_func, dist_array_jl);
   auto *values_vec = reinterpret_cast<ValueType*>(jl_array_data(values_array_jl));
-  keys_.resize(num_keys);
   values_.resize(num_keys);
 
   memcpy(keys_.data(), keys_vec, num_keys * sizeof(int64_t));
   memcpy(values_.data(), values_vec, num_keys * sizeof(ValueType));
+
+  auto *delete_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
+      "delete_dist_array_accessor");
+  jl_call1(delete_accessor_func, dist_array_jl);
+  JuliaEvaluator::AbortIfException();
+  sorted_ = false;
+  JL_GC_POP();
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::ClearBufferAccessor() {
+  jl_value_t* keys_array_jl = nullptr;
+  jl_value_t* values_array_jl = nullptr;
+  JL_GC_PUSH2(keys_array_jl, &values_array_jl);
+
+  auto &dist_array_meta = dist_array_->GetMeta();
+  const std::string &symbol = dist_array_meta.GetSymbol();
+  jl_value_t *dist_array_jl = nullptr;
+  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  bool is_dense = dist_array_meta.IsDense();
+  if (!is_dense) {
+    auto *get_keys_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
+        "dist_array_get_accessor_keys_vec");
+    keys_array_jl = jl_call1(get_keys_vec_func, dist_array_jl);
+    auto *keys_vec = reinterpret_cast<int64_t*>(jl_array_data(keys_array_jl));
+    size_t num_keys = jl_array_len(keys_array_jl);
+    keys_.resize(num_keys);
+    memcpy(keys_.data(), keys_vec, num_keys * sizeof(int64_t));
+  } else {
+    key_start_ = 0;
+  }
+  auto *get_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
+    "dist_array_get_accessor_values_vec");
+  values_array_jl = jl_call1(get_values_vec_func, dist_array_jl);
+  size_t num_values = jl_array_len(values_array_jl);
+  auto *values_vec = reinterpret_cast<ValueType*>(jl_array_data(values_array_jl));
+  values_.resize(num_values);
+  memcpy(values_.data(), values_vec, num_values * sizeof(ValueType));
 
   auto *delete_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
       "delete_dist_array_accessor");
@@ -266,18 +310,6 @@ DistArrayPartition<ValueType>::BuildKeyValueBuffersFromSparseIndex() {
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::BuildIndex() {
-  auto &dist_array_meta = dist_array_->GetMeta();
-  bool is_dense = dist_array_meta.IsDense();
-  if (is_dense) {
-    BuildDenseIndex();
-  } else {
-    BuildSparseIndex();
-  }
-}
-
-template<typename ValueType>
-void
 DistArrayPartition<ValueType>::BuildDenseIndex() {
   Sort();
   if (keys_.size() > 0) key_start_ = keys_[0];
@@ -295,6 +327,44 @@ DistArrayPartition<ValueType>::BuildSparseIndex() {
   values_.clear();
   sparse_index_exists_ = true;
 }
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::GetAndSerializeValue(int64_t key,
+                                                    Blob *bytes_buff) {
+  auto iter = sparse_index_.find(key);
+  CHECK (iter != sparse_index_.end());
+  auto value = iter->second;
+  bytes_buff->resize(sizeof(ValueType));
+  *(reinterpret_cast<ValueType*>(bytes_buff->data())) = value;
+}
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::GetAndSerializeValues(const int64_t *keys,
+                                                     size_t num_keys,
+                                                     Blob *bytes_buff) {
+  bytes_buff->resize(sizeof(bool) + sizeof(size_t)
+                     + (sizeof(int64_t) + sizeof(ValueType)) * num_keys);
+
+  auto *cursor = bytes_buff->data();
+  *reinterpret_cast<bool*>(cursor) = false;
+  cursor += sizeof(bool);
+  *reinterpret_cast<size_t*>(cursor) = num_keys;
+  cursor += sizeof(size_t);
+  memcpy(cursor, keys, sizeof(int64_t) * num_keys);
+  cursor += sizeof(int64_t) * num_keys;
+  for (size_t i = 0; i < num_keys; i++) {
+    auto key = keys[i];
+    auto iter = sparse_index_.find(key);
+    CHECK (iter != sparse_index_.end()) << " i = " << i
+                                        << " key = " << key
+                                        << " size = " << sparse_index_.size();
+    auto value = iter->second;
+    *reinterpret_cast<ValueType*>(cursor) = value;
+  }
+}
+
 
 template<typename ValueType>
 void
@@ -436,6 +506,7 @@ DistArrayPartition<ValueType>::DeserializeAndAppend(const uint8_t *buffer) {
   const uint8_t* cursor = buffer;
   cursor += sizeof(bool);
   size_t num_keys = *(reinterpret_cast<const size_t*>(cursor));
+  LOG(INFO) << __func__ << " num_keys = " << num_keys;
   cursor += sizeof(size_t);
   size_t orig_num_keys = keys_.size();
   keys_.resize(orig_num_keys + num_keys);
@@ -502,9 +573,12 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
   void ClearAccessor();
   void CreateCacheAccessor();
   void CreateBufferAccessor();
-  void ClearCacheOrBufferAccessor();
+  void ClearCacheAccessor();
+  void ClearBufferAccessor();
   void BuildKeyValueBuffersFromSparseIndex();
-  void BuildIndex();
+  void GetAndSerializeValue(int64_t key, Blob *bytes_buff);
+  void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
+                             Blob *bytes_buff);
 
   void Repartition(const int32_t *repartition_ids);
   SendDataBuffer Serialize();
@@ -548,9 +622,12 @@ class DistArrayPartition<void> : public AbstractDistArrayPartition {
   void ClearAccessor();
   void CreateCacheAccessor();
   void CreateBufferAccessor();
-  void ClearCacheOrBufferAccessor();
+  void ClearCacheAccessor();
+  void ClearBufferAccessor();
   void BuildKeyValueBuffersFromSparseIndex();
-  void BuildIndex();
+  void GetAndSerializeValue(int64_t key, Blob *bytes_buff);
+  void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
+                             Blob *bytes_buff);
 
   void Repartition(const int32_t *repartition_ids);
   SendDataBuffer Serialize();

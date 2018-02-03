@@ -31,6 +31,7 @@
 #include <orion/bosen/exec_for_loop_1d.hpp>
 #include <orion/bosen/exec_for_loop_space_time_unordered.hpp>
 #include <orion/bosen/worker.h>
+#include <orion/bosen/dist_array_value_request_meta.hpp>
 
 namespace orion {
 namespace bosen {
@@ -232,6 +233,8 @@ class Executor {
   std::unique_ptr<AbstractExecForLoop> exec_for_loop_;
 
   bool repartition_recv_ { false };
+
+  DistArrayValueRequestMeta dist_array_value_request_meta_;
  public:
   Executor(const Config& config, int32_t local_index, bool is_server);
   ~Executor();
@@ -277,6 +280,10 @@ class Executor {
   void RequestExecForLoopGlobalIndexedDistArrays();
   void RequestExecForLoopPipelinedTimePartitions();
   bool CheckAndRequestExecForLoopPredecesorCompletion();
+  void SerializeAndSendExecForLoopPrefetchRequests();
+  void ReplyDistArrayValues();
+  void CacheGlobalIndexedDistArrayValues(PeerRecvGlobalIndexedDistArrayDataBuffer **buff_vec,
+                                         size_t num_buffs);
 
   void GetAccumulatorValue();
   void ReplyGetAccumulatorValue();
@@ -327,8 +334,12 @@ Executor::Executor(const Config& config,
     thread_pool_(config.kExecutorThreadPoolSize, config.kCommBuffCapacity),
     julia_eval_recv_mem_(kCommBuffCapacity),
     julia_eval_send_mem_(kCommBuffCapacity),
-    julia_eval_thread_(kCommBuffCapacity, config.kOrionHome,
-                       kNumServers, kNumExecutors),
+    julia_eval_thread_(kCommBuffCapacity,
+                       config.kOrionHome,
+                       kNumServers,
+                       kNumExecutors,
+                       kIsServer ? kServerId : kExecutorId,
+                       !kIsServer),
     julia_requester_(julia_eval_thread_.GetJuliaThreadRequester()),
     host_info_(kNumExecutors + config.kNumServers),
     prt_send_mem_(kCommBuffCapacity),
@@ -596,7 +607,6 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         break;
       case Action::kTextFileLoadAck:
         {
-          LOG(INFO) << "TextFileLoadAck";
           message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgTextFileLoadAck>(
               &send_buff_,
               exec_cpp_func_task_.result_buff.size() / sizeof(int64_t),
@@ -613,7 +623,6 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         break;
       case Action::kCreateDistArrayAck:
         {
-          LOG(INFO) << "CreateDistArrayAck";
           message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgCreateDistArrayAck>(
               &send_buff_, dist_array_under_operation_);
           Send(&master_poll_conn_, &master_);
@@ -646,12 +655,15 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         break;
       case Action::kRepartitionDistArray:
         {
-          LOG(INFO) << "RepartitionDistArray";
           bool repartition_mine = RepartitionDistArray();
           if (!repartition_mine && !repartition_recv_)
             action_ = Action::kRepartitionDistArrayAck;
-          else
+          else {
+            if (!repartition_mine && repartition_recv_) {
+              event_handler_.SetToReadOnly(&prt_poll_conn_);
+            }
             action_ = Action::kNone;
+          }
         }
         break;
       case Action::kRepartitionDistArraySerialize:
@@ -662,6 +674,9 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           if (!serialized && !repartition_recv_) {
             action_ = Action::kRepartitionDistArrayAck;
           } else {
+            if (!serialized && repartition_recv_) {
+              event_handler_.SetToReadOnly(&prt_poll_conn_);
+            }
             action_ = Action::kNone;
           }
         }
@@ -671,7 +686,11 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           RepartitionDistArraySend();
           if (repartition_recv_)
             event_handler_.SetToReadOnly(&prt_poll_conn_);
-          action_ = Action::kNone;
+          if (!repartition_recv_) {
+            action_ = Action::kRepartitionDistArrayAck;
+          } else {
+            action_ = Action::kNone;
+          }
         }
         break;
       case Action::kCreateExecForLoop:
@@ -863,11 +882,11 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         action_ = Action::kNone;
       }
       break;
-    case message::ExecuteMsgType::kReplyPipelinedTimePartitions:
+    case message::ExecuteMsgType::kReplyExecForLoopPipelinedTimePartitions:
       {
         action_ = Action::kNone;
         auto *msg = message::ExecuteMsgHelper::get_msg<
-          message::ExecuteMsgReplyPipelinedTimePartitions>(recv_buff);
+          message::ExecuteMsgReplyExecForLoopPipelinedTimePartitions>(recv_buff);
 
         auto **buff_vec = reinterpret_cast<
           PeerRecvPipelinedTimePartitionsBuffer**>(msg->data_buff_vec);
@@ -887,11 +906,84 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         ret = EventHandler<PollConn>::kClearOneMsg;
       }
       break;
-    case message::ExecuteMsgType::kPredCompletion:
+    case message::ExecuteMsgType::kReplyExecForLoopPredecessorCompletion:
       {
-        LOG(INFO) << "received PredCompletion";
         CHECK(exec_for_loop_.get());
         ExecForLoopAck();
+        int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
+        CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
+        ret = EventHandler<PollConn>::kClearOneMsg;
+      }
+      break;
+    case message::ExecuteMsgType::kRequestDistArrayValue:
+      {
+        int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
+        CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
+        ret = EventHandler<PollConn>::kClearOneMsg;
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgRequestDistArrayValue>(recv_buff);
+        int32_t dist_array_id = msg->dist_array_id;
+        int64_t key = msg->key;
+        dist_array_value_request_meta_.requester_id = msg->requester_id;
+        dist_array_value_request_meta_.is_requester_executor = msg->is_requester_executor;
+
+        auto dist_array_iter = dist_arrays_.find(dist_array_id);
+        CHECK(dist_array_iter != dist_arrays_.end());
+        auto *dist_array_ptr = &dist_array_iter->second;
+
+        auto cpp_func = std::bind(
+            JuliaEvaluator::GetAndSerializeValue,
+            dist_array_ptr,
+            key,
+            &exec_cpp_func_task_.result_buff);
+          exec_cpp_func_task_.func = cpp_func;
+          exec_cpp_func_task_.label = TaskLabel::kGetAndSerializeDistArrayValues;
+          julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+      }
+      break;
+    case message::ExecuteMsgType::kRequestDistArrayValues:
+      {
+        LOG(INFO) << "RequestDistArrayValues received";
+        int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
+        CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgRequestDistArrayValues>(recv_buff);
+        dist_array_value_request_meta_.requester_id = msg->requester_id;
+        dist_array_value_request_meta_.is_requester_executor = msg->is_requester_executor;
+
+        size_t expected_size = msg->request_size;
+        auto &pipe = reinterpret_cast<conn::PipeConn*>(prt_poll_conn_.conn)->pipe;
+        bool received_next_msg =
+            ReceiveArbitraryBytes(pipe, &recv_buff,
+                                  &prt_recv_byte_buff_,
+                                  expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          const auto* request = prt_recv_byte_buff_.GetBytes();
+          auto cpp_func = std::bind(
+              JuliaEvaluator::GetAndSerializeValues,
+              &dist_arrays_,
+              request,
+              &exec_cpp_func_task_.result_buff);
+          exec_cpp_func_task_.func = cpp_func;
+          exec_cpp_func_task_.label = TaskLabel::kGetAndSerializeDistArrayValues;
+          julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+        } else {
+          ret = EventHandler<PollConn>::kNoAction;
+        }
+      }
+      break;
+    case message::ExecuteMsgType::kReplyExecForLoopGlobalIndexedDistArrayData:
+      {
+        action_ = Action::kNone;
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgReplyExecForLoopGlobalIndexedDistArrayData>(recv_buff);
+
+        auto **buff_vec = reinterpret_cast<
+          PeerRecvGlobalIndexedDistArrayDataBuffer**>(msg->data_buff_vec);
+        size_t num_buffs = msg->num_data_buffs;
+
+        CacheGlobalIndexedDistArrayValues(buff_vec, num_buffs);
         int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
         ret = EventHandler<PollConn>::kClearOneMsg;
@@ -1023,12 +1115,44 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
                 action_ = Action::kCreateDistArrayAck;
               }
               break;
+            case TaskLabel::kComputePrefetchIndices:
+              {
+                LOG(INFO) << "ComputePrefetchIndices done!";
+                SerializeAndSendExecForLoopPrefetchRequests();
+                CheckAndExecuteForLoop(false);
+              }
+              break;
+            case TaskLabel::kGetAndSerializeDistArrayValues:
+              {
+                ReplyDistArrayValues();
+                event_handler_.SetToReadOnly(&prt_poll_conn_);
+              }
+              break;
+            case TaskLabel::kCachePrefetchDistArrayValues:
+              {
+                CheckAndExecuteForLoop(false);
+              }
+              break;
             default:
               LOG(FATAL) << "unknown task label";
           }
         } else {
           action_ = Action::kExecutorAck;
         }
+      }
+      break;
+    case message::ExecuteMsgType::kRequestDistArrayValue:
+      {
+        auto *msg = message::Helper::get_msg<
+          message::ExecuteMsgRequestDistArrayValue>(recv_buff);
+        int64_t key = msg->key;
+        int32_t server_id = key % kNumServers;
+        send_buff_.Copy(recv_buff);
+        Send(&server_conn_[server_id], server_[server_id].get());
+        send_buff_.clear_to_send();
+        send_buff_.reset_sent_sizes();
+        event_handler_.SetToReadOnly(&prt_poll_conn_);
+        RequestExecForLoopGlobalIndexedDistArrays();
       }
       break;
     default:
@@ -1111,7 +1235,7 @@ Executor::HandleExecuteMsg() {
 
           auto &dist_array_meta = dist_array.GetMeta();
           const auto &dist_array_symbol = dist_array_meta.GetSymbol();
-          auto &dist_array_dims = dist_array.GetDims();
+          const auto &dist_array_dims = dist_array.GetDims();
 
           auto cpp_func = std::bind(
               JuliaEvaluator::SetDistArrayDims,
@@ -1559,6 +1683,9 @@ Executor::RepartitionDistArray() {
   auto &meta = dist_array_to_repartition.GetMeta();
   auto orig_partition_scheme = meta.GetPartitionScheme();
 
+  meta.SetPartitionScheme(partition_scheme);
+  meta.SetIndexType(index_type);
+
   bool from_server = orig_partition_scheme == DistArrayPartitionScheme::kHashServer;
   bool to_server = partition_scheme == DistArrayPartitionScheme::kHashServer;
 
@@ -1569,10 +1696,11 @@ Executor::RepartitionDistArray() {
     repartition_recv_ = false;
   }
 
-  if ((from_server && !kIsServer) || (!from_server && kIsServer)) return false;
+  LOG(INFO) << "from_server = " << from_server
+            << " to_server = " << to_server
+            << " kIsServer = " << kIsServer;
 
-  meta.SetPartitionScheme(partition_scheme);
-  meta.SetIndexType(index_type);
+  if ((from_server && !kIsServer) || (!from_server && kIsServer)) return false;
 
   std::function<void()> cpp_func;
   if (partition_scheme == DistArrayPartitionScheme::kSpaceTime ||
@@ -1634,6 +1762,7 @@ Executor::RepartitionDistArraySerialize(int32_t dist_array_id,
 
 void
 Executor::RepartitionDistArraySend() {
+  LOG(INFO) << __func__;
   auto dist_array_id = dist_array_under_operation_;
   auto &dist_array_to_repartition = dist_arrays_.at(dist_array_under_operation_);
   auto &meta = dist_array_to_repartition.GetMeta();
@@ -1653,6 +1782,7 @@ Executor::RepartitionDistArraySend() {
   auto &receiver = to_server ? server_ : executor_;
   for (size_t recv_id = 0; recv_id < num_receivers; recv_id++) {
     if (recv_id == skip_id) continue;
+    LOG(INFO) << "send to " << recv_id;
     auto iter = repartition_send_buffer_.find(recv_id);
     if (iter == repartition_send_buffer_.end()) {
       message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayData>(
@@ -1748,8 +1878,7 @@ Executor::DefineJuliaDistArray() {
   }
 
   auto &meta = dist_array.GetMeta();
-  auto &dims = meta.GetDims();
-  const auto &init_value = meta.GetInitValue();
+  const auto &dims = meta.GetDims();
   auto cpp_func = std::bind(
       JuliaEvaluator::DefineDistArray,
       id,
@@ -1758,7 +1887,7 @@ Executor::DefineJuliaDistArray() {
       dims,
       is_dense,
       false,
-      init_value);
+      std::vector<uint8_t>());
 
   exec_cpp_func_task_.func = cpp_func;
   exec_cpp_func_task_.label = TaskLabel::kDefineJuliaDistArray;
@@ -1864,4 +1993,5 @@ Executor::ReplyGetAccumulatorValue() {
 }
 
 }
+
 }

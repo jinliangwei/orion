@@ -13,7 +13,9 @@ JuliaThreadRequester::RequestDistArrayData(
     type::PrimitiveType value_type,
     jl_value_t **value) {
   message::ExecuteMsgHelper::CreateMsg<
-    message::ExecuteMsgRequestDistArrayValue>(&send_buff_, dist_array_id, key);
+    message::ExecuteMsgRequestDistArrayValue>(&send_buff_, dist_array_id, key,
+                                              kMyExecutorOrServerId,
+                                              kIsExecutor);
   bool sent = write_pipe_.Send(&send_buff_);
   if (!sent) {
     int ret = poll_.Add(write_pipe_.get_write_fd(), &write_pipe_, EPOLLOUT);

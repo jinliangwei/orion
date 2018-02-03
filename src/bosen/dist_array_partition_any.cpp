@@ -74,7 +74,7 @@ DistArrayPartition<void>::ClearAccessor() {
   JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
 
   auto *get_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
-      "dist_array_get_values_vec");
+      "dist_array_get_accessor_values_vec");
   values_array_jl = jl_call1(get_values_vec_func, dist_array_jl);
   auto *set_values_array_func = JuliaEvaluator::GetOrionWorkerFunction(
       "dist_array_partition_set_values");
@@ -83,7 +83,7 @@ DistArrayPartition<void>::ClearAccessor() {
 
   if (!is_dense) {
     auto *get_keys_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
-        "dist_array_get_keys_vec");
+        "dist_array_get_accessor_keys_vec");
     keys_array_jl = jl_call1(get_keys_vec_func, dist_array_jl);
     auto *keys_vec = reinterpret_cast<int64_t*>(jl_array_data(keys_array_jl));
     size_t num_keys = jl_array_len(keys_array_jl);
@@ -137,7 +137,7 @@ DistArrayPartition<void>::CreateBufferAccessor() {
 }
 
 void
-DistArrayPartition<void>::ClearCacheOrBufferAccessor() {
+DistArrayPartition<void>::ClearCacheAccessor() {
   jl_value_t* keys_array_jl = nullptr;
   jl_value_t* values_array_jl = nullptr;
   JL_GC_PUSH2(&keys_array_jl, &values_array_jl);
@@ -147,7 +147,7 @@ DistArrayPartition<void>::ClearCacheOrBufferAccessor() {
   JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
 
   auto *get_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
-      "dist_array_get_values_vec");
+      "dist_array_get_accessor_values_vec");
   values_array_jl = jl_call1(get_values_vec_func, dist_array_jl);
   auto *set_values_array_func = JuliaEvaluator::GetOrionWorkerFunction(
       "dist_array_partition_set_values");
@@ -155,12 +155,51 @@ DistArrayPartition<void>::ClearCacheOrBufferAccessor() {
   values_array_jl_ = values_array_jl;
 
   auto *get_keys_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
-      "dist_array_get_keys_vec");
+      "dist_array_get_accessor_keys_vec");
   keys_array_jl = jl_call1(get_keys_vec_func, dist_array_jl);
   auto *keys_vec = reinterpret_cast<int64_t*>(jl_array_data(keys_array_jl));
   size_t num_keys = jl_array_len(keys_array_jl);
   keys_.resize(num_keys);
   memcpy(keys_.data(), keys_vec, num_keys * sizeof(int64_t));
+
+  auto *delete_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
+      "delete_dist_array_accessor");
+  jl_call1(delete_accessor_func, dist_array_jl);
+  JuliaEvaluator::AbortIfException();
+  JL_GC_POP();
+  sorted_ = false;
+}
+
+void
+DistArrayPartition<void>::ClearBufferAccessor() {
+  jl_value_t* keys_array_jl = nullptr;
+  jl_value_t* values_array_jl = nullptr;
+  JL_GC_PUSH2(&keys_array_jl, &values_array_jl);
+  auto &dist_array_meta = dist_array_->GetMeta();
+  const std::string &symbol = dist_array_meta.GetSymbol();
+  jl_value_t *dist_array_jl = nullptr;
+  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+
+  auto *get_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
+      "dist_array_get_accessor_values_vec");
+  values_array_jl = jl_call1(get_values_vec_func, dist_array_jl);
+  auto *set_values_array_func = JuliaEvaluator::GetOrionWorkerFunction(
+      "dist_array_partition_set_values");
+  jl_call2(set_values_array_func, partition_jl_, values_array_jl);
+  values_array_jl_ = values_array_jl;
+
+  bool is_dense = dist_array_meta.IsDense();
+  if (!is_dense) {
+    auto *get_keys_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
+        "dist_array_get_accessor_keys_vec");
+    keys_array_jl = jl_call1(get_keys_vec_func, dist_array_jl);
+    auto *keys_vec = reinterpret_cast<int64_t*>(jl_array_data(keys_array_jl));
+    size_t num_keys = jl_array_len(keys_array_jl);
+    keys_.resize(num_keys);
+    memcpy(keys_.data(), keys_vec, num_keys * sizeof(int64_t));
+  } else {
+    key_start_ = 0;
+  }
 
   auto *delete_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
       "delete_dist_array_accessor");
@@ -186,17 +225,6 @@ DistArrayPartition<void>::BuildKeyValueBuffersFromSparseIndex() {
 }
 
 void
-DistArrayPartition<void>::BuildIndex() {
-  auto &dist_array_meta = dist_array_->GetMeta();
-  bool is_dense = dist_array_meta.IsDense();
-  if (is_dense) {
-    BuildDenseIndex();
-  } else {
-    BuildSparseIndex();
-  }
-}
-
-void
 DistArrayPartition<void>::BuildDenseIndex() {
   Sort();
   if (keys_.size() > 0) key_start_ = keys_[0];
@@ -210,6 +238,92 @@ DistArrayPartition<void>::BuildSparseIndex() {
   }
   keys_.clear();
   sparse_index_exists_ = true;
+}
+
+void
+DistArrayPartition<void>::GetAndSerializeValue(
+    int64_t key, Blob *bytes_buff) {
+  jl_value_t *buff = nullptr;
+  jl_value_t *serialized_result_array = nullptr;
+  JL_GC_PUSH2(&buff, &serialized_result_array);
+  jl_function_t *io_buffer_func
+      = JuliaEvaluator::GetFunction(jl_base_module, "IOBuffer");
+  jl_function_t *serialize_func
+      = JuliaEvaluator::GetFunction(jl_base_module, "serialize");
+  jl_function_t *takebuff_array_func
+      = JuliaEvaluator::GetFunction(jl_base_module, "takebuf_array");
+
+  auto iter = sparse_index_.find(key);
+  CHECK(iter != sparse_index_.end());
+  size_t offset = iter->second;
+  jl_value_t *value = jl_arrayref(reinterpret_cast<jl_array_t*>(values_array_jl_),
+                                  offset);
+
+  buff = jl_call0(io_buffer_func);
+  jl_call2(serialize_func, buff, value);
+  serialized_result_array = jl_call1(takebuff_array_func, buff);
+  size_t result_array_length = jl_array_len(serialized_result_array);
+  uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
+  bytes_buff->resize(sizeof(size_t) + result_array_length);
+  *reinterpret_cast<size_t*>(bytes_buff->data()) = result_array_length;
+  memcpy(bytes_buff->data() + sizeof(size_t), array_bytes, result_array_length);
+  JL_GC_POP();
+}
+
+void
+DistArrayPartition<void>::GetAndSerializeValues(
+    const int64_t *keys,
+    size_t num_keys,
+    Blob *bytes_buff) {
+  jl_value_t *buff = nullptr;
+  jl_value_t *serialized_result_array = nullptr;
+  JL_GC_PUSH2(&buff, &serialized_result_array);
+  std::vector<Blob> value_buff_vec(num_keys);
+  size_t accum_size = 0;
+
+  jl_function_t *io_buffer_func
+      = JuliaEvaluator::GetFunction(jl_base_module, "IOBuffer");
+  jl_function_t *serialize_func
+      = JuliaEvaluator::GetFunction(jl_base_module, "serialize");
+  jl_function_t *takebuff_array_func
+      = JuliaEvaluator::GetFunction(jl_base_module, "takebuf_array");
+  buff = jl_call0(io_buffer_func);
+
+  for (size_t i = 0; i < num_keys; i++) {
+    auto key = keys[i];
+    auto iter = sparse_index_.find(key);
+    CHECK(iter != sparse_index_.end());
+    size_t offset = iter->second;
+    jl_value_t *value = jl_arrayref(reinterpret_cast<jl_array_t*>(values_array_jl_),
+                                    offset);
+    jl_call2(serialize_func, buff, value);
+    serialized_result_array = jl_call1(takebuff_array_func, buff);
+
+    auto &value_buff = value_buff_vec[i];
+    size_t result_array_length = jl_array_len(serialized_result_array);
+    uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
+    accum_size += sizeof(size_t) + result_array_length;
+    value_buff.resize(result_array_length);
+    memcpy(value_buff.data(), array_bytes, result_array_length);
+  }
+
+  bytes_buff->resize(sizeof(bool) + sizeof(size_t)
+                     + sizeof(int64_t) * num_keys + accum_size);
+  auto *cursor = bytes_buff->data();
+  *reinterpret_cast<bool*>(cursor) = false;
+  cursor += sizeof(bool);
+  *reinterpret_cast<size_t*>(cursor) = num_keys;
+  cursor += sizeof(size_t);
+  memcpy(cursor, keys, sizeof(int64_t) * num_keys);
+  cursor += sizeof(int64_t) * num_keys;
+
+  for (auto &value_buff : value_buff_vec) {
+    *reinterpret_cast<size_t*>(cursor) = value_buff.size();
+    cursor += sizeof(size_t);
+    memcpy(cursor, value_buff.data(), value_buff.size());
+    cursor += value_buff.size();
+  }
+  JL_GC_POP();
 }
 
 void

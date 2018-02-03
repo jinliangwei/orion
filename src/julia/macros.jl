@@ -40,7 +40,7 @@ function parallelize_for_loop(loop_stmt::Expr, is_ordered::Bool)
     bc_vars = get_vars_to_broadcast(scope_context)
 
     loop_body = for_get_loop_body(loop_stmt)
-    @time (flow_graph, _, ssa_context) = flow_analysis(loop_stmt)
+    @time (flow_graph, _, ssa_context) = flow_analysis(loop_body)
 
     inherited_var = scope_context.inherited_var
     inherited_vars_to_mark_global = Set{Symbol}()
@@ -52,10 +52,10 @@ function parallelize_for_loop(loop_stmt::Expr, is_ordered::Bool)
         end
     end
 
-
     parallelized_loop = quote end
     define_dynamic_bc_vars_stmt = :(Orion.define_vars($bc_vars))
     push!(parallelized_loop.args, define_dynamic_bc_vars_stmt)
+    println("before static_parallelize")
     exec_loop_stmts = static_parallelize(iteration_space,
                                          iteration_var,
                                          inherited_vars_to_mark_global,

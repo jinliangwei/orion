@@ -138,7 +138,6 @@ class PeerRecvThread {
   PeerRecvPipelinedTimePartitionsBuffer* pipelined_time_partitions_buff_ { nullptr };
 
   std::vector<PeerRecvGlobalIndexedDistArrayDataBuffer*> global_indexed_dist_arrays_buff_vec_;
-  PeerRecvGlobalIndexedDistArrayDataBuffer* global_indexed_dist_arrays_buff_ { nullptr };
   bool has_executor_requested_global_indexed_dist_array_data_ { false };
 
   bool pred_completed_ { false };
@@ -236,7 +235,7 @@ PeerRecvThread::operator() () {
     auto &curr_poll_conn = executor_server_conn_[peer_index];
     curr_poll_conn.conn = sock_conn;
     curr_poll_conn.type = PollConn::ConnType::executor;
-    curr_poll_conn.id = peer_index;
+    curr_poll_conn.id = peer_index >= kNumExecutors ? peer_index - kNumExecutors : peer_index;
     int ret = event_handler_.SetToReadOnly(&curr_poll_conn);
     CHECK_EQ(ret, 0) << "errno = " << errno << " fd = " << sock.get_fd()
                      << " i = " << peer_index
@@ -306,6 +305,7 @@ PeerRecvThread::HandleExecutorMsg() {
       break;
     case message::ExecuteMsgType::kRequestExecForLoopGlobalIndexedDistArrays:
       {
+        LOG(INFO) << "executor request global indexed dist_arrays";
         has_executor_requested_global_indexed_dist_array_data_ = true;
         ServeGlobalIndexedDistArrayDataRequest();
         ret = EventHandler<PollConn>::kClearOneMsg;
@@ -370,6 +370,8 @@ PeerRecvThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
         server_[msg->server_id].reset(sock_conn);
         executor_server_sock_fds_[msg->server_id + kNumExecutors] = sock_conn->sock.get_fd();
         poll_conn_ptr->id = msg->server_id;
+        LOG(INFO) << "ptr = " << (void*) poll_conn_ptr
+                  << " id = " << poll_conn_ptr->id;
         poll_conn_ptr->type = PollConn::ConnType::server;
         num_identified_peers_++;
         if (kIsServer) {
@@ -410,9 +412,11 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
   auto msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
   int ret = EventHandler<PollConn>::kClearOneMsg;
   int32_t sender_id = poll_conn_ptr->id;
+  LOG(INFO) << __func__ << " ptr = " << (void*) poll_conn_ptr;
   switch (msg_type) {
     case message::ExecuteMsgType::kRepartitionDistArrayData:
       {
+        LOG(INFO) << "received RepartitionDistArrayData from " << sender_id;
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgRepartitionDistArrayData>(recv_buff);
         size_t expected_size = msg->data_size;
@@ -488,16 +492,76 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
         } else if (expected_size == 0) {
-          return EventHandler<PollConn>::kClearOneMsg;
+          ret = EventHandler<PollConn>::kClearOneMsg;
         } else {
-          return EventHandler<PollConn>::kNoAction;
+          ret = EventHandler<PollConn>::kNoAction;
         }
       }
       break;
-    case message::ExecuteMsgType::kPredCompletion:
+    case message::ExecuteMsgType::kReplyExecForLoopPredecessorCompletion:
       {
         pred_completed_ = true;
         ServeExecForLoopPredCompletion();
+      }
+      break;
+    case message::ExecuteMsgType::kRequestDistArrayValue:
+      {
+        send_buff_.Copy(recv_buff);
+        SendToExecutor();
+        send_buff_.clear_to_send();
+        send_buff_.reset_sent_sizes();
+        ret = EventHandler<PollConn>::kClearOneMsg;
+      }
+      break;
+    case message::ExecuteMsgType::kRequestDistArrayValues:
+      {
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgRequestDistArrayValues>(recv_buff);
+        size_t expected_size = msg->request_size;
+        auto &recv_byte_buff
+            = msg->is_requester_executor ? peer_recv_byte_buff_[sender_id]
+            : server_recv_byte_buff_[sender_id];
+        bool received_next_msg = ReceiveArbitraryBytes(
+            sock, &recv_buff,
+            &recv_byte_buff, expected_size);
+        if (received_next_msg) {
+          send_buff_.Copy(recv_buff);
+          send_buff_.set_next_to_send(recv_byte_buff.GetBytes(),
+                                      recv_byte_buff.GetSize());
+          SendToExecutor();
+          send_buff_.clear_to_send();
+          send_buff_.reset_sent_sizes();
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+        } else {
+          ret = EventHandler<PollConn>::kNoAction;
+        }
+      }
+      break;
+    case message::ExecuteMsgType::kReplyDistArrayValues:
+      {
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgReplyDistArrayValues>(recv_buff);
+        size_t expected_size = msg->reply_size;
+        LOG(INFO) << __func__ << " ReplyDistArrayValues, expected_size = "
+                  << expected_size
+                  << " sender_id = " << sender_id;
+        auto &recv_byte_buff = server_recv_byte_buff_[sender_id];
+        bool received_next_msg = ReceiveArbitraryBytes(
+            sock, &recv_buff,
+            &recv_byte_buff, expected_size);
+        if (received_next_msg) {
+          auto *global_indexed_dist_array_data_buff = new PeerRecvGlobalIndexedDistArrayDataBuffer();
+          global_indexed_dist_array_data_buff->server_id = sender_id;
+          global_indexed_dist_array_data_buff->byte_buff.resize(recv_byte_buff.GetSize());
+          memcpy(global_indexed_dist_array_data_buff->byte_buff.data(),
+                 recv_byte_buff.GetBytes(), recv_byte_buff.GetSize());
+          global_indexed_dist_arrays_buff_vec_.push_back(global_indexed_dist_array_data_buff);
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          recv_byte_buff.Reset(0);
+          ServeGlobalIndexedDistArrayDataRequest();
+        } else {
+          ret = EventHandler<PollConn>::kNoAction;
+        }
       }
       break;
     default:
@@ -521,7 +585,7 @@ PeerRecvThread::ServePipelinedTimePartitionsRequest() {
   auto* buff_vec = new PeerRecvPipelinedTimePartitionsBuffer*[pipelined_time_partitions_buff_vec_.size()];
   memcpy(buff_vec, pipelined_time_partitions_buff_vec_.data(),
          pipelined_time_partitions_buff_vec_.size() * sizeof(PeerRecvPipelinedTimePartitionsBuffer*));
-  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyPipelinedTimePartitions>(
+  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyExecForLoopPipelinedTimePartitions>(
       &send_buff_, buff_vec, pipelined_time_partitions_buff_vec_.size());
   pipelined_time_partitions_buff_vec_.clear();
   has_executor_requested_pipeline_time_partitions_ = false;
@@ -532,15 +596,29 @@ PeerRecvThread::ServePipelinedTimePartitionsRequest() {
 
 void
 PeerRecvThread::ServeGlobalIndexedDistArrayDataRequest() {
-
+  LOG(INFO) << __func__ << " "
+            << has_executor_requested_global_indexed_dist_array_data_
+            << " " << global_indexed_dist_arrays_buff_vec_.size();
+  if (!has_executor_requested_global_indexed_dist_array_data_) return;
+  if (global_indexed_dist_arrays_buff_vec_.empty()) return;
+  auto *buff_vec = new PeerRecvGlobalIndexedDistArrayDataBuffer*[global_indexed_dist_arrays_buff_vec_.size()];
+  memcpy(buff_vec, global_indexed_dist_arrays_buff_vec_.data(),
+         global_indexed_dist_arrays_buff_vec_.size() * sizeof(PeerRecvGlobalIndexedDistArrayDataBuffer*));
+  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyExecForLoopGlobalIndexedDistArrayData>(
+      &send_buff_, buff_vec, global_indexed_dist_arrays_buff_vec_.size());
+  global_indexed_dist_arrays_buff_vec_.clear();
+  has_executor_requested_global_indexed_dist_array_data_ = false;
+  SendToExecutor();
+  send_buff_.clear_to_send();
+  send_buff_.reset_sent_sizes();
 }
 
 void
 PeerRecvThread::ServeExecForLoopPredCompletion() {
   if (!has_executor_requested_pred_completion_) return;
   if (!pred_completed_) return;
-  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgPredCompletion>(
-      &send_buff_);
+  message::ExecuteMsgHelper::CreateMsg<
+    message::ExecuteMsgReplyExecForLoopPredecessorCompletion>(&send_buff_);
   has_executor_requested_pred_completion_ = false;
   SendToExecutor();
   send_buff_.clear_to_send();

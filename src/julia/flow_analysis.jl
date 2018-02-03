@@ -110,6 +110,7 @@ function print_basic_block(bb::BasicBlock)
     println("dominance frontier = ", Base.map(x -> x.id, bb.df), "]")
     println("ssa_defsout = [", bb.ssa_defsout, "]")
     println("ssa_reaches = [", bb.ssa_reaches, "]")
+    println("control_flow = ", bb.control_flow)
     println("stmts = [")
     for stmt in bb.stmts
         println("  ", stmt)
@@ -160,7 +161,7 @@ function build_flow_graph(expr::Expr, bb::BasicBlock,
                           build_context::FlowGraphContext)::Vector{BasicBlock}
     exit_bbs = Vector{BasicBlock}()
     if !isa(expr, Expr)
-        push!(bb.stmts, expr)
+        push!(bb.stmts, copy(expr))
         push!(exit_bbs, bb)
         return exit_bbs
     end
@@ -207,7 +208,6 @@ function build_flow_graph(expr::Expr, bb::BasicBlock,
         end
         loop_condition_bb.control_flow = expr.head
         push!(loop_condition_bb.stmts, copy(loop_condition))
-
         true_bb_entry = create_basic_block(build_context)
         true_bb_exits = build_flow_graph(for_get_loop_body(expr),
                                          true_bb_entry,
@@ -644,26 +644,25 @@ function print_ssa_defs(ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
 end
 
 function compute_ssa_defs(bb_list::Vector{BasicBlock})
-    println("*****compute_ssa_defs********")
     ssa_context = SsaContext()
     for bb in bb_list
         compute_ssa_defs_basic_block(bb, ssa_context)
     end
-    println("*****compute_ssa_defs end*******")
     return ssa_context
 end
 
 function compute_ssa_defs_stmt(stmt,
                                context::SsaContext,
                                sym_to_ssa_var_map::Dict{Symbol, Symbol},
-                               bb_ssa_defs::Set{Symbol})
+                               bb_ssa_defs::Set{Symbol},
+                               stmt_ssa_defs::Set{Symbol})
     if isa(stmt, Tuple)
         sym = stmt[1]
         def = stmt[2]
         ssa_var = gen_unique_sp_symbol()
         context.ssa_defs[ssa_var] = (sym, VarDef(def))
-        println("add ssa_var = ", ssa_var, " ", stmt)
         push!(bb_ssa_defs, ssa_var)
+        push!(stmt_ssa_defs, ssa_var)
         sym_to_ssa_var_map[sym] = ssa_var
         return (sym, def, ssa_var)
     elseif isa(stmt, Symbol)
@@ -693,12 +692,13 @@ function compute_ssa_defs_stmt(stmt,
             end
 
             assigned_expr = compute_ssa_defs_stmt(assigned_expr,
-                                                  context, sym_to_ssa_var_map, bb_ssa_defs)
+                                                  context, sym_to_ssa_var_map, bb_ssa_defs,
+                                                  stmt_ssa_defs)
             if isa(assigned_to, Symbol)
                 ssa_var = gen_unique_sp_symbol()
                 context.ssa_defs[ssa_var] = (assigned_to, VarDef(assigned_expr))
-                println("add ssa_var = ", ssa_var, " ", stmt)
                 push!(bb_ssa_defs, ssa_var)
+                push!(stmt_ssa_defs, ssa_var)
                 sym_to_ssa_var_map[assigned_to] = ssa_var
                 return :($ssa_var = $assigned_expr)
             else
@@ -720,13 +720,11 @@ function compute_ssa_defs_stmt(stmt,
                         context.ssa_defs[new_ssa_var][2].mutation = stmt
                         push!(bb_ssa_defs, new_ssa_var)
                     end
-                    println("add ssa_var = ", new_ssa_var, " ", stmt)
-                end
-                if var_mutated != nothing
+                    push!(stmt_ssa_defs, new_ssa_var)
                     sym_to_ssa_var_map[var_mutated] = new_ssa_var
                 end
                 assigned_to = compute_ssa_defs_stmt(assigned_to, context, sym_to_ssa_var_map,
-                                                    bb_ssa_defs)
+                                                    bb_ssa_defs, stmt_ssa_defs)
 
                 return :($assigned_to = $assigned_expr)
             end
@@ -737,7 +735,8 @@ function compute_ssa_defs_stmt(stmt,
                     arg = arguments[idx]
                     stmt.args[idx + 1] = compute_ssa_defs_stmt(arg, context,
                                                                sym_to_ssa_var_map,
-                                                               bb_ssa_defs)
+                                                               bb_ssa_defs,
+                                                               stmt_ssa_defs)
                 end
             else
                 for idx in eachindex(arguments)
@@ -745,14 +744,15 @@ function compute_ssa_defs_stmt(stmt,
                     var_mutated = nothing
                     if isa(arg, Symbol)
                         var_mutated = arg
-                    elseif isa(arg, Expr)
-                        @assert (is_ref(arg) || is_dot(arg))
+                    elseif isa(arg, Expr) && (is_ref(arg) || is_dot(arg))
                         var_mutated = ref_dot_get_mutated_var(arg)
                     end
-                    arg_copy = isa(arg, Expr) ? copy(arg) : arg
+                    #arg_copy = isa(arg, Expr) ? copy(arg) : arg
+                    arg_copy = arg
                     stmt.args[idx + 1] = compute_ssa_defs_stmt(arg_copy, context,
                                                                sym_to_ssa_var_map,
-                                                               bb_ssa_defs)
+                                                               bb_ssa_defs,
+                                                               stmt_ssa_defs)
                     if var_mutated != nothing
                         new_ssa_var = gen_unique_sp_symbol()
                         if var_mutated in keys(sym_to_ssa_var_map)
@@ -768,8 +768,8 @@ function compute_ssa_defs_stmt(stmt,
                             context.ssa_defs[new_ssa_var][2].mutation = stmt
                             push!(bb_ssa_defs, new_ssa_var)
                         end
+                        push!(stmt_ssa_defs, new_ssa_var)
                         sym_to_ssa_var_map[var_mutated] = new_ssa_var
-                        println("add ssa_var = ", new_ssa_var, " ", stmt)
                     end
                 end
             end
@@ -805,9 +805,14 @@ function compute_ssa_defs_basic_block(bb::BasicBlock,
     sym_to_ssa_var_map = bb.sym_to_ssa_var_map
     for idx in eachindex(bb.stmts)
         stmt = bb.stmts[idx]
+        stmt_ssa_defs = Set{Symbol}()
         bb.stmts[idx] = compute_ssa_defs_stmt(stmt, context,
                                               sym_to_ssa_var_map,
-                                              bb.ssa_defs)
+                                              bb.ssa_defs,
+                                              stmt_ssa_defs)
+        if !isempty(stmt_ssa_defs)
+            bb.stmt_ssa_defs[idx] = stmt_ssa_defs
+        end
     end
     for (sym, def) in bb.defsout
         @assert sym in keys(sym_to_ssa_var_map)
@@ -910,18 +915,14 @@ function propagate_ssa_reaches(bb::BasicBlock,
     end
 end
 
-function compute_stmt_ssa_defuses(bb_list::Vector{BasicBlock})
+function compute_stmt_ssa_uses(bb_list::Vector{BasicBlock})
     for bb in bb_list
         for idx in eachindex(bb.stmts)
             stmt = bb.stmts[idx]
-            stmt_ssa_defs = Set{Symbol}()
             stmt_ssa_uses = Set{Symbol}()
-            compute_stmt_ssa_defuses_stmt(stmt,
-                                          stmt_ssa_defs,
-                                          stmt_ssa_uses)
-            if !isempty(stmt_ssa_defs)
-                bb.stmt_ssa_defs[idx] = stmt_ssa_defs
-            end
+            compute_stmt_ssa_uses_stmt(stmt,
+                                       stmt_ssa_uses)
+
             if !isempty(stmt_ssa_uses)
                 bb.stmt_ssa_uses[idx] = stmt_ssa_uses
             end
@@ -946,14 +947,12 @@ function get_stmt_ssa_defuses_visit(expr::Any,
     return expr
 end
 
-function compute_stmt_ssa_defuses_stmt(stmt,
-                                       stmt_ssa_defs::Set{Symbol},
-                                       stmt_ssa_uses::Set{Symbol})
+function compute_stmt_ssa_uses_stmt(stmt,
+                                    stmt_ssa_uses::Set{Symbol})
     if isa(stmt, Tuple)
         sym = stmt[1]
         def = stmt[2]
         ssa_sym = stmt[3]
-        push!(stmt_ssa_defs, ssa_sym)
         for use_sym in def
             push!(stmt_ssa_uses, use_sym)
         end
@@ -963,43 +962,23 @@ function compute_stmt_ssa_defuses_stmt(stmt,
     elseif isa(stmt, Expr)
         if is_assignment(stmt)
             @assert stmt.head == :(=)
-            compute_stmt_ssa_defuses_stmt(assignment_get_assigned_from(stmt),
-                                          stmt_ssa_defs, stmt_ssa_uses)
+            compute_stmt_ssa_uses_stmt(assignment_get_assigned_from(stmt),
+                                       stmt_ssa_uses)
             assigned_to = assignment_get_assigned_to(stmt)
-            if isa(assigned_to, Symbol)
-                push!(stmt_ssa_defs, assigned_to)
-            else
+            if isa(assigned_to, Expr)
                 @assert isa(assigned_to, Expr)
                 @assert is_ref(assigned_to) || is_dot(assigned_to)
                 var_mutated = ref_dot_get_mutated_var(assigned_to)
-
                 if var_mutated != nothing
                     @assert isa(var_mutated, Symbol)
-                    push!(stmt_ssa_defs, var_mutated)
+                    push!(stmt_ssa_uses, var_mutated)
                 end
-                compute_stmt_ssa_defuses_stmt(assigned_to,
-                                               stmt_ssa_defs, stmt_ssa_uses)
+                compute_stmt_ssa_uses_stmt(assigned_to, stmt_ssa_uses)
             end
         elseif stmt.head in Set([:call, :invoke, :call1, :foreigncall])
             arguments = call_get_arguments(stmt)
-            if call_get_func_name(stmt) in Set([:+, :-, :*, :/, :(.*), :(./), :dot, :eachindex])
-                for arg in arguments
-                    compute_stmt_ssa_defuses_stmt(arg, stmt_ssa_defs, stmt_ssa_uses)
-                end
-            else
-                for arg in arguments
-                    compute_stmt_ssa_defuses_stmt(arg, stmt_ssa_defs, stmt_ssa_uses)
-                    if isa(arg, Symbol)
-                        var_mutated = arg
-                    elseif isa(arg, Expr) &&
-                        (is_ref(arg) || is_dot(arg))
-                        var_mutated = ref_dot_get_mutated_var(arg)
-                    end
-
-                    if var_mutated != nothing
-                        push!(stmt_ssa_defs, var_mutated)
-                    end
-                end
+            for arg in arguments
+                compute_stmt_ssa_uses_stmt(arg, stmt_ssa_uses)
             end
         else
             stmt = AstWalk.ast_walk(stmt, get_stmt_ssa_defuses_visit, stmt_ssa_uses)
@@ -1010,7 +989,6 @@ end
 function flow_analysis(expr::Expr)
     flow_graph_entry, flow_graph_exits, context = build_flow_graph(expr)
     bb_list = flow_graph_to_list(flow_graph_entry)
-    print_flow_graph(flow_graph_entry)
     compute_use_def(bb_list)
     compute_dominators(bb_list)
     compute_im_doms(bb_list)
@@ -1020,36 +998,35 @@ function flow_analysis(expr::Expr)
 
     insert_phi(bb_list, put_phi_here)
     ssa_context = compute_ssa_defs(bb_list)
-    print_ssa_defs(ssa_context.ssa_defs)
     compute_ssa_reaches(bb_list, ssa_context)
-    compute_stmt_ssa_defuses(bb_list)
+    compute_stmt_ssa_uses(bb_list)
     return flow_graph_entry, context, ssa_context
 end
 
-function traverse_for_loop(loop_entry::BasicBlock,
-                           callback,
-                           cbdata)
-    bb_list = Vector{BasicBlock}()
-    push!(bb_list, loop_entry)
-    for suc in loop_entry.successors
-        if suc[1] == true
-            push!(bb_list, suc[2])
-        end
-    end
+#function traverse_for_loop(loop_entry::BasicBlock,
+#                           callback,
+#                           cbdata)
+#    bb_list = Vector{BasicBlock}()
+#    push!(bb_list, loop_entry)
+#    for suc in loop_entry.successors
+#        if suc[1] == true
+#            push!(bb_list, suc[2])
+#        end
+#    end
 
-    visited = Set{Int64}()
-    while !isempty(bb_list)
-        bb = shift!(bb_list)
-        if bb.id in visited
-            continue
-        end
-        push!(visited, bb.id)
-        callback(bb, cbdata)
-        for suc in bb.successors
-            push!(bb_list, suc[2])
-        end
-    end
-end
+#    visited = Set{Int64}()
+#    while !isempty(bb_list)
+#        bb = shift!(bb_list)
+#        if bb.id in visited
+#            continue
+#        end
+#        push!(visited, bb.id)
+#        callback(bb, cbdata)
+#        for suc in bb.successors
+#            push!(bb_list, suc[2])
+#        end
+#    end
+#end
 
 # returns a tuple (sub_value, loop_index_dim, offset)
 function eval_subscript_expr(expr,
@@ -1075,7 +1052,8 @@ function eval_subscript_expr(expr,
             return eval_subscript_expr(eval(current_module(), expr),
                                        iteration_var, ssa_defs)
         else
-            error("accessing undefined var ", expr)
+            return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
+            #error("accessing undefined var ", expr)
         end
     elseif isa(expr, Number)
         return (DistArrayAccessSubscript_value_static, nothing, expr)
@@ -1161,26 +1139,9 @@ function eval_subscript_expr(expr,
     end
 end
 
-function remap_ssa_vars_visit(expr::Any,
-                              ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
-                              top_level::Integer,
-                              is_top_level::Bool,
-                              read::Bool)
-    if isa(expr, Symbol) &&
-        expr in keys(ssa_defs)
-        return ssa_defs[expr][1]
-    elseif isa(expr, Expr)
-        if expr.head == :line
-            return expr
-        end
-        return AstWalk.AST_WALK_RECURSE
-    end
-    return expr
-end
-
-function remap_ssa_vars(expr, ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
-    AstWalk.ast_walk(expr, remap_ssa_vars_visit, ssa_defs)
-end
+# Deleted symbols are SSA variables whose definition depends on
+# reads from a DistArray other than the iteration space
+# and SSA variables that recursively depend on them.
 
 function get_deleted_syms(bb_list::Vector{BasicBlock})
     syms_deleted = Set{Symbol}()
@@ -1192,7 +1153,6 @@ function get_deleted_syms(bb_list::Vector{BasicBlock})
         for (stmt_idx, access_dict) in stmt_access_dict
             read = false
             for (da_sym, access_vec) in access_dict
-                subscripts_vec = Vector{Any}()
                 for access in access_vec
                     if access.is_read
                         read = true
@@ -1265,66 +1225,66 @@ function get_deleted_syms(bb_list::Vector{BasicBlock})
     return syms_deleted
 end
 
-function transform_dist_array_read_set(dist_array_read::Tuple)
-    da_sym = dist_array_read[1]
-    subscripts_vec = dist_array_read[2]
-    subscript_to_index_func_call = :(Orion.subscript_to_index($da_sym))
-    for sub in subscripts_vec
-        push!(subscript_to_index_func_call.args, sub)
-    end
-    append_stmt = quote
-        indices = $(subscript_to_index_func_call)
-        if indices[2] == 1
-            for key in indices[1]
-                push!(oriongen_prefetch_point_dict[$da_sym.id], key)
-            end
-        else
-            for key in indices[1]
-                push!(oriongen_prefetch_range_dict[$da_sym.id], (key, indices[2]))
-            end
+
+function remap_ssa_vars_visit(expr::Any,
+                              ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
+                              top_level::Integer,
+                              is_top_level::Bool,
+                              read::Bool)
+    if isa(expr, Symbol) &&
+        expr in keys(ssa_defs)
+        return ssa_defs[expr][1]
+    elseif isa(expr, Expr)
+        if expr.head == :line
+            return expr
         end
+        return AstWalk.AST_WALK_RECURSE
     end
-    return append_stmt.args
+    return expr
 end
 
-function transform_dist_array_read_dict(dist_array_read::Tuple)
+function remap_ssa_vars(expr, ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
+    return AstWalk.ast_walk(isa(expr, Expr) ? copy(expr) : expr, remap_ssa_vars_visit, ssa_defs)
+end
+
+
+function transform_dist_array_read_set(dist_array_read::Tuple,
+                                       ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
     da_sym = dist_array_read[1]
     subscripts_vec = dist_array_read[2]
-    subscript_to_index_func_call = :(Orion.subscript_to_index($da_sym))
+    record_access_stmt = :(oriongen_prefetch_point_dict[$da_sym.id][])
+
     for sub in subscripts_vec
-        push!(subscript_to_index_func_call.args, sub)
+        #remapped_sub = remap_ssa_vars(sub, ssa_defs)
+        push!(record_access_stmt.args, sub)
     end
-    append_stmt = quote
-        indices = $(subscript_to_index_func_call)
-        if indices[2] == 1
-            for key in indices[1]
-                if key in keys(oriongen_prefetch_point_dict[$da_sym.id])
-                    oriongen_prefetch_point_dict[$da_sym.id][key] += 1
-                else
-                    oriongen_prefetch_point_dict[$da_sym.id][key] = 1
-                end
-            end
-        else
-            for key in indices[1]
-                for i in 0:indices[2]
-                    k = key + i
-                    if k in keys(oriongen_prefetch_point_dict[$da_sym.id])
-                        oriongen_access_count_dict[$da_sym.id][k] += 1
-                    else
-                        oriongen_access_count_dict[$da_sym.id][k] = 1
-                    end
-                end
-            end
-        end
+    temp_var = gen_unique_sp_symbol()
+    stmt_block = quote
+        $temp_var = $record_access_stmt
     end
-    return append_stmt.args
+    return stmt_block.args
+end
+
+function transform_dist_array_read_dict(dist_array_read::Tuple,
+                                        ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
+    da_sym = dist_array_read[1]
+    subscripts_vec = dist_array_read[2]
+    record_access_stmt = :(oriongen_access_count_dict[$da_sym.id][])
+
+    for sub in subscripts_vec
+        #remapped_sub = remap_ssa_vars(sub, ssa_defs)
+        push!(record_access_stmt.args, sub)
+    end
+    temp_var = gen_unique_sp_symbol()
+    return [:($temp_var = $record_access_stmt)]
 end
 
 function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                         bb_stmts_dict::Dict{Int64, Dict{Int64, Any}},
                                         transform_dist_array_read_func::Function,
                                         stmt_vec::Vector{Any},
-                                        appended_bbs::Set{Int64})
+                                        appended_bbs::Set{Int64},
+                                        ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
     println("recreate_stmts_from_flow_graph ", bb.id)
     if bb.id in keys(bb_stmts_dict) &&
         length(bb_stmts_dict[bb.id]) > 0
@@ -1338,8 +1298,8 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
             if isa(stmt, Vector)
                 for dist_array_read in stmt
                     @assert isa(dist_array_read, Tuple)
-                    stmt_vec = transform_dist_array_read_func(dist_array_read)
-                    append!(stmt_vec, stmt_vec)
+                    transformed_read_stmt = transform_dist_array_read_func(dist_array_read, ssa_defs)
+                    append!(stmt_vec, transformed_read_stmt)
                 end
             elseif !isa(stmt, Tuple)
                 push!(stmt_vec, stmt)
@@ -1363,7 +1323,8 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                                                       bb_stmts_dict,
                                                                       transform_dist_array_read_func,
                                                                       true_branch_stmt_vec,
-                                                                      appended_bbs)
+                                                                      appended_bbs,
+                                                                      ssa_defs)
             end
         end
         if !isempty(true_branch_stmt_vec)
@@ -1378,7 +1339,8 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                                                bb_stmts_dict,
                                                                transform_dist_array_read_func,
                                                                stmt_vec,
-                                                               appended_bbs)
+                                                               appended_bbs,
+                                                               ssa_defs)
             end
         end
         @assert default_suc != nothing &&
@@ -1398,13 +1360,15 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                                                     bb_stmts_dict,
                                                                     transform_dist_array_read_func,
                                                                     true_branch_stmt_vec,
-                                                                    appended_bbs)
+                                                                    appended_bbs,
+                                                                    ssa_defs)
             else
                 false_unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
                                                                      bb_stmts_dict,
                                                                      transform_dist_array_read_func,
                                                                      false_branch_stmt_vec,
-                                                                     appended_bbs)
+                                                                     appended_bbs,
+                                                                     ssa_defs)
 
             end
         end
@@ -1440,7 +1404,8 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                                                     bb_stmts_dict,
                                                                     transform_dist_array_read_func,
                                                                     true_branch_stmt_vec,
-                                                                    appended_bbs)
+                                                                    appended_bbs,
+                                                                    ssa_defs)
             end
         end
         @assert true_unhandled_suc == nothing
@@ -1456,7 +1421,8 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                                                      bb_stmts_dict,
                                                                      transform_dist_array_read_func,
                                                                      stmt_vec,
-                                                                     appended_bbs)
+                                                                     appended_bbs,
+                                                                     ssa_defs)
 
             end
         end
@@ -1482,7 +1448,8 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                                            bb_stmts_dict,
                                                            transform_dist_array_read_func,
                                                            stmt_vec,
-                                                           appended_bbs)
+                                                           appended_bbs,
+                                                           ssa_defs)
         else
             unhandled_suc = suc_bb
         end
@@ -1491,12 +1458,14 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
 end
 
 function get_prefetch_stmts(flow_graph::BasicBlock,
-                            dist_array_syms::Set{Symbol})
-    println("get_prefetch_stmts")
+                            dist_array_syms::Set{Symbol},
+                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
     bb_list = flow_graph_to_list(flow_graph)
 
     syms_deleted = get_deleted_syms(bb_list)
 
+    # The set of symbols to be defined include symbols that are
+    # used to define DistArray access subscripts
     bb_stmt_dict = Dict{Int64, Dict{Int64, Any}}()
     syms_to_be_defined = Set{Symbol}()
     for bb in bb_list
@@ -1521,9 +1490,8 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                     sub_stmt_uses = Set{Symbol}()
                     for sub in access.subscripts
                         push!(subscripts_vec, sub.expr)
-                        compute_stmt_ssa_defuses_stmt(sub.expr,
-                                                      sub_stmt_defs,
-                                                      sub_stmt_uses)
+                        compute_stmt_ssa_uses_stmt(sub.expr,
+                                                   sub_stmt_uses)
                     end
                     if stmt_idx in keys(stmt_dict)
                         append!(stmt_dict[stmt_idx], (da_sym, subscripts_vec))
@@ -1546,7 +1514,7 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
             bb_stmt_dict[bb.id] = stmt_dict
         end
     end
-
+    println(syms_to_be_defined)
     stmts_are_added = true
     while stmts_are_added
         stmts_are_added = false
@@ -1587,7 +1555,7 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                 end
                 if condition_stmt_idx in keys(bb.stmt_ssa_uses)
                     union!(syms_to_be_defined, bb.stmt_ssa_uses[condition_stmt_idx])
-                            end
+                end
                 stmts_are_added = true
             end
             for stmt_idx in eachindex(bb.stmts)
@@ -1620,7 +1588,8 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                                                    bb_stmt_dict,
                                                    transform_dist_array_read_set,
                                                    stmt_vec,
-                                                   appended_bbs)
+                                                   appended_bbs,
+                                                   ssa_defs)
     @assert unhandled_suc == nothing
 
     if length(stmt_vec) > 0

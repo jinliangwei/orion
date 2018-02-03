@@ -125,6 +125,8 @@ Executor::CheckAndExecuteForLoop(bool next_partition) {
   bool stop_search = false;
   while (true) {
     auto runnable_status = exec_for_loop_->GetCurrPartitionRunnableStatus();
+    LOG(INFO) << __func__
+              << " runnable_status = " << static_cast<int>(runnable_status);
     switch (runnable_status) {
       case AbstractExecForLoop::RunnableStatus::kRunnable:
         {
@@ -140,6 +142,14 @@ Executor::CheckAndExecuteForLoop(bool next_partition) {
         break;
       case AbstractExecForLoop::RunnableStatus::kPrefetchGlobalIndexedDistArrays:
         {
+          stop_search = true;
+          auto* exec_for_loop_ptr = exec_for_loop_.get();
+          auto cpp_func = std::bind(
+              &AbstractExecForLoop::ComputePrefetchIndinces,
+              exec_for_loop_ptr);
+          exec_cpp_func_task_.func = cpp_func;
+          exec_cpp_func_task_.label = TaskLabel::kComputePrefetchIndices;
+          julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
           stop_search = true;
         }
         break;
@@ -159,7 +169,6 @@ Executor::CheckAndExecuteForLoop(bool next_partition) {
         break;
       case AbstractExecForLoop::RunnableStatus::kCompleted:
         {
-          LOG(INFO) << "completed!";
           stop_search = true;
           if (kNumExecutors > 1)
             SendPredCompletion();
@@ -249,7 +258,7 @@ void
 Executor::SendPredCompletion() {
   int32_t successor_to_send
       = exec_for_loop_->GetSuccessorToNotify();
-  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgPredCompletion>(
+  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyExecForLoopPredecessorCompletion>(
       &send_buff_);
   Send(&executor_conn_[successor_to_send], executor_[successor_to_send].get());
   send_buff_.clear_to_send();
@@ -268,6 +277,7 @@ Executor::ExecForLoopAck() {
 
 void
 Executor::RequestExecForLoopGlobalIndexedDistArrays() {
+  LOG(INFO) << __func__;
   message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRequestExecForLoopGlobalIndexedDistArrays>(
       &send_buff_);
   Send(&prt_poll_conn_, prt_pipe_conn_.get());
@@ -293,6 +303,75 @@ Executor::CheckAndRequestExecForLoopPredecesorCompletion() {
   send_buff_.clear_to_send();
   send_buff_.reset_sent_sizes();
   return true;
+}
+
+void
+Executor::SerializeAndSendExecForLoopPrefetchRequests() {
+  auto* exec_for_loop_ptr = exec_for_loop_.get();
+  ExecutorSendBufferMap send_buffer_map;
+  exec_for_loop_ptr->SerializeAndClearPrefetchIds(&send_buffer_map);
+  for (auto &executor_send_buffer_pair : send_buffer_map) {
+    int32_t server_id = executor_send_buffer_pair.first;
+    auto &send_data_buffer = executor_send_buffer_pair.second;
+    auto *data_bytes = send_data_buffer.first;
+    size_t num_bytes = send_data_buffer.second;
+    message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRequestDistArrayValues>(
+        &send_buff_, num_bytes, kExecutorId, true);
+    send_buff_.set_next_to_send(data_bytes, num_bytes, true);
+    Send(&server_conn_[server_id], server_[server_id].get());
+    send_buff_.clear_to_send();
+    send_buff_.reset_sent_sizes();
+  }
+  exec_for_loop_->SentAllPrefetchRequests();
+}
+
+void
+Executor::ReplyDistArrayValues() {
+  auto &bytes_buff = exec_cpp_func_task_.result_buff;
+  size_t num_bytes = bytes_buff.size();
+  auto *buff_bytes = bytes_buff.data();
+  auto *bytes = new uint8_t[num_bytes];
+  memcpy(bytes, buff_bytes, num_bytes);
+  bytes_buff.clear();
+  LOG(INFO) << __func__ << " num_bytes = " << num_bytes;
+  message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyDistArrayValues>(
+      &send_buff_, num_bytes);
+  send_buff_.set_next_to_send(bytes, num_bytes, true);
+  int32_t recv_id = dist_array_value_request_meta_.requester_id;
+  bool is_requester_executor = dist_array_value_request_meta_.is_requester_executor;
+
+  auto &recv_conn = is_requester_executor ? executor_conn_ : server_conn_;
+  auto &receiver = is_requester_executor ? executor_ : server_;
+
+  Send(&recv_conn[recv_id], receiver[recv_id].get());
+  send_buff_.clear_to_send();
+  send_buff_.reset_sent_sizes();
+}
+
+void
+Executor::CacheGlobalIndexedDistArrayValues(
+    PeerRecvGlobalIndexedDistArrayDataBuffer **buff_vec,
+    size_t num_buffs) {
+  auto runnable_status = exec_for_loop_->GetCurrPartitionRunnableStatus();
+  if (runnable_status == AbstractExecForLoop::RunnableStatus::kAwaitGlobalIndexedDistArrays) {
+    auto cpp_func = std::bind(
+        &AbstractExecForLoop::CachePrefetchDistArrayValues,
+        exec_for_loop_.get(),
+        buff_vec,
+        num_buffs);
+    exec_cpp_func_task_.func = cpp_func;
+    exec_cpp_func_task_.label = TaskLabel::kCachePrefetchDistArrayValues;
+    julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+  } else {
+    CHECK(runnable_status == AbstractExecForLoop::RunnableStatus::kRunnable);
+    CHECK(num_buffs = 1);
+    auto *buff = buff_vec[0];
+    const auto *bytes = buff->byte_buff.data();
+    size_t num_bytes = buff->byte_buff.size();
+    julia_requester_->ReplyDistArrayData(bytes, num_bytes);
+    delete buff;
+    delete buff_vec;
+  }
 }
 
 }
