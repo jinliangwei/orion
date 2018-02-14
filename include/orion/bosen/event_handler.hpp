@@ -2,6 +2,7 @@
 #include <orion/bosen/conn.hpp>
 #include <functional>
 #include <glog/logging.h>
+#include <set>
 
 namespace orion {
 namespace bosen {
@@ -12,6 +13,7 @@ class EventHandler {
   static constexpr size_t kNumEvents = 100;
   conn::Poll poll_;
   epoll_event es_[kNumEvents];
+  std::set<PollConn*> read_set_;
   std::function<void(PollConn*)> connect_event_handler_;
   std::function<int(PollConn*)> read_event_handler_;
   std::function<int(PollConn*)> closed_connection_handler_;
@@ -88,6 +90,7 @@ EventHandler<PollConn>::SetDefaultWriteEventHandler() {
 template<typename PollConn>
 int
 EventHandler<PollConn>::SetToReadWrite(PollConn* poll_conn_ptr) {
+  read_set_.emplace(poll_conn_ptr);
   int read_fd = poll_conn_ptr->get_read_fd();
   int write_fd = poll_conn_ptr->get_write_fd();
   if (read_fd == 0 || write_fd == 0) return -1;
@@ -114,6 +117,7 @@ EventHandler<PollConn>::SetToReadWrite(PollConn* poll_conn_ptr) {
 template<typename PollConn>
 int
 EventHandler<PollConn>::SetToReadOnly(PollConn* poll_conn_ptr) {
+  read_set_.emplace(poll_conn_ptr);
   int read_fd = poll_conn_ptr->get_read_fd();
   int write_fd = poll_conn_ptr->get_write_fd();
   if (read_fd == 0) return -1;
@@ -141,6 +145,7 @@ EventHandler<PollConn>::SetToReadOnly(PollConn* poll_conn_ptr) {
 template<typename PollConn>
 int
 EventHandler<PollConn>::SetToWriteOnly(PollConn* poll_conn_ptr) {
+  read_set_.erase(poll_conn_ptr);
   int read_fd = poll_conn_ptr->get_read_fd();
   int write_fd = poll_conn_ptr->get_write_fd();
   if (write_fd == 0) return -1;
@@ -168,6 +173,7 @@ EventHandler<PollConn>::SetToWriteOnly(PollConn* poll_conn_ptr) {
 template<typename PollConn>
 int
 EventHandler<PollConn>::Remove(PollConn* poll_conn_ptr) {
+  read_set_.erase(poll_conn_ptr);
   int read_fd = poll_conn_ptr->get_read_fd();
   int write_fd = poll_conn_ptr->get_write_fd();
   int ret = 0;
@@ -233,6 +239,18 @@ EventHandler<PollConn>::HandleWriteEvent(PollConn* poll_conn_ptr) {
 template<typename PollConn>
 void
 EventHandler<PollConn>::WaitAndHandleEvent() {
+  bool exit = false;
+  for (auto poll_conn_ptr : read_set_) {
+    auto& recv_buff = poll_conn_ptr->get_recv_buff();
+    while (recv_buff.ReceivedFullMsg()
+           && (!recv_buff.IsExepectingNextMsg())) {
+      exit = RunReadEventHandler(poll_conn_ptr);
+      if (exit) break;
+    }
+    if (exit) break;
+  }
+  if (exit) return;
+
   int num_events = poll_.Wait(es_, kNumEvents);
   CHECK(num_events > 0);
   for (int i = 0; i < num_events; ++i) {
@@ -245,15 +263,15 @@ EventHandler<PollConn>::WaitAndHandleEvent() {
           && connect_event_handler_ != nullptr) {
         connect_event_handler_(poll_conn_ptr);
       } else {
-        bool exit = ReadAndRunReadEventHandler(poll_conn_ptr);
+        exit = ReadAndRunReadEventHandler(poll_conn_ptr);
         if (exit) break;
         auto& recv_buff = poll_conn_ptr->get_recv_buff();
-        while (recv_buff.ReceivedFullMsg()
-               && (!recv_buff.IsExepectingNextMsg())) {
-          exit = RunReadEventHandler(poll_conn_ptr);
-          if (exit) break;
-        }
-        if (exit) break;
+        //while (recv_buff.ReceivedFullMsg()
+        //       && (!recv_buff.IsExepectingNextMsg())) {
+        //  exit = RunReadEventHandler(poll_conn_ptr);
+        //  if (exit) break;
+        //}
+        //if (exit) break;
         if (recv_buff.is_eof()) {
           int clear_code = closed_connection_handler_(poll_conn_ptr);
           if (clear_code & kExit) break;

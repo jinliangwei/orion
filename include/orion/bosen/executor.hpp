@@ -561,8 +561,9 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
         break;
       case Action::kAckConnectToPeers:
         {
-          int ret = event_handler_.Remove(&prt_poll_conn_);
-          CHECK_EQ(ret, 0) << ret;
+          int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
+          CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
+          ret |= EventHandler<PollConn>::kExit;
           message::Helper::CreateMsg<message::ExecutorConnectToPeersAck>(&send_buff_);
           Send(&master_poll_conn_, &master_);
           send_buff_.clear_to_send();
@@ -897,6 +898,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
         ret = EventHandler<PollConn>::kClearOneMsg;
+        ret |= EventHandler<PollConn>::kExit;
         action_ = Action::kNone;
       }
       break;
@@ -922,6 +924,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
         ret = EventHandler<PollConn>::kClearOneMsg;
+        ret |= EventHandler<PollConn>::kExit;
       }
       break;
     case message::ExecuteMsgType::kReplyExecForLoopPredecessorCompletion:
@@ -931,6 +934,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
         ret = EventHandler<PollConn>::kClearOneMsg;
+        ret |= EventHandler<PollConn>::kExit;
       }
       break;
     case message::ExecuteMsgType::kRequestDistArrayValue:
@@ -938,6 +942,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
         ret = EventHandler<PollConn>::kClearOneMsg;
+        ret |= EventHandler<PollConn>::kExit;
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgRequestDistArrayValue>(recv_buff);
         int32_t dist_array_id = msg->dist_array_id;
@@ -976,6 +981,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
           int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
           CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          ret |= EventHandler<PollConn>::kExit;
           const auto* request = prt_recv_byte_buff_.GetBytes();
           auto cpp_func = std::bind(
               JuliaEvaluator::GetAndSerializeValues,
@@ -999,6 +1005,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
         LOG(INFO) << "removed";
         ret = EventHandler<PollConn>::kClearOneMsg;
+        ret |= EventHandler<PollConn>::kExit;
         auto cpp_func = std::bind(
             &ServerExecForLoop::DeserializeAndApplyDistArrayBuffers,
             server_exec_for_loop_.get(),
@@ -1017,6 +1024,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
         LOG(INFO) << "removed";
         ret = EventHandler<PollConn>::kClearOneMsg;
+        ret |= EventHandler<PollConn>::kExit;
         auto cpp_func = std::bind(
             &ServerExecForLoop::DeserializeAndApplyDistArrayCaches,
             server_exec_for_loop_.get(),
@@ -1040,6 +1048,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
         ret = EventHandler<PollConn>::kClearOneMsg;
+        ret |= EventHandler<PollConn>::kExit;
       }
       break;
     case message::ExecuteMsgType::kExecForLoopDone:
@@ -1056,6 +1065,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
           LOG(INFO) << "Ack done!";
         }
         ret = EventHandler<PollConn>::kClearOneMsg;
+        ret |= EventHandler<PollConn>::kExit;
       }
       break;
     default:
