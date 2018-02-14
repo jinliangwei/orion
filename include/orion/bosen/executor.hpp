@@ -32,6 +32,8 @@
 #include <orion/bosen/exec_for_loop_space_time_unordered.hpp>
 #include <orion/bosen/worker.h>
 #include <orion/bosen/dist_array_value_request_meta.hpp>
+#include <orion/bosen/dist_array_buffer_info.hpp>
+#include <orion/bosen/server_exec_for_loop.hpp>
 
 namespace orion {
 namespace bosen {
@@ -149,7 +151,8 @@ class Executor {
       kDefineJuliaDistArrayBuffer = 18,
       kCreateDistArrayBufferAck = 19,
       kTextFileLoadDone = 20,
-      kRepartitionDistArraySerialize = 21
+      kRepartitionDistArraySerialize = 21,
+      kUpdateDistArrayIndex = 22
             };
 
   static const int32_t kPortSpan = 100;
@@ -231,10 +234,13 @@ class Executor {
 
   ExecutorSendBufferMap repartition_send_buffer_;
   std::unique_ptr<AbstractExecForLoop> exec_for_loop_;
+  std::unique_ptr<ServerExecForLoop> server_exec_for_loop_;
 
   bool repartition_recv_ { false };
-
   DistArrayValueRequestMeta dist_array_value_request_meta_;
+
+  std::unordered_map<int32_t, DistArrayBufferInfo> dist_array_buffer_info_map_;
+
  public:
   Executor(const Config& config, int32_t local_index, bool is_server);
   ~Executor();
@@ -267,9 +273,11 @@ class Executor {
   bool RepartitionDistArray();
   bool RepartitionDistArraySerialize(int32_t dist_array_id, DistArray *dist_array);
   void RepartitionDistArraySend();
+  void UpdateDistArrayIndex();
   void DefineJuliaDistArray();
   void DefineJuliaDistArrayBuffer();
   void CreateExecForLoop();
+  void CreateServerExecForLoop();
   void CheckAndExecuteForLoop(bool next_partition);
   bool CheckAndSerializeGlobalIndexedDistArrays();
   bool CheckAndSerializeDistArrayTimePartitions();
@@ -277,6 +285,7 @@ class Executor {
   void SendPipelinedTimePartitions();
   void SendPredCompletion();
   void ExecForLoopAck();
+  void ServerExecForLoopAck();
   void RequestExecForLoopGlobalIndexedDistArrays();
   void RequestExecForLoopPipelinedTimePartitions();
   bool CheckAndRequestExecForLoopPredecesorCompletion();
@@ -287,6 +296,8 @@ class Executor {
 
   void GetAccumulatorValue();
   void ReplyGetAccumulatorValue();
+  void SetDistArrayBufferInfo();
+  void DeleteDistArrayBufferInfo(int32_t dist_array_buffer_id);
 };
 
 Executor::Executor(const Config& config,
@@ -666,6 +677,11 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           }
         }
         break;
+      case Action::kUpdateDistArrayIndex:
+        {
+          UpdateDistArrayIndex();
+        }
+        break;
       case Action::kRepartitionDistArraySerialize:
         {
           auto &dist_array = dist_arrays_.at(dist_array_under_operation_);
@@ -696,6 +712,7 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
       case Action::kCreateExecForLoop:
         {
           if (kIsServer) {
+            CreateServerExecForLoop();
             event_handler_.SetToReadOnly(&prt_poll_conn_);
           } else {
             CreateExecForLoop();
@@ -852,6 +869,7 @@ Executor::HandlePeerRecvThrMsg(PollConn* poll_conn_ptr) {
 
 int
 Executor::HandlePeerRecvThrExecuteMsg() {
+  LOG(INFO) << __func__;
   auto &recv_buff = prt_poll_conn_.get_recv_buff();
   int ret = EventHandler<PollConn>::kClearOneMsg;
   auto msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
@@ -943,9 +961,6 @@ Executor::HandlePeerRecvThrExecuteMsg() {
       break;
     case message::ExecuteMsgType::kRequestDistArrayValues:
       {
-        LOG(INFO) << "RequestDistArrayValues received";
-        int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
-        CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgRequestDistArrayValues>(recv_buff);
         dist_array_value_request_meta_.requester_id = msg->requester_id;
@@ -958,6 +973,8 @@ Executor::HandlePeerRecvThrExecuteMsg() {
                                   &prt_recv_byte_buff_,
                                   expected_size);
         if (received_next_msg) {
+          int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
+          CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           const auto* request = prt_recv_byte_buff_.GetBytes();
           auto cpp_func = std::bind(
@@ -973,6 +990,42 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         }
       }
       break;
+    case message::ExecuteMsgType::kExecForLoopDistArrayBufferDataPtr:
+      {
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgExecForLoopDistArrayBufferDataPtr>(recv_buff);
+        auto *bytes = msg->bytes;
+        int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
+        CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
+        LOG(INFO) << "removed";
+        ret = EventHandler<PollConn>::kClearOneMsg;
+        auto cpp_func = std::bind(
+            &ServerExecForLoop::DeserializeAndApplyDistArrayBuffers,
+            server_exec_for_loop_.get(),
+            bytes);
+        exec_cpp_func_task_.func = cpp_func;
+        exec_cpp_func_task_.label = TaskLabel::kExecForLoopApplyDistArrayBufferData;
+        julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+      }
+      break;
+    case message::ExecuteMsgType::kExecForLoopDistArrayCacheDataPtr:
+      {
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgExecForLoopDistArrayCacheDataPtr>(recv_buff);
+        auto *bytes = msg->bytes;
+        int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
+        CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
+        LOG(INFO) << "removed";
+        ret = EventHandler<PollConn>::kClearOneMsg;
+        auto cpp_func = std::bind(
+            &ServerExecForLoop::DeserializeAndApplyDistArrayCaches,
+            server_exec_for_loop_.get(),
+            bytes);
+        exec_cpp_func_task_.func = cpp_func;
+        exec_cpp_func_task_.label = TaskLabel::kExecForLoopApplyDistArrayCacheData;
+        julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+      }
+      break;
     case message::ExecuteMsgType::kReplyExecForLoopGlobalIndexedDistArrayData:
       {
         action_ = Action::kNone;
@@ -986,6 +1039,22 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         CacheGlobalIndexedDistArrayValues(buff_vec, num_buffs);
         int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
+        ret = EventHandler<PollConn>::kClearOneMsg;
+      }
+      break;
+    case message::ExecuteMsgType::kExecForLoopDone:
+      {
+        CHECK(kIsServer);
+        LOG(INFO) << "received ExecForLoopDone!";
+        bool clear = server_exec_for_loop_->NotifyExecForLoopDone();
+        if (clear) {
+          LOG(INFO) << "ExecForLoop Done and clear ServerExecForLoop";
+          server_exec_for_loop_.reset();
+          int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
+          CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
+          ServerExecForLoopAck();
+          LOG(INFO) << "Ack done!";
+        }
         ret = EventHandler<PollConn>::kClearOneMsg;
       }
       break;
@@ -1008,7 +1077,6 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
               recv_buff);
         julia_task_ptr_ = msg->task;
         if (auto *task = dynamic_cast<ExecCppFuncTask*>(msg->task)) {
-          //LOG(INFO) << "task->label = " << static_cast<int>(task->label);
           switch (task->label) {
             case TaskLabel::kNone:
               {
@@ -1131,6 +1199,26 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
             case TaskLabel::kCachePrefetchDistArrayValues:
               {
                 CheckAndExecuteForLoop(false);
+              }
+              break;
+            case TaskLabel::kUpdateDistArrayIndex:
+              {
+                action_ = Action::kExecutorAck;
+              }
+              break;
+            case TaskLabel::kExecForLoopApplyDistArrayBufferData:
+              {
+                action_ = Action::kNone;
+                event_handler_.SetToReadOnly(&prt_poll_conn_);
+                LOG(INFO) << "added";
+              }
+              break;
+            case TaskLabel::kExecForLoopApplyDistArrayCacheData:
+              {
+                action_ = Action::kNone;
+                LOG(INFO) << "apply cache data done!!";
+                event_handler_.SetToReadOnly(&prt_poll_conn_);
+                LOG(INFO) << "added";
               }
               break;
             default:
@@ -1265,13 +1353,6 @@ Executor::HandleExecuteMsg() {
         action_ = Action::kNone;
       }
       break;
-    case message::ExecuteMsgType::kExecForLoopDone:
-      {
-        CHECK(kIsServer);
-        int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
-        CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
-      }
-      break;
     default:
       {
         LOG(FATAL) << "unknown message type " << static_cast<int>(msg_type);
@@ -1322,6 +1403,22 @@ Executor::HandleDriverMsg() {
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
+    case message::DriverMsgType::kUpdateDistArrayIndex:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgUpdateDistArrayIndex>(recv_buff);
+        size_t expected_size = msg->task_size;
+        bool received_next_msg =
+            ReceiveArbitraryBytes(master_.sock,
+                                  &recv_buff,
+                                  &master_recv_byte_buff_,
+                                  expected_size);
+        if (received_next_msg) {
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kUpdateDistArrayIndex;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
     case message::DriverMsgType::kExecForLoop:
       {
         auto *msg = message::DriverMsgHelper::get_msg<
@@ -1369,7 +1466,31 @@ Executor::HandleDriverMsg() {
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
-
+    case message::DriverMsgType::kSetDistArrayBufferInfo:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgSetDistArrayBufferInfo>(recv_buff);
+        size_t expected_size = msg->info_size;
+        bool received_next_msg
+            = ReceiveArbitraryBytes(master_.sock, &recv_buff,
+                                    &master_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          SetDistArrayBufferInfo();
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kExecutorAck;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::DriverMsgType::kDeleteDistArrayBufferInfo:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgDeleteDistArrayBufferInfo>(recv_buff);
+        int32_t dist_array_buffer_id = msg->dist_array_buffer_id;
+        DeleteDistArrayBufferInfo(dist_array_buffer_id);
+        action_ = Action::kExecutorAck;
+      }
+      break;
     default:
       {
         LOG(FATAL) << "unknown message type " << static_cast<int>(msg_type);
@@ -1569,9 +1690,7 @@ Executor::CreateDistArray() {
   switch (parent_type) {
     case DistArrayParentType::kTextFile:
       {
-        LOG(INFO) << __func__ << " before file_path";
         std::string file_path = create_dist_array.file_path();
-        LOG(INFO) << __func__ << " file_path = " << file_path;
         auto cpp_func = std::bind(
             &DistArray::LoadPartitionsFromTextFile,
             &dist_array,
@@ -1585,6 +1704,13 @@ Executor::CreateDistArray() {
       {
         int32_t parent_id = create_dist_array.parent_id();
         auto &parent_dist_array = dist_arrays_.at(parent_id);
+        auto &parent_dist_array_meta = parent_dist_array.GetMeta();
+        auto &child_dist_array_meta = dist_array.GetMeta();
+        auto map_type = child_dist_array_meta.GetMapType();
+        if (parent_dist_array_meta.IsContiguousPartitions() &&
+            (map_type == DistArrayMapType::kMapFixedKeys || map_type == DistArrayMapType::kMapValues)) {
+          child_dist_array_meta.SetContiguousPartitions(true);
+        }
         auto cpp_func = std::bind(&DistArray::Map, &parent_dist_array, &dist_array);
         exec_cpp_func_task_.func = cpp_func;
         exec_cpp_func_task_.label = TaskLabel::kMapDistArray;
@@ -1593,7 +1719,12 @@ Executor::CreateDistArray() {
       break;
     case DistArrayParentType::kInit:
       {
-        LOG(INFO) << __func__ << " scheduling Init";
+        auto &dist_array_meta = dist_array.GetMeta();
+        auto init_type = dist_array_meta.GetInitType();
+        if (init_type == DistArrayInitType::kUniformRandom ||
+            init_type == DistArrayInitType::kNormalRandom) {
+          dist_array_meta.SetContiguousPartitions(true);
+        }
         dist_array.SetDims(create_dist_array.dims().data(), create_dist_array.num_dims());
         auto cpp_func = std::bind(&DistArray::Init, &dist_array);
         exec_cpp_func_task_.func = cpp_func;
@@ -1682,9 +1813,11 @@ Executor::RepartitionDistArray() {
   auto &dist_array_to_repartition = dist_arrays_.at(id);
   auto &meta = dist_array_to_repartition.GetMeta();
   auto orig_partition_scheme = meta.GetPartitionScheme();
+  auto contiguous_partitions = repartition_dist_array_task.contiguous_partitions();
 
   meta.SetPartitionScheme(partition_scheme);
   meta.SetIndexType(index_type);
+  meta.SetContiguousPartitions(contiguous_partitions);
 
   bool from_server = orig_partition_scheme == DistArrayPartitionScheme::kHashServer;
   bool to_server = partition_scheme == DistArrayPartitionScheme::kHashServer;
@@ -1803,6 +1936,29 @@ Executor::RepartitionDistArraySend() {
     }
   }
   repartition_send_buffer_.clear();
+}
+
+void
+Executor::UpdateDistArrayIndex() {
+  std::string task_str(
+      reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
+      master_recv_byte_buff_.GetSize());
+  task::UpdateDistArrayIndex update_dist_array_index_task;
+  update_dist_array_index_task.ParseFromString(task_str);
+  int32_t id = update_dist_array_index_task.id();
+  auto index_type = static_cast<DistArrayIndexType>(update_dist_array_index_task.index_type());
+
+  auto &dist_array_to_update = dist_arrays_.at(id);
+  auto &meta = dist_array_to_update.GetMeta();
+  meta.SetIndexType(index_type);
+
+  auto cpp_func = std::bind(
+      &DistArray::CheckAndBuildIndex,
+      &dist_array_to_update);
+
+  exec_cpp_func_task_.func = cpp_func;
+  exec_cpp_func_task_.label = TaskLabel::kUpdateDistArrayIndex;
+  julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
 }
 
 void
@@ -1950,6 +2106,8 @@ Executor::DefineJuliaDistArrayBuffer() {
   std::string serialized_init_value = create_dist_array_buffer.serialized_init_value();
   meta.SetInitValue(reinterpret_cast<const uint8_t*>(serialized_init_value.data()),
                     serialized_init_value.size());
+  meta.SetContiguousPartitions(true);
+
   auto cpp_func = std::bind(
       &DistArray::CreateDistArrayBuffer,
       &dist_array,
@@ -1992,6 +2150,34 @@ Executor::ReplyGetAccumulatorValue() {
   send_buff_.reset_sent_sizes();
 }
 
+void
+Executor::SetDistArrayBufferInfo() {
+  std::string task_str(
+      reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
+      master_recv_byte_buff_.GetSize());
+  task::SetDistArrayBufferInfo set_dist_array_buffer_info;
+  set_dist_array_buffer_info.ParseFromString(task_str);
+  int32_t dist_array_buffer_id = set_dist_array_buffer_info.dist_array_buffer_id();
+  int32_t dist_array_id = set_dist_array_buffer_info.dist_array_id();
+  std::string apply_buffer_func_name = set_dist_array_buffer_info.apply_buffer_func_name();
+  const int32_t *helper_dist_array_ids = set_dist_array_buffer_info.helper_dist_array_ids().data();
+  size_t num_helper_dist_arrays = set_dist_array_buffer_info.helper_dist_array_ids_size();
+  const int32_t *helper_dist_array_buffer_ids = set_dist_array_buffer_info.helper_dist_array_buffer_ids().data();
+  size_t num_helper_dist_array_buffers = set_dist_array_buffer_info.helper_dist_array_buffer_ids_size();
+
+  dist_array_buffer_info_map_.emplace(dist_array_buffer_id,
+                                      DistArrayBufferInfo(dist_array_id,
+                                                          apply_buffer_func_name,
+                                                          helper_dist_array_ids,
+                                                          num_helper_dist_arrays,
+                                                          helper_dist_array_buffer_ids,
+                                                          num_helper_dist_array_buffers));
+}
+
+void
+Executor::DeleteDistArrayBufferInfo(int32_t dist_array_buffer_id) {
+  dist_array_buffer_info_map_.erase(dist_array_buffer_id);
+}
 }
 
 }

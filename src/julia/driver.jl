@@ -74,12 +74,12 @@ function exec_for_loop(iteration_space_id::Integer,
                        space_partitioned_dist_array_ids::Vector{Int32},
                        time_partitioned_dist_array_ids::Vector{Int32},
                        global_indexed_dist_array_ids::Vector{Int32},
-                       buffered_dist_array_ids::Vector{Int32},
                        dist_array_buffer_ids::Vector{Int32},
-                       num_buffers_each_dist_array::Vector{UInt64},
+                       written_dist_array_ids::Vector{Int32},
                        loop_batch_func_name::AbstractString,
                        prefetch_batch_func_name::AbstractString,
                        is_ordered::Bool)
+    println(written_dist_array_ids)
     ccall((:orion_exec_for_loop, lib_path),
           Void, (Int32,
                  Int32,
@@ -87,15 +87,15 @@ function exec_for_loop(iteration_space_id::Integer,
                  Ref{Int32}, UInt64,
                  Ref{Int32}, UInt64,
                  Ref{Int32}, UInt64,
-                 Ref{Int32}, Ref{UInt64},
+                 Ref{Int32}, UInt64,
                  Cstring, Cstring, Bool),
           iteration_space_id,
           for_loop_parallel_scheme_to_int32(parallel_scheme),
           space_partitioned_dist_array_ids, length(space_partitioned_dist_array_ids),
           time_partitioned_dist_array_ids, length(time_partitioned_dist_array_ids),
           global_indexed_dist_array_ids, length(global_indexed_dist_array_ids),
-          buffered_dist_array_ids, length(buffered_dist_array_ids),
-          dist_array_buffer_ids, num_buffers_each_dist_array,
+          dist_array_buffer_ids, length(dist_array_buffer_ids),
+          written_dist_array_ids, length(written_dist_array_ids),
           loop_batch_func_name, prefetch_batch_func_name, is_ordered)
 end
 
@@ -119,36 +119,51 @@ function reset_accumulator(var_sym::Symbol)
 end
 
 type DistArrayBufferInfo
-    buffer_id::Int32
-    apply_buffer_func::Symbol
-    helper_buffer_vec::Vector{Int32}
-    helper_dist_array_vec::Vector{Int32}
-    DistArrayBufferInfo(buffer_id::Int32,
-                        apply_buffer_func::Symbol) =
-                            new(buffer_id,
-                                apply_buffer_func,
+    dist_array_id::Int32
+    apply_buffer_func_name::Symbol
+    helper_dist_array_buffer_ids::Vector{Int32}
+    helper_dist_array_ids::Vector{Int32}
+    DistArrayBufferInfo(dist_array_id::Int32,
+                        apply_buffer_func_name::Symbol) =
+                            new(dist_array_id,
+                                apply_buffer_func_name,
                                 Vector{Int32}(),
                                 Vector{Int32}())
 end
 
 dist_array_buffer_map = Dict{Int32, DistArrayBufferInfo}()
 
-function set_write_buffer(dist_array::DistArray,
+function set_write_buffer(dist_array_buffer::DistArrayBuffer,
+                          dist_array::DistArray,
                           apply_func::Function,
-                          dist_array_buffers...)
+                          helpers...)
     apply_func_name = Base.function_name(apply_func)
-    buffer_info = DistArrayBufferInfo(dist_array_buffers[1].id,
+    buffer_info = DistArrayBufferInfo(dist_array.id,
                                       apply_func_name)
-    for dist_array_buffer_helper in dist_array_buffers[2:end]
-        if isa(dist_array_buffer_helper, DistArrayBuffer)
-            push!(buffer_info.helper_buffer_vec, dist_array_buffer_helper.id)
+    for helper in helpers
+        if isa(helper, DistArrayBuffer)
+            push!(buffer_info.helper_dist_array_buffer_ids, helper.id)
         else
-            push!(buffer_info.helper_dist_array_vec, dist_array_buffer_helper.id)
+            push!(buffer_info.helper_dist_array_ids, helper.id)
         end
     end
-    dist_array_buffer_map[dist_array.id] = buffer_info
+    dist_array_buffer_map[dist_array_buffer.id] = buffer_info
+    ccall((:orion_set_dist_array_buffer_info, lib_path),
+          Void, (Int32, Int32, Cstring,
+                 Ptr{Int32}, UInt64,
+                 Ptr{Int32}, UInt64),
+          dist_array_buffer.id,
+          buffer_info.dist_array_id,
+          string(buffer_info.apply_buffer_func_name),
+          buffer_info.helper_dist_array_buffer_ids,
+          length(buffer_info.helper_dist_array_buffer_ids),
+          buffer_info.helper_dist_array_ids,
+          length(buffer_info.helper_dist_array_ids))
 end
 
-function reset_write_buffer(dist_array::DistArray)
-    delete!(dist_array_buffer_map, dist_array.id)
+function reset_write_buffer(dist_array_buffer::DistArrayBuffer)
+    delete!(dist_array_buffer_map, dist_array_buffer.id)
+    ccall((:orion_delete_dist_array_buffer_info, lib_path),
+          Void, (Int32,),
+          dist_array_buffer.id)
 end

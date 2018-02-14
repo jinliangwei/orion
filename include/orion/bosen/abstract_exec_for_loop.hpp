@@ -8,6 +8,7 @@
 #include <vector>
 #include <orion/bosen/key_vec_type.hpp>
 #include <glog/logging.h>
+#include <set>
 
 namespace orion {
 namespace bosen {
@@ -38,7 +39,7 @@ class AbstractExecForLoop {
   std::unordered_map<int32_t, DistArray*> global_indexed_dist_arrays_;
   std::unordered_map<int32_t, std::unique_ptr<AbstractDistArrayPartition>> dist_array_cache_;
   std::unordered_map<int32_t, DistArray*> dist_array_buffers_;
-  std::unordered_map<int32_t, std::vector<int32_t>> dist_array_to_buffers_map_;
+  std::set<int32_t> written_dist_array_ids_;
 
   DistArray *iteration_space_;
   const int32_t kExecutorId;
@@ -50,6 +51,9 @@ class AbstractExecForLoop {
   uint8_t *time_partitions_serialized_bytes_ { nullptr };
   size_t time_partitions_serialized_size_ { 0 };
   AbstractDistArrayPartition* curr_partition_ { nullptr };
+
+  ExecutorSendBufferMap buffer_send_buffer_map_;
+  ExecutorSendBufferMap cache_send_buffer_map_;
 
  public:
   AbstractExecForLoop(
@@ -63,10 +67,10 @@ class AbstractExecForLoop {
       size_t num_time_partitioned_dist_arrays,
       const int32_t *global_indexed_dist_array_ids,
       size_t num_gloabl_indexed_dist_arrays,
-      const int32_t *buffered_dist_array_ids,
-      size_t num_buffered_dist_arrays,
       const int32_t *dist_array_buffer_ids,
-      const size_t *num_buffers_each_dist_array,
+      size_t num_dist_array_buffers,
+      const int32_t *written_dist_array_ids,
+      size_t num_written_dist_array_ids,
       const char* loop_batch_func_name,
       const char *prefetch_batch_func_name,
       std::unordered_map<int32_t, DistArray> *dist_arrays,
@@ -80,6 +84,7 @@ class AbstractExecForLoop {
   virtual int32_t GetTimePartitionIdToSend() = 0;
   virtual void ApplyPredecessorNotice(uint64_t clock) = 0;
   virtual int32_t GetSuccessorToNotify() = 0;
+  virtual int32_t GetPredecessor() = 0;
   virtual uint64_t GetNoticeToSuccessor() = 0;
   virtual void PrepareToExecCurrPartition() = 0;
   virtual void ClearCurrPartition() = 0;
@@ -98,6 +103,10 @@ class AbstractExecForLoop {
                                     size_t num_buffs);
 
   void SerializeAndClearGlobalPartitionedDistArrays();
+  void SerializeAndClearDistArrayBuffers();
+  void SerializeAndClearDistArrayCaches();
+  void GetAndClearDistArrayBufferSendMap(ExecutorSendBufferMap *buffer_send_buffer_map);
+  void GetAndClearDistArrayCacheSendMap(ExecutorSendBufferMap *cache_send_buffer_map);
 
   void SerializeAndClearPipelinedTimePartitions();
   void DeserializePipelinedTimePartitions(const uint8_t *bytes);

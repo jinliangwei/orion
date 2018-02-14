@@ -19,6 +19,22 @@ namespace bosen {
 class DistArray;
 class JuliaEvaluator;
 
+enum class DistArrayPartitionStorageType {
+  kKeyValueBuffer = 1, // Default; this may include dense index and no index
+    kSparseIndex = 2,
+    kAccessor = 3 // this only happens when an for loop is executed
+                // 1) on workers, this is for dist array, cache and buffer
+                // 2) on servers, this is for dist arrays that serve as helper dist arrays (sparse)
+                // and dist array buffers (dense)
+                // when executing an apply_buffer_function
+};
+
+// state transition:
+// 1) kKeyValueBuffer => kSparseIndex via CheckAndBuildIndex() and BuildIndex()
+// 2) kSparseIndex => kKeyValueBuffer via BuildKeyValueBuffersFromSparseIndex()
+// 3) kKeyValueBuffer => kAccessor via Create**Accessor()
+// 4) kAccessor => kKeyValueBuffer via Clear**Accessor()
+
 class AbstractDistArrayPartition {
  protected:
   const Config& kConfig;
@@ -31,6 +47,9 @@ class AbstractDistArrayPartition {
   std::vector<int64_t> key_buff_;
   int64_t key_start_ { -1 }; // used (set to nonnegative when a dense index is built)
   bool sorted_ { false };
+  DistArrayPartitionStorageType storage_type_ { DistArrayPartitionStorageType::kKeyValueBuffer };
+
+  mutable size_t d_i_ { 0 };
 
  public:
   AbstractDistArrayPartition(DistArray* dist_array,
@@ -39,25 +58,35 @@ class AbstractDistArrayPartition {
                              JuliaThreadRequester *julia_requester);
   virtual ~AbstractDistArrayPartition() { }
 
+  const std::vector<int64_t>& GetDims() const;
+  const std::string &GetDistArraySymbol();
+
+  // loading from text files
   bool LoadTextFile(const std::string &path, int32_t partition_id);
   void ParseText(Blob *max_key, size_t line_num_start);
+  void ComputeKeysFromBuffer(const std::vector<int64_t> &dims);
   size_t CountNumLines() const;
-  const std::vector<int64_t>& GetDims() const;
+
+  // execute computation
   void Init(int64_t key_begin, size_t num_elements);
   void Map(AbstractDistArrayPartition *child_partition);
-  void ComputeKeysFromBuffer(const std::vector<int64_t> &dims);
-  const std::string &GetDistArraySymbol();
-  size_t GetNumKeyValues() { return keys_.size(); }
-  void ComputeHashRepartitionIdsAndRepartition(size_t num_partitions);
-  void ComputeRepartitionIdsAndRepartition(
-      const std::string &repartition_func_name);
+  void Execute(const std::string &loop_batch_func_name);
   void ComputePrefetchIndinces(const std::string &prefetch_batch_func_name,
                                const std::vector<int32_t> &dist_array_ids_vec,
                                const std::unordered_map<int32_t, DistArray*> &global_indexed_dist_arrays,
                                PointQueryKeyDistArrayMap *point_key_vec_map);
-  void Execute(const std::string &loop_batch_func_name);
-  void BuildIndex();
 
+  // repartition
+  void ComputeHashRepartitionIdsAndRepartition(size_t num_partitions);
+  void ComputeRepartitionIdsAndRepartition(
+      const std::string &repartition_func_name);
+
+  // storage type state transition
+  void BuildIndex();
+  void CheckAndBuildIndex();
+  void BeginIterate() const { d_i_ = 0; }
+
+  // storage type state transition
   virtual void CreateAccessor() = 0;
   virtual void ClearAccessor() = 0;
   virtual void CreateCacheAccessor() = 0;
@@ -65,13 +94,22 @@ class AbstractDistArrayPartition {
   virtual void ClearCacheAccessor() = 0;
   virtual void ClearBufferAccessor() = 0;
   virtual void BuildKeyValueBuffersFromSparseIndex() = 0;
+
   virtual void GetAndSerializeValue(int64_t key, Blob *bytes_buff) = 0;
   virtual void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
                                      Blob *bytes_buff) = 0;
   virtual SendDataBuffer Serialize() = 0;
-  //virtual void HashSerialize(ExecutorDataBufferMap *data_buffer_map) = 0;
+  virtual void HashSerialize(ExecutorDataBufferMap *data_buffer_map) = 0;
   virtual const uint8_t* Deserialize(const uint8_t *buffer) = 0;
   virtual const uint8_t* DeserializeAndAppend(const uint8_t *buffer) = 0;
+
+  // apply updates
+  virtual const uint8_t* DeserializeAndOverwrite(const uint8_t *buffer) = 0;
+  virtual void ApplyBufferedUpdates(
+      const AbstractDistArrayPartition* dist_array_buffer,
+      const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
+      const std::string &apply_buffer_func_name) = 0;
+  virtual bool GetNext(int64_t *key, jl_value_t **value) const = 0;
   virtual jl_value_t *GetGcPartition() = 0;
   virtual void Clear() = 0;
  protected:

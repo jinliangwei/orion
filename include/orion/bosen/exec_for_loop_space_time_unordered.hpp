@@ -42,10 +42,10 @@ class ExecForLoopSpaceTimeUnordered : public AbstractExecForLoop {
       size_t num_time_partitioned_dist_arrays,
       const int32_t *global_indexed_dist_array_ids,
       size_t num_gloabl_indexed_dist_arrays,
-      const int32_t *buffered_dist_array_ids,
-      size_t num_buffered_dist_arrays,
       const int32_t *dist_array_buffer_ids,
-      const size_t *num_buffers_each_dist_array,
+      size_t num_dist_array_buffers,
+      const int32_t *written_dist_array_ids,
+      size_t num_written_dist_array_ids,
       const char* loop_batch_func_name,
       const char *prefetch_batch_func_name,
       std::unordered_map<int32_t, DistArray> *dist_arrays,
@@ -56,6 +56,7 @@ class ExecForLoopSpaceTimeUnordered : public AbstractExecForLoop {
   AbstractExecForLoop::RunnableStatus GetCurrPartitionRunnableStatus();
   int32_t GetTimePartitionIdToSend();
   void ApplyPredecessorNotice(uint64_t clock);
+  int32_t GetPredecessor() { return (kExecutorId + 1) % kNumExecutors; }
   int32_t GetSuccessorToNotify() { return (kExecutorId + kNumExecutors - 1) % kNumExecutors; }
   uint64_t GetNoticeToSuccessor() {
     return (static_cast<uint64_t>(clock_) << 32) || time_sub_clock_; }

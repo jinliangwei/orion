@@ -121,7 +121,7 @@ end
 
 function create_dist_array_buffer_accessor{T, N}(dist_array_buffer::SparseDistArrayBuffer{T, N})
     dist_array_buffer.accessor = Nullable{SparseInitDistArrayAccessor{T, N}}(
-        SparseInitDistArrayAccessor{T, N}(keys, values,
+        SparseInitDistArrayAccessor{T, N}(dist_array_buffer.init_value,
                                           [dist_array_buffer.dims...]))
 
 end
@@ -130,11 +130,12 @@ function delete_dist_array_accessor{T, N}(dist_array_buffer::DistArrayBuffer{T, 
     dist_array_buffer.accessor = Nullable{DistArrayAccessor{T, N}}()
 end
 
-function dist_array_get_accessor_keys_vec(dist_array_buffer::DistArrayBuffer)::Vector{Int64}
-    dist_array_accessor_get_keys_vec(get(dist_array_buffer.accessor))
+function dist_array_get_accessor_keys_values_vec{T, N}(dist_array_buffer::SparseDistArrayBuffer{T, N})::Tuple{Vector{Int64},
+                                                                                                              Vector{T}}
+    dist_array_accessor_get_keys_values_vec(get(dist_array_buffer.accessor))
 end
 
-function dist_array_get_accessor_values_vec(dist_array_buffer::DistArrayBuffer)::Vector
+function dist_array_get_accessor_values_vec{T, N}(dist_array_buffer::DenseDistArrayBuffer{T, N})::Vector{T}
     dist_array_accessor_get_values_vec(get(dist_array_buffer.accessor))
 end
 

@@ -112,5 +112,15 @@ DistArrayMeta::GetInitValue() const {
   return init_value_bytes_;
 }
 
+void
+DistArrayMeta::SetContiguousPartitions(bool is_contiguous) {
+  contiguous_partitions_ = is_contiguous;
+}
+
+bool
+DistArrayMeta::IsContiguousPartitions() const {
+  return contiguous_partitions_;
+}
+
 }
 }

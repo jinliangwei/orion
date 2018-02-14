@@ -30,7 +30,10 @@ enum class TaskLabel {
     kDeserializeGlobalIndexedDistArrays = 17,
     kDeserializeDistArrayTimePartitions = 18,
     kGetAndSerializeDistArrayValues = 19,
-    kCachePrefetchDistArrayValues = 20
+    kCachePrefetchDistArrayValues = 20,
+    kUpdateDistArrayIndex = 21,
+    kExecForLoopApplyDistArrayCacheData = 22,
+    kExecForLoopApplyDistArrayBufferData = 23
           };
 
 class JuliaTask {

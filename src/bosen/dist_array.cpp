@@ -166,7 +166,6 @@ DistArray::ParseBufferedText(Blob *max_ids,
 
   size_t num_dims = meta_.GetNumDims();
   max_ids->resize(sizeof(int64_t) * num_dims);
-
   if (line_number_start.size() == 0) {
     for (auto &partition_pair : partitions_) {
       partition_pair.second->ParseText(max_ids, 0);
@@ -194,6 +193,7 @@ DistArray::GetPartitionTextBufferNumLines(std::vector<int64_t> *partition_ids,
     size_t nlines = partition->CountNumLines();
     (*partition_ids)[i] = partition_id;
     (*num_lines)[i] = nlines;
+    i++;
   }
 }
 
@@ -225,7 +225,6 @@ DistArray::Map(DistArray* child_dist_array) {
     auto* partition = partition_pair.second;
     auto child_partition_pair = child_dist_array->GetAndCreateLocalPartition(partition_id);
     auto *child_partition = child_partition_pair.first;
-    partition->BuildKeyValueBuffersFromSparseIndex();
     partition->Map(child_partition);
   }
 
@@ -236,7 +235,6 @@ DistArray::Map(DistArray* child_dist_array) {
       auto *partition = partition_pair.second;
       auto child_partition_pair = child_dist_array->GetAndCreateLocalPartition(space_id, time_id);
       auto *child_partition = child_partition_pair.first;
-      partition->BuildKeyValueBuffersFromSparseIndex();
       partition->Map(child_partition);
     }
   }
@@ -244,7 +242,6 @@ DistArray::Map(DistArray* child_dist_array) {
 
 void
 DistArray::ComputeHashRepartition(size_t num_partitions) {
-  LOG(INFO) << __func__;
   std::vector<AbstractDistArrayPartition*> partition_buff;
   GetAndClearLocalPartitions(&partition_buff);
 
@@ -319,6 +316,7 @@ AbstractDistArrayPartition*
 DistArray::GetLocalPartition(int32_t partition_id) {
   auto partition_iter = partitions_.find(partition_id);
   if (partition_iter == partitions_.end()) return nullptr;
+  LOG(INFO) << __func__ << "got partition";
   return partition_iter->second;
 }
 
@@ -533,6 +531,8 @@ DistArray::RepartitionSerializeAndClear1D(
     mem += sizeof(int32_t);
     const auto& partition_buff = partition_buff_pair.second;
     memcpy(mem, partition_buff.first, partition_buff.second);
+    LOG(INFO) << __func__ << " to recv_id = " << recv_id
+              << " size = " << partition_buff.second;
     mem += partition_buff.second;
     delete[] partition_buff.first;
     send_buff_offsets[recv_id] = mem - buff;
@@ -599,9 +599,11 @@ DistArray::RepartitionDeserialize1D(
 void
 DistArray::CheckAndBuildIndex() {
   auto index_type = meta_.GetIndexType();
-  LOG(INFO) << __func__ << " index_type = " << static_cast<int>(index_type);
   switch (index_type) {
     case DistArrayIndexType::kNone:
+      {
+        BuildPartitionKeyValueBuffersFromSparseIndex();
+      }
       break;
     case DistArrayIndexType::kRange:
       {
@@ -626,6 +628,23 @@ DistArray::BuildPartitionIndices() {
     for (auto &partition_pair : partitions_) {
       auto partition = partition_pair.second;
       partition->BuildIndex();
+    }
+  }
+}
+
+void
+DistArray::BuildPartitionKeyValueBuffersFromSparseIndex() {
+  if (meta_.GetPartitionScheme() == DistArrayPartitionScheme::kSpaceTime) {
+    for (auto &time_partition_map : space_time_partitions_) {
+      for (auto &partition_pair : time_partition_map.second) {
+        auto partition = partition_pair.second;
+        partition->BuildKeyValueBuffersFromSparseIndex();
+      }
+    }
+  } else {
+    for (auto &partition_pair : partitions_) {
+      auto partition = partition_pair.second;
+      partition->BuildKeyValueBuffersFromSparseIndex();
     }
   }
 }
@@ -698,13 +717,12 @@ DistArray::CreateDistArrayBuffer(const std::string &serialized_value_type) {
   const auto &init_value = meta_.GetInitValue();
   JuliaEvaluator::DefineDistArray(kId, symbol, serialized_value_type,
                                   dims, is_dense, true, init_value);
-  buffer_partition_ = CreatePartition();
-  buffer_partition_->BuildIndex();
+  buffer_partition_.reset(CreatePartition());
 }
 
 AbstractDistArrayPartition*
 DistArray::GetBufferPartition() {
-  return buffer_partition_;
+  return buffer_partition_.get();
 }
 
 void

@@ -123,6 +123,48 @@ struct DriverMsgCreateDistArrayBuffer {
   }
 };
 
+struct DriverMsgSetDistArrayBufferInfo {
+  size_t info_size;
+ private:
+  DriverMsgSetDistArrayBufferInfo() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _info_size) {
+    info_size = _info_size;
+  }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kSetDistArrayBufferInfo;
+  }
+};
+
+struct DriverMsgDeleteDistArrayBufferInfo {
+  int32_t dist_array_buffer_id;
+ private:
+  DriverMsgDeleteDistArrayBufferInfo() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(int32_t _dist_array_buffer_id) {
+    dist_array_buffer_id = _dist_array_buffer_id;
+  }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kDeleteDistArrayBufferInfo;
+  }
+};
+
+struct DriverMsgUpdateDistArrayIndex {
+  size_t task_size;
+ private:
+  DriverMsgUpdateDistArrayIndex() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _task_size) {
+    task_size = _task_size;
+  }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kUpdateDistArrayIndex;
+  }
+};
+
 class DriverMsgHelper {
  public:
   template<typename Msg,

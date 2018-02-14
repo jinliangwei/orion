@@ -30,6 +30,7 @@ AbstractDistArrayPartition::GetDims() const { return dist_array_->GetDims(); }
 void
 AbstractDistArrayPartition::ParseText(Blob *max_key,
                                       size_t line_number_start) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   jl_value_t *value = nullptr, *dist_array_value_type = nullptr;
 
   JL_GC_PUSH2(&value, &dist_array_value_type);
@@ -333,7 +334,6 @@ AbstractDistArrayPartition::LoadFromPosixFS(
   GetBufferBeginAndEnd(partition_id, partition_size,
                        read_size,
                        &temp_char_buff, &begin, &end);
-  LOG(INFO) << "end = " << end;
   temp_char_buff[end] = '\0';
 
   char_buff->resize(end - begin + 1);
@@ -344,6 +344,7 @@ AbstractDistArrayPartition::LoadFromPosixFS(
 void
 AbstractDistArrayPartition::Init(int64_t key_begin,
                                  size_t num_elements) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   keys_.resize(num_elements);
   jl_value_t *init_values = nullptr,
               *dist_array_value_type = nullptr,
@@ -406,6 +407,7 @@ AbstractDistArrayPartition::Init(int64_t key_begin,
 
 void
 AbstractDistArrayPartition::Map(AbstractDistArrayPartition *child_partition) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   jl_value_t *init_values = nullptr,
    *dist_array_value_type = nullptr,
             *input_values = nullptr,
@@ -454,6 +456,7 @@ AbstractDistArrayPartition::ComputeKeysFromBuffer(
 
 void
 AbstractDistArrayPartition::ComputeHashRepartitionIdsAndRepartition(size_t num_partitions) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   std::vector<int32_t> repartition_ids(keys_.size());
   for (size_t i = 0; i < keys_.size(); i++) {
     int32_t repartition_id = keys_[i] % num_partitions;
@@ -465,6 +468,8 @@ AbstractDistArrayPartition::ComputeHashRepartitionIdsAndRepartition(size_t num_p
 void
 AbstractDistArrayPartition::ComputeRepartitionIdsAndRepartition(
     const std::string &repartition_func_name) {
+  LOG(INFO) << __func__;
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   jl_value_t *array_type = nullptr,
             *keys_vec_jl = nullptr,
             *dims_vec_jl = nullptr,
@@ -481,6 +486,7 @@ AbstractDistArrayPartition::ComputeRepartitionIdsAndRepartition(
   jl_function_t *repartition_func = JuliaEvaluator::GetFunction(jl_main_module,
                                                                 repartition_func_name.c_str());
   repartition_ids_vec_jl = jl_call2(repartition_func, keys_vec_jl, dims_vec_jl);
+  JuliaEvaluator::AbortIfException();
   CHECK(!jl_exception_occurred()) << jl_typeof_str(jl_exception_occurred());
   int32_t *repartition_ids = reinterpret_cast<int32_t*>(jl_array_data(repartition_ids_vec_jl));
   Repartition(repartition_ids);
@@ -493,6 +499,7 @@ AbstractDistArrayPartition::ComputePrefetchIndinces(
     const std::vector<int32_t> &dist_array_ids_vec,
     const std::unordered_map<int32_t, DistArray*> &global_indexed_dist_arrays,
     PointQueryKeyDistArrayMap *point_key_vec_map) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   jl_value_t **jl_values;
   JL_GC_PUSHARGS(jl_values, 10);
 
@@ -528,8 +535,6 @@ AbstractDistArrayPartition::ComputePrefetchIndinces(
       dist_array_ids_vec.size());
   for (size_t i = 0; i < dist_array_ids_vec.size(); i++) {
     auto dist_array_id = dist_array_ids_vec[i];
-    LOG(INFO) << " i = " << i
-              << " dist_array_id = " << dist_array_id;
     const auto *global_indexed_dist_array = global_indexed_dist_arrays.at(dist_array_id);
     const auto &global_indexed_dist_array_dims = global_indexed_dist_array->GetDims();
     global_indexed_dist_array_dims_array[i] = global_indexed_dist_array_dims;
@@ -541,7 +546,6 @@ AbstractDistArrayPartition::ComputePrefetchIndinces(
   }
 
   GetJuliaValueArray(&values_vec_jl);
-  LOG(INFO) << "Got Julia value array " << (void*) values_vec_jl;
   jl_value_t *args[5];
   args[0] = keys_vec_jl;
   args[1] = values_vec_jl;
@@ -554,13 +558,10 @@ AbstractDistArrayPartition::ComputePrefetchIndinces(
                                     prefetch_batch_func_name.c_str());
   ret_jl = jl_call(prefetch_batch_func, args, 5);
   JuliaEvaluator::AbortIfException();
-  LOG(INFO) << "prefetch function finished ret = " << (void*) ret_jl;
   jl_value_t *point_key_dist_array_vec_jl =  ret_jl;
 
   for (size_t i = 0; i < dist_array_ids_vec.size(); i++) {
     int32_t dist_array_id = dist_array_ids_vec[i];
-    LOG(INFO) << "i = " << i
-              << " dist_array_id = " << dist_array_id;
     {
       auto iter_pair = point_key_vec_map->emplace(dist_array_id, PointQueryKeyVec());
       auto iter = iter_pair.first;
@@ -582,7 +583,9 @@ AbstractDistArrayPartition::ComputePrefetchIndinces(
 void
 AbstractDistArrayPartition::Execute(
     const std::string &loop_batch_func_name) {
-  LOG(INFO) << __func__ << " " << loop_batch_func_name << " start!";
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  LOG(INFO) << __func__ << " partition_size = "
+            << keys_.size();
   jl_value_t *dims_vec_jl = nullptr,
               *keys_vec_jl = nullptr,
            *values_vec_jl = nullptr,
@@ -604,11 +607,9 @@ AbstractDistArrayPartition::Execute(
       dims_array_type_jl, temp_dims.data(), temp_dims.size(), 0));
   keys_vec_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       keys_array_type_jl, keys_.data(), keys_.size(), 0));
-  LOG(INFO) << "num_elements = " << keys_.size();
 
   GetJuliaValueArray(&values_vec_jl);
   JuliaEvaluator::AbortIfException();
-  LOG(INFO) << "calling loop func";
   jl_function_t *exec_loop_func
       = JuliaEvaluator::GetFunction(jl_main_module,
                                     loop_batch_func_name.c_str());
@@ -619,10 +620,24 @@ AbstractDistArrayPartition::Execute(
 
 void
 AbstractDistArrayPartition::BuildIndex() {
-  LOG(INFO) << __func__;
-  BuildSparseIndex();
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  auto &dist_array_meta = dist_array_->GetMeta();
+  bool is_dense = dist_array_meta.IsDense() && dist_array_meta.IsContiguousPartitions();
+  if (is_dense) {
+    BuildDenseIndex();
+  } else {
+    BuildSparseIndex();
+  }
 }
 
+void
+AbstractDistArrayPartition::CheckAndBuildIndex() {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  auto &dist_array_meta = dist_array_->GetMeta();
+  auto index_type = dist_array_meta.GetIndexType();
+  if (index_type == DistArrayIndexType::kNone) return;
+  BuildIndex();
+}
 
 }
 }

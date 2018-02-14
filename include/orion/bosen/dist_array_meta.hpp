@@ -78,7 +78,7 @@ class DistArrayMeta {
   std::vector<int32_t> max_partition_ids_;
   std::string symbol_;
   std::vector<uint8_t> init_value_bytes_;
-
+  bool contiguous_partitions_ { false };
  public:
   DistArrayMeta(size_t num_dims,
                 DistArrayParentType parent_type,
@@ -120,6 +120,8 @@ class DistArrayMeta {
   const std::vector<uint8_t>& GetInitValue() const;
   type::PrimitiveType GetRandomInitType() const { return kRandomInitType; }
   DistArrayInitType GetInitType() const { return kInitType; }
+  void SetContiguousPartitions(bool is_contiguous);
+  bool IsContiguousPartitions() const;
 };
 
 }

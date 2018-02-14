@@ -15,10 +15,10 @@ AbstractExecForLoop::AbstractExecForLoop(
     size_t num_time_partitioned_dist_arrays,
     const int32_t *global_indexed_dist_array_ids,
     size_t num_global_indexed_dist_arrays,
-    const int32_t *buffered_dist_array_ids,
-    size_t num_buffered_dist_arrays,
     const int32_t *dist_array_buffer_ids,
-    const size_t *num_buffers_each_dist_array,
+    size_t num_dist_array_buffers,
+    const int32_t *written_dist_array_ids,
+    size_t num_written_dist_array_ids,
     const char* loop_batch_func_name,
     const char *prefetch_batch_func_name,
     std::unordered_map<int32_t, DistArray> *dist_arrays,
@@ -28,8 +28,6 @@ AbstractExecForLoop::AbstractExecForLoop(
     kNumServers(num_servers),
     kLoopBatchFuncName(loop_batch_func_name),
     kPrefetchBatchFuncName(prefetch_batch_func_name) {
-
-  LOG(INFO) << __func__ << " num_buffered_dist_arrays = " << num_buffered_dist_arrays;
 
   auto iter = dist_arrays->find(iteration_space_id);
   CHECK(iter != dist_arrays->end());
@@ -51,7 +49,7 @@ AbstractExecForLoop::AbstractExecForLoop(
 
   for (size_t i = 0; i < num_global_indexed_dist_arrays; i++) {
     int32_t id = global_indexed_dist_array_ids[i];
-    iter = dist_arrays->find(id);
+    auto iter = dist_arrays->find(id);
     CHECK(iter != dist_arrays->end());
     auto *dist_array_ptr = &(iter->second);
     global_indexed_dist_arrays_.emplace(std::make_pair(id, dist_array_ptr));
@@ -59,27 +57,16 @@ AbstractExecForLoop::AbstractExecForLoop(
                               std::unique_ptr<AbstractDistArrayPartition>(dist_array_ptr->CreatePartition()));
   }
 
-  size_t dist_array_buffer_index = 0;
-  for (size_t i = 0; i < num_buffered_dist_arrays; i++) {
-    int32_t dist_array_id = buffered_dist_array_ids[i];
-    LOG(INFO) << "dist_array_id = " << dist_array_id;
-    size_t num_buffers = num_buffers_each_dist_array[i];
-    LOG(INFO) << "num_buffers = " << num_buffers;
-    auto iter_pair = dist_array_to_buffers_map_.emplace(dist_array_id, std::vector<int32_t>());
-    auto buff_vec_iter = iter_pair.first;
-    auto buff_vec = buff_vec_iter->second;
-    for (size_t j = 0; j < num_buffers; j++) {
-      int32_t dist_array_buffer_id = dist_array_buffer_ids[dist_array_buffer_index];
-      buff_vec.push_back(dist_array_buffer_id);
-      auto iter = dist_array_buffers->find(dist_array_buffer_id);
-      auto *dist_array_buffer = &(iter->second);
-      auto buff_iter = dist_array_buffers_.find(dist_array_buffer_id);
-      if (buff_iter == dist_array_buffers_.end()) {
-        LOG(INFO) << "emplace " << dist_array_buffer_id;
-        dist_array_buffers_.emplace(dist_array_buffer_id, dist_array_buffer);
-      }
-      dist_array_buffer_index++;
-    }
+  for (size_t i = 0; i < num_dist_array_buffers; i++) {
+    int32_t dist_array_buffer_id = dist_array_buffer_ids[i];
+    auto iter = dist_array_buffers->find(dist_array_buffer_id);
+    CHECK(iter != dist_array_buffers->end());
+    auto *dist_array_buffer = &(iter->second);
+    dist_array_buffers_.emplace(dist_array_buffer_id, dist_array_buffer);
+  }
+
+  for (size_t i = 0; i < num_written_dist_array_ids; i++) {
+    written_dist_array_ids_.emplace(written_dist_array_ids[i]);
   }
 }
 
@@ -129,7 +116,6 @@ AbstractExecForLoop::ComputePrefetchIndinces() {
 
 void
 AbstractExecForLoop::ExecuteForLoopPartition() {
-  //LOG(INFO) << __func__;
   PrepareToExecCurrPartition();
   curr_partition_->Execute(kLoopBatchFuncName);
   ClearCurrPartition();
@@ -137,8 +123,6 @@ AbstractExecForLoop::ExecuteForLoopPartition() {
 
 void
 AbstractExecForLoop::SerializeAndClearPrefetchIds(ExecutorSendBufferMap *send_buffer_map) {
-  LOG(INFO) << __func__;
-  // server id -> (dist_array_id -> keys)
   std::unordered_map<int32_t, PointQueryKeyDistArrayMap> server_point_key_map;
 
   for (const auto &dist_array_key_pair : point_prefetch_dist_array_map_) {
@@ -184,7 +168,132 @@ AbstractExecForLoop::SerializeAndClearPrefetchIds(ExecutorSendBufferMap *send_bu
 
 void
 AbstractExecForLoop::SerializeAndClearGlobalPartitionedDistArrays() {
+  SerializeAndClearDistArrayBuffers();
+  SerializeAndClearDistArrayCaches();
+}
 
+void
+AbstractExecForLoop::SerializeAndClearDistArrayBuffers() {
+  std::unordered_map<int32_t, size_t> server_buffer_accum_size;
+  std::unordered_map<int32_t, size_t> server_num_buffers;
+  std::unordered_map<int32_t, ExecutorDataBufferMap> dist_array_buffer_data_buffer_map;
+  std::unordered_map<int32_t, uint8_t*> server_cursor_map;
+  for (auto &dist_array_pair : dist_array_buffers_) {
+    int32_t dist_array_buffer_id = dist_array_pair.first;
+    auto *buffer_partition = dist_array_pair.second->GetBufferPartition();
+    auto iter_pair = dist_array_buffer_data_buffer_map.emplace(dist_array_buffer_id, ExecutorDataBufferMap());
+    auto iter = iter_pair.first;
+    auto &data_buffer_map = iter->second;
+    buffer_partition->HashSerialize(&data_buffer_map);
+    buffer_partition->Clear();
+    for (auto &data_buff_pair : data_buffer_map) {
+      int32_t server_id = data_buff_pair.first;
+      auto &data_buff = data_buff_pair.second;
+      auto server_iter = server_buffer_accum_size.find(server_id);
+      if (server_iter == server_buffer_accum_size.end()) {
+        server_buffer_accum_size[server_id] = data_buff.size() + sizeof(int32_t);
+        server_num_buffers[server_id] = 1;
+      } else {
+        server_buffer_accum_size[server_id] += data_buff.size() + sizeof(int32_t);
+        server_num_buffers[server_id] += 1;
+      }
+    }
+  }
+
+  for (auto &buffer_accum_size_pair : server_buffer_accum_size) {
+    int32_t server_id = buffer_accum_size_pair.first;
+    size_t buffer_accum_size = buffer_accum_size_pair.second + sizeof(size_t);
+    uint8_t* buff = new uint8_t[buffer_accum_size];
+    buffer_send_buffer_map_.emplace(server_id, std::make_pair(buff, buffer_accum_size));
+    uint8_t* cursor = buff;
+    *reinterpret_cast<size_t*>(cursor) = server_num_buffers[server_id];
+    cursor += sizeof(size_t);
+    server_cursor_map.emplace(server_id, cursor);
+  }
+
+  for (auto &data_buff_pair : dist_array_buffer_data_buffer_map) {
+    int32_t dist_array_id = data_buff_pair.first;
+    auto &data_buffer_map = data_buff_pair.second;
+    for (auto &data_buff_pair : data_buffer_map) {
+      int32_t server_id = data_buff_pair.first;
+      auto &data_buff = data_buff_pair.second;
+      *reinterpret_cast<int32_t*>(server_cursor_map[server_id]) = dist_array_id;
+      server_cursor_map[server_id] += sizeof(int32_t);
+      memcpy(server_cursor_map[server_id], data_buff.data(), data_buff.size());
+      server_cursor_map[server_id] += data_buff.size();
+    }
+  }
+}
+
+void
+AbstractExecForLoop::SerializeAndClearDistArrayCaches() {
+  std::unordered_map<int32_t, size_t> server_cache_accum_size;
+  std::unordered_map<int32_t, size_t> server_num_caches;
+  std::unordered_map<int32_t, ExecutorDataBufferMap> dist_array_cache_data_buffer_map;
+  std::unordered_map<int32_t, uint8_t*> server_cursor_map;
+  for (auto &dist_array_pair : dist_array_cache_) {
+    auto dist_array_id = dist_array_pair.first;
+    auto *cache_partition = dist_array_pair.second.get();
+    if (written_dist_array_ids_.count(dist_array_id) == 0) {
+      cache_partition->Clear();
+      continue;
+    }
+    auto iter_pair = dist_array_cache_data_buffer_map.emplace(dist_array_id, ExecutorDataBufferMap());
+    auto iter = iter_pair.first;
+    auto &data_buffer_map = iter->second;
+    cache_partition->HashSerialize(&data_buffer_map);
+    cache_partition->Clear();
+    for (auto &data_buff_pair : data_buffer_map) {
+      int32_t server_id = data_buff_pair.first;
+      auto &data_buff = data_buff_pair.second;
+      auto server_iter = server_cache_accum_size.find(server_id);
+      if (server_iter == server_cache_accum_size.end()) {
+        server_cache_accum_size[server_id] = data_buff.size() + sizeof(int32_t);
+        server_num_caches[server_id] = 1;
+      } else {
+        server_cache_accum_size[server_id] += data_buff.size() + sizeof(int32_t);
+        server_num_caches[server_id] += 1;
+      }
+    }
+  }
+
+  for (auto &cache_accum_size_pair : server_cache_accum_size) {
+    int32_t server_id = cache_accum_size_pair.first;
+    size_t cache_accum_size = cache_accum_size_pair.second + sizeof(size_t);
+    uint8_t* buff = new uint8_t[cache_accum_size];
+    cache_send_buffer_map_.emplace(server_id, std::make_pair(buff, cache_accum_size));
+    uint8_t* cursor = buff;
+    *reinterpret_cast<size_t*>(cursor) = server_num_caches[server_id];
+    cursor += sizeof(size_t);
+    server_cursor_map.emplace(server_id, cursor);
+  }
+
+  for (auto &data_buff_pair : dist_array_cache_data_buffer_map) {
+    int32_t dist_array_id = data_buff_pair.first;
+    auto &data_buffer_map = data_buff_pair.second;
+    for (auto &data_buff_pair : data_buffer_map) {
+      int32_t server_id = data_buff_pair.first;
+      auto &data_buff = data_buff_pair.second;
+      *reinterpret_cast<int32_t*>(server_cursor_map[server_id]) = dist_array_id;
+      server_cursor_map[server_id] += sizeof(int32_t);
+      memcpy(server_cursor_map[server_id], data_buff.data(), data_buff.size());
+      server_cursor_map[server_id] += data_buff.size();
+    }
+  }
+}
+
+void
+AbstractExecForLoop::GetAndClearDistArrayBufferSendMap(
+    ExecutorSendBufferMap *buffer_send_buffer_map) {
+  *buffer_send_buffer_map = buffer_send_buffer_map_;
+  buffer_send_buffer_map_.clear();
+}
+
+void
+AbstractExecForLoop::GetAndClearDistArrayCacheSendMap(
+    ExecutorSendBufferMap *cache_send_buffer_map) {
+  *cache_send_buffer_map = cache_send_buffer_map_;
+  cache_send_buffer_map_.clear();
 }
 
 void
@@ -201,7 +310,6 @@ AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
     auto *dist_array_partition = dist_array->GetLocalPartition(
         time_partition_id_to_send);
     if (dist_array_partition == nullptr) continue;
-    dist_array_partition->BuildKeyValueBuffersFromSparseIndex();
     auto data_buff = dist_array_partition->Serialize();
     if (data_buff.second > 0) {
       CHECK(data_buff.first != nullptr);
@@ -285,13 +393,10 @@ void
 AbstractExecForLoop::CachePrefetchDistArrayValues(
     PeerRecvGlobalIndexedDistArrayDataBuffer **buff_vec,
     size_t num_buffs) {
-  LOG(INFO) << __func__;
   CHECK(num_pending_prefetch_requests_ > 0);
   for (size_t i = 0; i < num_buffs; i++) {
     auto *buff = buff_vec[i];
-    LOG(INFO) << "i = " << i << " " << (void*) buff;
     const auto *bytes = buff->byte_buff.data();
-    LOG(INFO) << "bytes->size() = " << buff->byte_buff.size();
     const auto *cursor = bytes;
     size_t num_dist_arrays = *reinterpret_cast<const size_t*>(cursor);
     cursor += sizeof(size_t);
@@ -301,7 +406,6 @@ AbstractExecForLoop::CachePrefetchDistArrayValues(
       auto iter = dist_array_cache_.find(dist_array_id);
       CHECK(iter != dist_array_cache_.end()) << " dist_array_id = " << dist_array_id;
       auto *cache_partition = iter->second.get();
-      LOG(INFO) << "cursor offset = " << cursor - bytes;
       cursor = cache_partition->DeserializeAndAppend(cursor);
     }
     delete buff;

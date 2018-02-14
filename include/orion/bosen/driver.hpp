@@ -149,7 +149,12 @@ class Driver {
       int32_t id,
       const char *partition_func_name,
       int32_t partition_scheme,
-      int32_t index_type);
+      int32_t index_type,
+      bool contiguous_partitions);
+
+  void UpdateDistArrayIndex(
+      int32_t id,
+      int32_t new_index_type);
 
   void CreateDistArrayBuffer(
       int32_t id,
@@ -162,10 +167,17 @@ class Driver {
       const uint8_t* value_type_bytes,
       size_t value_type_size);
 
-  void SetDistArrayBuffer(
+  void SetDistArrayBufferInfo(
+      int32_t dist_array_buffer_id,
       int32_t dist_array_id,
-      int32_t *buffer_ids,
-      size_t num_buffers);
+      const char *apply_buffer_func_name,
+      const int32_t *helper_buffer_ids,
+      size_t num_helper_buffers,
+      const int32_t *helper_dist_array_ids,
+      size_t num_helper_dist_arrays);
+
+  void DeleteDistArrayBufferInfo(
+      int32_t dist_array_buffer_id);
 
   void ExecForLoop(
       int32_t iteration_space_id,
@@ -176,10 +188,10 @@ class Driver {
       size_t num_time_partitioned_dist_arrays,
       const int32_t *global_indexed_dist_array_ids,
       size_t num_gloabl_indexed_dist_arrays,
-      const int32_t *buffered_dist_array_ids,
-      size_t num_buffered_dist_arrays,
       const int32_t *dist_array_buffer_ids,
-      const size_t *num_buffers_each_dist_array,
+      size_t num_dist_array_buffers,
+      const int32_t *written_dist_array_ids,
+      size_t num_written_dist_array_ids,
       const char* loop_batch_func_name,
       const char *prefetch_batch_func_name,
       bool is_ordered);
@@ -465,8 +477,8 @@ Driver::RepartitionDistArray(
     int32_t id,
     const char *partition_func_name,
     int32_t partition_scheme,
-    int32_t index_type) {
-  LOG(INFO) << __func__;
+    int32_t index_type,
+    bool contiguous_partitions) {
   task::RepartitionDistArray repartition_dist_array_task;
   repartition_dist_array_task.set_id(id);
   auto my_partition_scheme = static_cast<DistArrayPartitionScheme>(partition_scheme);
@@ -476,6 +488,7 @@ Driver::RepartitionDistArray(
   }
   repartition_dist_array_task.set_partition_scheme(partition_scheme);
   repartition_dist_array_task.set_index_type(index_type);
+  repartition_dist_array_task.set_contiguous_partitions(contiguous_partitions);
   repartition_dist_array_task.SerializeToString(&msg_buff_);
 
   message::DriverMsgHelper::CreateMsg<message::DriverMsgRepartitionDistArray>(
@@ -487,6 +500,30 @@ Driver::RepartitionDistArray(
   expected_msg_type_ = message::DriverMsgType::kMasterResponse;
   received_from_master_ = false;
   BlockRecvFromMaster();
+  message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  master_recv_temp_buff_.ClearOneMsg();
+}
+
+void
+Driver::UpdateDistArrayIndex(
+    int32_t id,
+    int32_t new_index_type) {
+  task::UpdateDistArrayIndex update_dist_array_index_task;
+  update_dist_array_index_task.set_id(id);
+  update_dist_array_index_task.set_index_type(new_index_type);
+  update_dist_array_index_task.SerializeToString(&msg_buff_);
+
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgUpdateDistArrayIndex>(
+      &master_.send_buff, msg_buff_.size());
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  received_from_master_ = false;
+  BlockRecvFromMaster();
+
   message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
       master_recv_temp_buff_);
   master_recv_temp_buff_.ClearOneMsg();
@@ -554,11 +591,56 @@ Driver::CreateDistArrayBuffer(
 }
 
 void
-Driver::SetDistArrayBuffer(
+Driver::SetDistArrayBufferInfo(
+    int32_t dist_array_buffer_id,
     int32_t dist_array_id,
-    int32_t *buffer_ids,
-    size_t num_buffers) {
+    const char *apply_buffer_func_name,
+    const int32_t *helper_buffer_ids,
+    size_t num_helper_buffers,
+    const int32_t *helper_dist_array_ids,
+    size_t num_helper_dist_arrays) {
+  task::SetDistArrayBufferInfo set_dist_array_buffer_info;
+  set_dist_array_buffer_info.set_dist_array_buffer_id(dist_array_buffer_id);
+  set_dist_array_buffer_info.set_dist_array_id(dist_array_id);
+  set_dist_array_buffer_info.set_apply_buffer_func_name(apply_buffer_func_name);
+  for (auto i = 0; i < num_helper_buffers; i++) {
+    set_dist_array_buffer_info.add_helper_dist_array_buffer_ids(helper_buffer_ids[i]);
+  }
+  for (auto i = 0; i < num_helper_dist_arrays; i++) {
+    set_dist_array_buffer_info.add_helper_dist_array_ids(helper_dist_array_ids[i]);
+  }
 
+  set_dist_array_buffer_info.SerializeToString(&msg_buff_);
+
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgSetDistArrayBufferInfo>(
+      &master_.send_buff, msg_buff_.size());
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  received_from_master_ = false;
+  BlockRecvFromMaster();
+
+  message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  master_recv_temp_buff_.ClearOneMsg();
+}
+
+void
+Driver::DeleteDistArrayBufferInfo(
+    int32_t dist_array_buffer_id) {
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgDeleteDistArrayBufferInfo>(
+      &master_.send_buff, dist_array_buffer_id);
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  received_from_master_ = false;
+  BlockRecvFromMaster();
+  message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  master_recv_temp_buff_.ClearOneMsg();
 }
 
 void
@@ -571,10 +653,10 @@ Driver::ExecForLoop(
     size_t num_time_partitioned_dist_arrays,
     const int32_t *global_indexed_dist_array_ids,
     size_t num_global_indexed_dist_arrays,
-    const int32_t *buffered_dist_array_ids,
-    size_t num_buffered_dist_arrays,
     const int32_t *dist_array_buffer_ids,
-    const size_t *num_buffers_each_dist_array,
+    size_t num_dist_array_buffers,
+    const int32_t *written_dist_array_ids,
+    size_t num_written_dist_array_ids,
     const char *loop_batch_func_name,
     const char *prefetch_batch_func_name,
     bool is_ordered) {
@@ -594,19 +676,15 @@ Driver::ExecForLoop(
     exec_for_loop_task.add_global_indexed_dist_array_ids(
         global_indexed_dist_array_ids[i]);
   }
-  if (num_buffered_dist_arrays > 0) {
-    CHECK(buffered_dist_array_ids != nullptr);
-    CHECK(dist_array_buffer_ids != nullptr);
-    CHECK(num_buffers_each_dist_array != nullptr);
-    size_t offset = 0;
-    for (size_t i = 0; i < num_buffered_dist_arrays; i++) {
-      exec_for_loop_task.add_buffered_dist_array_ids(buffered_dist_array_ids[i]);
-      exec_for_loop_task.add_num_buffers_each_dist_array(num_buffers_each_dist_array[i]);
-      for (size_t j = 0; j < num_buffers_each_dist_array[i]; j++) {
-        exec_for_loop_task.add_dist_array_buffer_ids(dist_array_buffer_ids[offset]);
-        offset++;
-      }
-    }
+
+  for (size_t i = 0; i < num_dist_array_buffers; i++) {
+    exec_for_loop_task.add_dist_array_buffer_ids(
+        dist_array_buffer_ids[i]);
+  }
+
+  for (size_t i = 0; i < num_dist_array_buffers; i++) {
+    exec_for_loop_task.add_written_dist_array_ids(
+        written_dist_array_ids[i]);
   }
 
   exec_for_loop_task.set_loop_batch_func_name(loop_batch_func_name);

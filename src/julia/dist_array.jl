@@ -80,8 +80,7 @@ return partition_a.partition_type == partition_b.partition_type &&
         ) || (
             get(partition_a.tile_sizes) == get(partition_b.tile_sizes)
         )
-    ) &&
-        partition_a.index_type == partition_b.index_type
+    )
 end
 
 immutable DistArrayMapInfo
@@ -187,7 +186,7 @@ type DenseDistArray{T, N} <: DistArray{T, N}
     init_info::Nullable{DistArrayInitInfo}
     partition_info::DistArrayPartitionInfo
     target_partition_info::Nullable{DistArrayPartitionInfo}
-    accessor::Nullable{DenseDistArrayAccessor{T, N}}
+    accessor::Nullable{DistArrayAccessor{T, N}}
     cache_accessor::Nullable{DistArrayCacheAccessor{T, N}}
     iterate_dims::Nullable{Vector{Int64}}
     num_partitions_per_dim::Int64
@@ -208,7 +207,7 @@ type DenseDistArray{T, N} <: DistArray{T, N}
                        DistArrayPartitionInfo(DistArrayPartitionType_naive,
                                               DistArrayIndexType_none),
                        Nullable{DistArrayPartitionInfo}(),
-                       Nullable{DenseDistArrayAccessor{T, N}}(),
+                       Nullable{DistArrayAccessor{T, N}}(),
                        Nullable{DistArrayCacheAccessor{T, N}}(),
                        Nullable{Vector{Int64}}(),
                        num_executors * 2)
@@ -230,7 +229,7 @@ type DenseDistArray{T, N} <: DistArray{T, N}
                        DistArrayPartitionInfo(DistArrayPartitionType_naive,
                                               DistArrayIndexType_none),
                        Nullable{DistArrayPartitionInfo}(),
-                       Nullable{DenseDistArrayAccessor{T, N}}(),
+                       Nullable{DistArrayAccessor{T, N}}(),
                        Nullable{DistArrayCacheAccessor{T, N}}(),
                        Nullable{Vector{Int64}}(),
                        num_executors * 2)
@@ -404,7 +403,6 @@ function text_file(file_path::AbstractString,
             dist_array = DenseDistArray{ValueType, num_dims}(id, DistArrayParentType_text_file,
                                                               map_type)
         else
-            println(typeof(num_dims))
             dist_array = SparseDistArray{ValueType, num_dims}(id, DistArrayParentType_text_file,
                                                               map_type)
         end
@@ -547,7 +545,6 @@ function call_create_dist_array{T, N}(dist_array::DistArray{T, N},
     if !isnull(dist_array.file_path)
         file_path = get(dist_array.file_path)
     end
-    println(dist_array.dims)
     ccall((:orion_create_dist_array, lib_path),
           Void, (Int32, # id
                  Int32, # parent_type
@@ -832,18 +829,33 @@ function check_and_repartition(dist_array::DistArray,
     else
         repartition = true
     end
+    println("repartition = ", repartition)
     local partition_func_name = ""
     if !isnull(partition_info.partition_func_name)
         partition_func_name = get(partition_info.partition_func_name)
     end
     if repartition
         dist_array.partition_info = partition_info
+        contiguous_partitions = isa(dist_array, DenseDistArray) &&
+            ((partition_info.partition_type == DistArrayPartitionType_1d &&
+             get(partition_info.partition_dims)[1] == length(dist_array.dims)) |
+             (partition_info.partition_type == DistArrayPartitionType_range))
+
         ccall((:orion_repartition_dist_array, lib_path),
-        Void, (Int32, Cstring, Int32, Int32),
-        dist_array.id,
-        partition_func_name,
-        dist_array_partition_type_to_int32(partition_info.partition_type),
-        dist_array_index_type_to_int32(partition_info.index_type))
+              Void, (Int32, Cstring, Int32, Int32, Bool),
+              dist_array.id,
+              partition_func_name,
+              dist_array_partition_type_to_int32(partition_info.partition_type),
+              dist_array_index_type_to_int32(partition_info.index_type),
+              contiguous_partitions)
+    else
+        if curr_partition_info.index_type != partition_info.index_type
+            dist_array.partition_info = partition_info
+            ccall((:orion_update_dist_array_index, lib_path),
+                  Void, (Int32, Int32),
+                  dist_array.id,
+                  dist_array_index_type_to_int32(partition_info.index_type))
+        end
     end
 end
 
@@ -912,6 +924,15 @@ function create_dist_array_accessor{T, N}(
 end
 
 function create_dist_array_accessor{T, N}(
+    dist_array::DenseDistArray{T, N},
+    keys::Vector{Int64},
+    values::Vector{T})
+    dist_array.accessor = Nullable{SparseDistArrayAccessor{T, N}}(
+        SparseDistArrayAccessor{T, N}(keys, values,
+                                      dist_array.dims))
+end
+
+function create_dist_array_accessor{T, N}(
     dist_array::SparseDistArray{T, N},
     keys::Vector{Int64},
     values::Vector)
@@ -936,17 +957,17 @@ function delete_dist_array_accessor{T, N}(dist_array::DistArray{T, N})
     dist_array.cache_accessor = Nullable{DistArrayAccessor{T, N}}()
 end
 
-function dist_array_get_accessor_keys_vec(dist_array::DistArray)::Vector{Int64}
+function dist_array_get_accessor_keys_values_vec{T, N}(dist_array::DistArray{T, N})::Tuple{Vector{Int64},
+                                                                                           Vector{T}}
     accessor = isnull(dist_array.cache_accessor) ?
         get(dist_array.accessor) :
         get(dist_array.cache_accessor)
-    dist_array_accessor_get_keys_vec(accessor)
+    dist_array_accessor_get_keys_values_vec(accessor)
 end
 
-function dist_array_get_accessor_values_vec(dist_array::DistArray)::Vector
-    accessor = isnull(dist_array.cache_accessor) ?
-        get(dist_array.accessor) :
-        get(dist_array.cache_accessor)
+function dist_array_get_accessor_values_vec{T, N}(dist_array::DenseDistArray{T, N})::Vector{T}
+    @assert !isnull(dist_array.accessor)
+    accessor = get(dist_array.accessor)
     dist_array_accessor_get_values_vec(accessor)
 end
 

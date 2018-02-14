@@ -8,7 +8,7 @@ Orion.helloworld()
 const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 8
+const num_executors = 2
 const num_servers = 1
 
 # initialize logging of the runtime library
@@ -16,10 +16,10 @@ Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity, num_executors,
            num_servers)
 
-const data_path = "file:///proj/BigLearning/jinlianw/data/a1a"
-const num_iterations = 10
+const data_path = "file:///proj/BigLearning/jinlianw/data/kdda.10K"
+const num_iterations = 2
 const step_size = 0.001
-const num_features = 123
+const num_features = 20216830
 
 Orion.@accumulator err = 0
 Orion.@accumulator line_cnt = 0
@@ -34,7 +34,8 @@ Orion.@share function parse_line(index::Int64, line::AbstractString)::Tuple{Tupl
     label = parse(Int64, tokens[1])
     for token in tokens[2:end]
         feature = split(token, ":")
-        feature_id = parse(Int64, feature[1])
+        feature_id = parse(Int64, feature[1]) - 1
+        @assert feature_id >= 0
         feature_val = parse(Float32, feature[2])
         push!(feature_vec, (feature_id, feature_val))
     end
@@ -59,14 +60,14 @@ Orion.@share function sigmoid(z)
     return 1.0 ./ (1.0 .+ exp(-z))
 end
 
-Orion.@dist_array weights_buf = Orion.create_dense_dist_array_buffer((weights.dims...), 0.0)
+Orion.@dist_array weights_buf = Orion.create_sparse_dist_array_buffer((weights.dims...), 0.0)
 Orion.materialize(weights_buf)
 
-Orion.@share function apply_buffered_update(weight, update)
+Orion.@share function apply_buffered_update(key, weight, update)
     return weight + update
 end
 
-Orion.set_write_buffer(weights, apply_buffered_update, weights_buf)
+Orion.set_write_buffer(weights_buf, weights, apply_buffered_update)
 
 error_vec = Vector{Float64}()
 for iteration = 1:num_iterations
@@ -91,7 +92,7 @@ for iteration = 1:num_iterations
         Orion.@parallel_for for sample in samples_mat
             sum = 0.0
             label = sample[2][1]
-            features = sample[1][2]
+            features = sample[2][2]
 
             for feature in features
                 fid = feature[1]

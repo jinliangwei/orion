@@ -53,10 +53,9 @@ function gen_1d_partition_function(func_name::Symbol,
           repartition_ids = Vector{Int32}(length(keys))
           i = 1
           for key in keys
-            #println(key)
-            dim_keys = OrionWorker.from_int64_to_keys(key, dims)
-            $add_partition_id_stmt
-            i += 1
+              dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+              $add_partition_id_stmt
+              i += 1
           end
           return repartition_ids
         end)

@@ -187,6 +187,7 @@ end
 function parallelize_naive(iteration_space::Symbol,
                            iteration_var::Symbol,
                            dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
+                           buffer_set::Set{Symbol},
                            inherited_vars_to_mark_global::Set{Symbol},
                            loop_body::Expr,
                            is_ordered::Bool,
@@ -205,6 +206,7 @@ function parallelize_naive(iteration_space::Symbol,
         return parallelize_1d(iteration_space,
                               iteration_var,
                               dist_array_access_dict,
+                              buffer_set,
                               inherited_vars_to_mark_global,
                               loop_body,
                               is_ordered,
@@ -215,6 +217,7 @@ function parallelize_naive(iteration_space::Symbol,
         return parallelize_1d(iteration_space,
                               iteration_var,
                               dist_array_access_dict,
+                              buffer_set,
                               inherited_vars_to_mark_global,
                               loop_body,
                               is_ordered,
@@ -225,6 +228,7 @@ function parallelize_naive(iteration_space::Symbol,
         return parallelize_2d(iteration_space,
                               iteration_var,
                               dist_array_access_dict,
+                              buffer_set,
                               inherited_vars_to_mark_global,
                               loop_body,
                               is_ordered,
@@ -235,6 +239,7 @@ function parallelize_naive(iteration_space::Symbol,
         return parallelize_unimodular(iteration_space,
                                       iteration_var,
                                       dist_array_access_dict,
+                                      buffer_set,
                                       inherited_vars_to_mark_global,
                                       loop_body,
                                       is_ordered,
@@ -245,9 +250,34 @@ function parallelize_naive(iteration_space::Symbol,
 
 end
 
+function get_accessed_dist_array_buffer_ids(accessed_buffer_sym_set::Set{Symbol},
+                                            dist_array_buffer_id_set::Set{Int32},
+                                            global_indexed_dist_array_id_set::Set{Int32},
+                                            global_indexed_dist_array_sym_set::Set{Symbol},
+                                            helper_global_indexed_dist_array_id_set::Set{Int32},
+                                            helper_global_indexed_dist_array_sym_set::Set{Symbol})
+    for buffer_sym in accessed_buffer_sym_set
+        buffer_id = eval(current_module(), buffer_sym).id
+        if !(buffer_id in keys(dist_array_buffer_map))
+            continue
+        end
+        buffer_info = dist_array_buffer_map[buffer_id]
+        push!(dist_array_buffer_id_set, buffer_id)
+        push!(global_indexed_dist_array_id_set, buffer_info.dist_array_id)
+        dist_array = dist_arrays[buffer_info.dist_array_id]
+        push!(global_indexed_dist_array_sym_set, get(dist_array.symbol))
+        for dist_array_id in buffer_info.helper_dist_array_ids
+            dist_array = dist_arrays[dist_array_id]
+            push!(helper_global_indexed_dist_array_sym_set, get(dist_array.symbol))
+            push!(helper_global_indexed_dist_array_id_set, dist_array_id)
+        end
+    end
+end
+
 function parallelize_1d(iteration_space::Symbol,
                         iteration_var::Symbol,
                         dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
+                        buffer_set::Set{Symbol},
                         inherited_vars_to_mark_global::Set{Symbol},
                         loop_body::Expr,
                         is_ordered::Bool,
@@ -260,15 +290,12 @@ function parallelize_1d(iteration_space::Symbol,
     iteration_space_dims = get(iteration_space_dist_array.iterate_dims)
     tile_size = get_1d_tile_size(space_partition_dim, iteration_space_dist_array)
     iteration_space_dims_diff = length(iteration_space_dist_array.dims) - length(get(iteration_space_dist_array.iterate_dims))
-    space_partitioned_dist_array_ids = Vector{Int32}()
-    global_indexed_dist_array_ids = Vector{Int32}()
-    global_indexed_dist_array_syms = Set{Symbol}()
 
     loop_partition_func_name = gen_unique_symbol()
     loop_partition_func = gen_1d_partition_function(loop_partition_func_name,
                                                     space_partition_dim + iteration_space_dims_diff,
                                                     tile_size)
-
+    println("tile_size = ", tile_size, " partition_dim = ", space_partition_dim + iteration_space_dims_diff)
     dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
                                                        string(loop_partition_func_name),
                                                        (space_partition_dim + iteration_space_dims_diff,),
@@ -280,17 +307,44 @@ function parallelize_1d(iteration_space::Symbol,
     push!(parallelized_loop.args, repartition_stmt)
     partition_func_set = Set{Expr}()
     accessed_da_syms = Set{Symbol}()
+
+    space_partitioned_dist_array_id_vec = Vector{Int32}()
+    global_indexed_dist_array_sym_set = Set{Symbol}()
+    global_indexed_dist_array_id_set = Set{Int32}()
+    buffer_global_indexed_dist_array_sym_set = Set{Symbol}()
+    buffer_global_indexed_dist_array_id_set = Set{Int32}()
+    dist_array_buffer_id_set = Set{Int32}()
+
+    get_accessed_dist_array_buffer_ids(buffer_set, dist_array_buffer_id_set,
+                                       global_indexed_dist_array_id_set,
+                                       global_indexed_dist_array_sym_set,
+                                       buffer_global_indexed_dist_array_id_set,
+                                       buffer_global_indexed_dist_array_sym_set)
+    if length(global_indexed_dist_array_id_set) > 0
+        global_indexed_dist_array_id_vec = [global_indexed_dist_array_id_set...]
+    else
+        global_indexed_dist_array_id_vec = Vector{Int32}()
+    end
+
+    written_dist_array_id_vec = Vector{Int32}()
     for (da_sym, da_access_vec) in dist_array_access_dict
         push!(accessed_da_syms, da_sym)
+        for da_access in da_access_vec
+            if !da_access.is_read
+                push!(written_dist_array_id_vec, eval(current_module(), iteration_space).id)
+                break
+            end
+        end
         partition_dims = compute_dist_array_partition_dims(da_sym, da_access_vec,
                                                            iteration_space_dims)
         partition_dim = 0
-        if !(da_sym in keys(dist_array_buffer_map)) && space_partition_dim in keys(partition_dims)
+        if !(da_sym in buffer_global_indexed_dist_array_sym_set) &&
+            space_partition_dim in keys(partition_dims)
             partition_dim = partition_dims[space_partition_dim]
-            push!(space_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
+            push!(space_partitioned_dist_array_id_vec, eval(current_module(), da_sym).id)
         else
-            push!(global_indexed_dist_array_ids, eval(current_module(), da_sym).id)
-            push!(global_indexed_dist_array_syms, da_sym)
+            push!(global_indexed_dist_array_id_vec, eval(current_module(), da_sym).id)
+            push!(global_indexed_dist_array_sym_set, da_sym)
         end
 
         if partition_dim > 0
@@ -312,18 +366,17 @@ function parallelize_1d(iteration_space::Symbol,
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
         end
-
-        if da_sym in keys(dist_array_buffer_map)
-            buffer_info = dist_array_buffer_map[da_sym]
-            for helper_da_sym in buffer_info.helper_dist_array_vec
-                @assert !(helper_da_sym in accessed_da_syms)
-                dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
-                                                                   DistArrayIndexType_range)
-                repartition_stmt = :(Orion.check_and_repartition($(esc(helper_da_sym)), $dist_array_partition_info))
-                push!(parallelized_loop.args, repartition_stmt)
-            end
-        end
     end
+    for da_sym in buffer_global_indexed_dist_array_sym_set
+        if da_sym in global_indexed_dist_array_sym_set
+            continue
+        end
+        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
+                                                           DistArrayIndexType_none)
+        repartition_stmt = :(Orion.check_and_repartition($(esc(helper_da_sym)), $dist_array_partition_info))
+        push!(parallelized_loop.args, repartition_stmt)
+    end
+
     println("generate loop body function")
     loop_body_func_name = gen_unique_symbol()
     loop_batch_func_name = gen_unique_symbol()
@@ -348,9 +401,10 @@ function parallelize_1d(iteration_space::Symbol,
     prefetch_func = nothing
     prefetch_batch_func = nothing
     prefetch = false
-    if !isempty(global_indexed_dist_array_syms)
-        prefetch_stmts = get_prefetch_stmts(flow_graph, global_indexed_dist_array_syms,
-                                            ssa_defs)
+    if !isempty(global_indexed_dist_array_sym_set)
+       prefetch_stmts = get_prefetch_stmts(flow_graph,
+                                           global_indexed_dist_array_sym_set,
+                                           ssa_defs)
         if prefetch_stmts != nothing
             prefetch = true
             prefetch_func_name = gen_unique_symbol()
@@ -385,28 +439,18 @@ function parallelize_1d(iteration_space::Symbol,
 
     loop_batch_func_name_str = string(loop_batch_func_name)
     prefetch_batch_func_name_str = prefetch ? string(prefetch_batch_func_name) : ""
-    buffered_dist_array_ids = Vector{Int32}()
-    dist_array_buffer_ids = Vector{Int32}()
-    num_buffers_each_dist_array = Vector{UInt64}()
-
-    for dist_array_id in global_indexed_dist_array_ids
-        if dist_array_id in keys(dist_array_buffer_map)
-            push!(buffered_dist_array_ids, dist_array_id)
-            buff_info = dist_array_buffer_map[dist_array_id]
-            push!(num_buffers_each_dist_array, length(buff_info.helper_buffer_vec) + 1)
-            push!(dist_array_buffer_ids, buff_info.buffer_id)
-            append!(dist_array_buffer_ids, buff_info.helper_buffer_vec)
-        end
+    if length(dist_array_buffer_id_set) > 0
+        dist_array_buffer_id_vec = [dist_array_buffer_id_set...]
+    else
+        dist_array_buffer_id_vec = Vector{Int32}()
     end
-
     exec_loop_stmt = :(Orion.exec_for_loop($(iteration_space_dist_array.id),
                                            Orion.ForLoopParallelScheme_1d,
-                                           $(space_partitioned_dist_array_ids),
+                                           $(space_partitioned_dist_array_id_vec),
                                            Vector{Int32}(),
-                                           $(global_indexed_dist_array_ids),
-                                           $(buffered_dist_array_ids),
-                                           $(dist_array_buffer_ids),
-                                           $(num_buffers_each_dist_array),
+                                           $(global_indexed_dist_array_id_vec),
+                                           $(dist_array_buffer_id_vec),
+                                           $(written_dist_array_id_vec),
                                            $loop_batch_func_name_str,
                                            $prefetch_batch_func_name_str,
                                            $(is_ordered)))
@@ -430,10 +474,6 @@ function parallelize_2d(iteration_space::Symbol,
 
     iteration_space_dist_array = eval(current_module(), iteration_space)
     iteration_space_dims = get(iteration_space_dist_array.iterate_dims)
-    space_partitioned_dist_array_ids = Vector{Int32}()
-    time_partitioned_dist_array_ids = Vector{Int32}()
-    global_indexed_dist_array_ids = Vector{Int32}()
-    global_indexed_dist_array_syms = Set{Symbol}()
     tile_sizes = get_2d_tile_sizes(par_dim, iteration_space_dist_array)
 
     iteration_space_dims_diff = length(iteration_space_dist_array.dims) - length(get(iteration_space_dist_array.iterate_dims))
@@ -456,27 +496,57 @@ function parallelize_2d(iteration_space::Symbol,
     push!(parallelized_loop.args, repartition_stmt)
     partition_func_set = Set{Expr}()
     accessed_da_syms = Set{Symbol}()
+
+
+    global_indexed_dist_array_id_set = Set{Int32}()
+    global_indexed_dist_array_sym_set = Set{Symbol}()
+    buffer_global_indexed_dist_array_sym_set = Set{Symbol}()
+    buffer_global_indexed_dist_array_id_set = Set{Int32}()
+    dist_array_buffer_id_set = Set{Int32}()
+
+    get_accessed_dist_array_buffer_ids(buffer_set, dist_array_buffer_id_set,
+                                       global_indexed_dist_array_id_set,
+                                       global_indexed_dist_array_sym_set,
+                                       buffer_global_indexed_dist_array_id_set,
+                                       buffer_global_indexed_dist_array_sym_set)
+
+    if length(global_indexed_dist_array_id_set) > 0
+        global_indexed_dist_array_id_vec = [global_indexed_dist_array_id_set...]
+    else
+        global_indexed_dist_array_id_vec = Vector{Int32}()
+    end
+
+    space_partitioned_dist_array_id_vec = Vector{Int32}()
+    time_partitioned_dist_array_id_vec = Vector{Int32}()
+
+    written_dist_array_id_vec = Vector{Int32}()
     for (da_sym, da_access_vec) in dist_array_access_dict
         push!(accessed_da_syms, da_sym)
+        for da_access in da_access_vec
+            if !da_access.is_read
+                push!(written_dist_array_id_vec, eval(current_module(), iteration_space).id)
+                break
+            end
+        end
         partition_dims = compute_dist_array_partition_dims(da_sym, da_access_vec,
                                                            iteration_space_dims)
         partition_dim = 0
-        if !(da_sym in keys(dist_array_buffer_map)) &&
+        if !(da_sym in buffer_global_indexed_dist_array_sym_set) &&
             (space_partition_dim in keys(partition_dims) ||
              time_partition_dim in keys(partition_dims))
             if space_partition_dim in keys(partition_dims)
                 partition_dim = partition_dims[space_partition_dim]
-                push!(space_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
+                push!(space_partitioned_dist_array_id_vec, eval(current_module(), da_sym).id)
                 tile_size = tile_sizes[1]
             else
                 @assert time_partition_dim in keys(partition_dims)
                 partition_dim = partition_dims[time_partition_dim]
-                push!(time_partitioned_dist_array_ids, eval(current_module(), da_sym).id)
+                push!(time_partitioned_dist_array_id_vec, eval(current_module(), da_sym).id)
                 tile_size = tile_sizes[2]
             end
         else
-            push!(global_indexed_dist_array_ids, eval(current_module(), da_sym).id)
-            push!(global_indexed_dist_array_syms, da_sym)
+            push!(global_indexed_dist_array_id_vec, eval(current_module(), da_sym).id)
+            push!(global_indexed_dist_array_sym_set, da_sym)
         end
 
         if partition_dim > 0
@@ -498,17 +568,16 @@ function parallelize_2d(iteration_space::Symbol,
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
         end
+    end
 
-        if da_sym in keys(dist_array_buffer_map)
-            @assert !(da_sym in accessed_da_syms)
-            buffer_info = dist_array_buffer_map[da_sym]
-            for helper_da_sym in buffer_info.helper_dist_array_vec
-                dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_server_hash,
-                                                                   DistArrayIndexType_range)
-                repartition_stmt = :(Orion.check_and_repartition($(esc(helper_da_sym)), $dist_array_partition_info))
-                push!(parallelized_loop.args, repartition_stmt)
-            end
+    for da_sym in buffer_global_indexed_dist_array_sym_set
+        if da_sym in global_indexed_dist_array_sym_set
+            continue
         end
+        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
+                                                           DistArrayIndexType_none)
+        repartition_stmt = :(Orion.check_and_repartition($(esc(helper_da_sym)), $dist_array_partition_info))
+        push!(parallelized_loop.args, repartition_stmt)
     end
 
     loop_body_func_name = gen_unique_symbol()
@@ -534,8 +603,8 @@ function parallelize_2d(iteration_space::Symbol,
 
     prefetch_func = nothing
     prefetch = false
-    if !isempty(global_indexed_dist_array_syms)
-        prefetch_stmts = get_prefetch_stmts(flow_graph, global_indexed_dist_array_syms,
+    if !isempty(global_indexed_dist_array_sym_set)
+        prefetch_stmts = get_prefetch_stmts(flow_graph, global_indexed_dist_array_sym_set,
                                             ssa_defs)
         if prefetch_stmts != nothing
             prefetch = true
@@ -571,27 +640,19 @@ function parallelize_2d(iteration_space::Symbol,
 
     loop_batch_func_name_str = string(loop_batch_func_name)
     prefetch_batch_func_name_str = prefetch ? string(prefetch_batch_func_name) : ""
-    buffered_dist_array_ids = Vector{Int32}()
-    dist_array_buffer_ids = Vector{Int32}()
-    num_buffers_each_dist_array = Vector{UInt64}()
 
-    for dist_array_id in global_indexed_dist_array_ids
-        if dist_array_id in keys(dist_array_buffer_map)
-            push!(buffered_dist_array_ids, dist_array_id)
-            buff_info = dist_array_buffer_map[dist_array_id]
-            push!(num_buffers_each_dist_array, length(buff_info.helper_buffer_vec))
-            append!(dist_array_buffer_ids, buff_info.helper_buffer_vec)
-        end
+    if length(dist_array_buffer_id_set) > 0
+        dist_array_buffer_id_vec = [dist_array_buffer_id_set...]
+    else
+        dist_array_buffer_id_vec = Vector{Int32}()
     end
-
     exec_loop_stmt = :(Orion.exec_for_loop($(iteration_space_dist_array.id),
                                            Orion.ForLoopParallelScheme_2d,
-                                           $(space_partitioned_dist_array_ids),
-                                           $(time_partitioned_dist_array_ids),
-                                           $(global_indexed_dist_array_ids),
-                                           $(buffered_dist_array_ids),
-                                           $(dist_array_buffer_ids),
-                                           $(num_buffers_each_dist_array),
+                                           $(space_partitioned_dist_array_id_vec),
+                                           $(time_partitioned_dist_array_id_vec),
+                                           $(global_indexed_dist_array_id_vec),
+                                           $(dist_array_buffer_id_vec),
+                                           $(written_dist_array_id_vec),
                                            $loop_batch_func_name_str,
                                            $prefetch_batch_func_name_str,
                                            $(is_ordered)))
@@ -671,7 +732,7 @@ function static_parallelize(iteration_space::Symbol,
     iteration_space_dist_array = eval(current_module(), iteration_space)
     num_dims = length(get(iteration_space_dist_array.iterate_dims))
     println("get_dist_array_access")
-    dist_array_access_dict = get_dist_array_access(flow_graph, iteration_var, ssa_defs)
+    dist_array_access_dict, buffer_set = get_dist_array_access(flow_graph, iteration_var, ssa_defs)
     println("compute_dependence_vectors")
     dep_vecs = compute_dependence_vectors(dist_array_access_dict, is_ordered)
     par_scheme = determine_parallelization_scheme(dep_vecs, num_dims)
@@ -681,6 +742,7 @@ function static_parallelize(iteration_space::Symbol,
         return parallelize_naive(iteration_space,
                                  iteration_var,
                                  dist_array_access_dict,
+                                 buffer_set,
                                  inherited_vars_to_mark_global,
                                  loop_body,
                                  is_ordered,
@@ -691,6 +753,7 @@ function static_parallelize(iteration_space::Symbol,
         return parallelize_1d(iteration_space,
                               iteration_var,
                               dist_array_access_dict,
+                              buffer_set,
                               inherited_vars_to_mark_global,
                               loop_body,
                               is_ordered,
@@ -702,6 +765,7 @@ function static_parallelize(iteration_space::Symbol,
         return parallelize_2d(iteration_space,
                               iteration_var,
                               dist_array_access_dict,
+                              buffer_set,
                               inherited_vars_to_mark_global,
                               loop_body,
                               is_ordered,
@@ -713,6 +777,7 @@ function static_parallelize(iteration_space::Symbol,
         return parallelize_unimodular(iteration_space,
                                       iteration_var,
                                       dist_array_access_dict,
+                                      buffer_set,
                                       inherited_vars_to_mark,
                                       loop_body,
                                       is_ordered,

@@ -244,7 +244,6 @@ JuliaEvaluator::EvalExpr(const std::string &serialized_expr,
   size_t result_array_length = jl_array_len(serialized_result_array);
   uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
   result_buff->resize(result_array_length);
-  LOG(INFO) << __func__ << " result_array_length = " << result_array_length;
   memcpy(result_buff->data(), array_bytes, result_array_length);
   JL_GC_POP();
   AbortIfException();
@@ -569,7 +568,6 @@ JuliaEvaluator::DefineDistArray(
     init_value_jl = jl_nothing;
   }
   AbortIfException();
-  LOG(INFO) << "orionres_define_dist_array";
   is_buffer_jl = jl_box_bool(is_buffer);
   id_jl = jl_box_int32(id);
   jl_function_t *create_dist_array_func = GetFunction(
@@ -586,7 +584,6 @@ JuliaEvaluator::DefineDistArray(
   jl_call(create_dist_array_func, args, 7);
   JL_GC_POP();
   AbortIfException();
-  LOG(INFO) << __func__ << " done!";
 }
 
 void
@@ -860,7 +857,6 @@ JuliaEvaluator::RunMapValuesNewKeys(
           *output_key_array_jl = nullptr,
             *output_tuple_jl = nullptr;
 
-
   JL_GC_PUSH4(&key_array_type,
               &dim_array_jl,
               &output_key_array_jl,
@@ -956,10 +952,6 @@ JuliaEvaluator::SetVarValue(
       = GetFunction(jl_base_module, "deserialize");
   CHECK(deserialize_func != nullptr);
   value_jl = jl_call1(deserialize_func, serialized_value_buff);
-  LOG(INFO) << __func__
-            << " symbol = " << symbol
-            << " value size = " << value_size
-            << " value = " << jl_unbox_int64(value_jl);
   symbol_jl = jl_symbol(symbol.c_str());
   jl_set_global(jl_main_module, symbol_jl, value_jl);
   JL_GC_POP();
@@ -972,9 +964,6 @@ JuliaEvaluator::CombineVarValue(
     uint8_t *serialized_value_to_combine,
     size_t value_size,
     const std::string &combiner) {
-  LOG(INFO) << __func__ << " "
-            << symbol << " " << combiner
-            << " " << value_size;
   jl_value_t **jl_values;
   JL_GC_PUSHARGS(jl_values, 7);
   jl_sym_t *&symbol_jl = reinterpret_cast<jl_sym_t*&>(jl_values[0]);
@@ -1093,7 +1082,6 @@ void
 JuliaEvaluator::GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *dist_arrays,
                                       const uint8_t *request,
                                       Blob *bytes_buff) {
-  LOG(INFO) << __func__;
   const auto *cursor = request;
   size_t num_dist_arrays = *(reinterpret_cast<const size_t*>(cursor));
   cursor += sizeof(size_t);
@@ -1110,14 +1098,12 @@ JuliaEvaluator::GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *di
     auto dist_array_iter = dist_arrays->find(dist_array_id);
     CHECK(dist_array_iter != dist_arrays->end());
     auto *dist_array_ptr = &dist_array_iter->second;
-    LOG(INFO) << __func__ << " num_keys = " << num_keys;
     dist_array_ptr->GetAndSerializeValues(keys, num_keys, &buff_vec[i]);
     accum_size += buff_vec[i].size() + sizeof(int32_t);
     dist_array_ids[i] = dist_array_id;
   }
 
   bytes_buff->resize(accum_size + sizeof(size_t));
-  LOG(INFO) << "byte_buff->size = " << bytes_buff->size();
   auto *write_cursor = bytes_buff->data();
   *reinterpret_cast<size_t*>(write_cursor) = num_dist_arrays;
   write_cursor += sizeof(size_t);
@@ -1126,7 +1112,6 @@ JuliaEvaluator::GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *di
     int32_t dist_array_id = dist_array_ids[i];
     *reinterpret_cast<int32_t*>(write_cursor) = dist_array_id;
     write_cursor += sizeof(int32_t);
-    LOG(INFO) << "cursor offset = " << write_cursor - bytes_buff->data();
     memcpy(write_cursor, buff.data(), buff.size());
     write_cursor += buff.size();
   }

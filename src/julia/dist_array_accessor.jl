@@ -147,14 +147,16 @@ function setindex!(accessor::DistArrayCacheAccessor,
     accessor.key_value[i] = v
 end
 
-function dist_array_accessor_get_values_vec(dist_array_accessor::DenseDistArrayAccessor)::Vector
+function dist_array_accessor_get_values_vec{T, N}(dist_array_accessor::DenseDistArrayAccessor{T, N})::Vector{T}
     return dist_array_accessor.values
 end
 
-function dist_array_accessor_get_keys_vec(dist_array_accessor::DistArrayAccessor)::Vector{Int64}
-    return [k for k in keys(dist_array_accessor.key_value)]
-end
-
-function dist_array_accessor_get_values_vec(dist_array_accessor::DistArrayAccessor)::Vector
-    return [v for v in values(dist_array_accessor.key_value)]
+function dist_array_accessor_get_keys_values_vec{T, N}(dist_array_accessor::DistArrayAccessor{T, N})::Tuple{Vector{Int64},
+                                                                                                     Vector{T}}
+    accessor_keys = sort(collect(keys(dist_array_accessor.key_value)))
+    accessor_values = Vector{T}()
+    for k in accessor_keys
+        push!(accessor_values, dist_array_accessor.key_value[k])
+    end
+    return (accessor_keys, accessor_values)
 end

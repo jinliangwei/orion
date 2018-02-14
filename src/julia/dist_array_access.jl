@@ -3,6 +3,7 @@ type GetDistArrayAccessContext
     iteration_var::Symbol
     ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}}
     access_dict::Dict{Symbol, Vector{DistArrayAccess}}
+    buffer_set::Set{Symbol}
     stmt_access_dict::Dict{Symbol, Vector{DistArrayAccess}}
 
     GetDistArrayAccessContext(iteration_var,
@@ -10,6 +11,7 @@ type GetDistArrayAccessContext
                                   new(iteration_var,
                                       ssa_defs,
                                       Dict{Symbol, Vector{DistArrayAccess}}(),
+                                      Set{Symbol}(),
                                       Dict{Symbol, Vector{DistArrayAccess}}())
 end
 
@@ -56,6 +58,9 @@ function get_dist_array_access_visit(expr,
                             push!(context.access_dict[referenced_var], da_access)
                             push!(context.stmt_access_dict[referenced_var], da_access)
                         end
+                    elseif isdefined(current_module(), referenced_var) &&
+                        isa(eval(current_module(), referenced_var), DistArrayBuffer)
+                        push!(context.buffer_set, referenced_var)
                     end
                     subscripts = ref_get_subscripts(assigned_to)
                     for sub in subscripts
@@ -94,6 +99,9 @@ function get_dist_array_access_visit(expr,
                         context.stmt_access_dict[referenced_var] = Vector{DistArrayAccess}()
                     end
                     push!(context.stmt_access_dict[referenced_var], da_access)
+                elseif isdefined(current_module(), referenced_var) &&
+                    isa(eval(current_module(), referenced_var), DistArrayBuffer)
+                    push!(context.buffer_set, referenced_var)
                 end
                 subscripts = ref_get_subscripts(expr)
                 for sub in subscripts
@@ -113,6 +121,7 @@ end
 
 function get_dist_array_access_bb(bb::BasicBlock,
                                   context::GetDistArrayAccessContext)
+    #println("access bb ", bb.id)
     stmt_access_dict = Dict{Int64, Dict{Symbol, Vector{DistArrayAccess}}}()
     for idx in eachindex(bb.stmts)
         stmt = bb.stmts[idx]
@@ -135,5 +144,5 @@ function get_dist_array_access(par_for_loop_entry::BasicBlock,
                         get_dist_array_access_bb,
                         da_access_context)
     println("before return")
-    return da_access_context.access_dict
+    return da_access_context.access_dict, da_access_context.buffer_set
 end

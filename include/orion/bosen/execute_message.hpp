@@ -397,7 +397,7 @@ struct ExecuteMsgExecForLoopAck {
   }
 };
 
-struct  ExecuteMsgExecForLoopDone {
+struct ExecuteMsgExecForLoopDone {
  private:
   ExecuteMsgExecForLoopDone() = default;
   friend class DefaultMsgCreator;
@@ -405,6 +405,62 @@ struct  ExecuteMsgExecForLoopDone {
   void Init() { }
   static constexpr ExecuteMsgType get_type() {
     return ExecuteMsgType::kExecForLoopDone;
+  }
+};
+
+struct ExecuteMsgExecForLoopDistArrayBufferData {
+  size_t num_bytes;
+ private:
+  ExecuteMsgExecForLoopDistArrayBufferData() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _num_bytes) {
+    num_bytes = _num_bytes;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kExecForLoopDistArrayBufferData;
+  }
+};
+
+struct ExecuteMsgExecForLoopDistArrayCacheData {
+  size_t num_bytes;
+ private:
+  ExecuteMsgExecForLoopDistArrayCacheData() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _num_bytes) {
+    num_bytes = _num_bytes;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kExecForLoopDistArrayCacheData;
+  }
+};
+
+struct ExecuteMsgExecForLoopDistArrayBufferDataPtr {
+  uint8_t* bytes;
+ private:
+  ExecuteMsgExecForLoopDistArrayBufferDataPtr() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(uint8_t* _bytes) {
+    bytes = _bytes;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kExecForLoopDistArrayBufferDataPtr;
+  }
+};
+
+struct ExecuteMsgExecForLoopDistArrayCacheDataPtr {
+  uint8_t *bytes;
+ private:
+  ExecuteMsgExecForLoopDistArrayCacheDataPtr() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(uint8_t* _bytes) {
+    bytes = _bytes;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kExecForLoopDistArrayCacheDataPtr;
   }
 };
 

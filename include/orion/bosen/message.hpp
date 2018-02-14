@@ -125,7 +125,10 @@ enum class DriverMsgType {
     kRepartitionDistArray = 11,
     kExecForLoop = 12,
     kGetAccumulatorValue = 13,
-    kCreateDistArrayBuffer = 14
+    kCreateDistArrayBuffer = 14,
+    kSetDistArrayBufferInfo = 15,
+    kDeleteDistArrayBufferInfo = 16,
+    kUpdateDistArrayIndex = 17
 };
 
 struct DriverMsg {
@@ -167,7 +170,11 @@ enum class ExecuteMsgType {
     kRequestDistArrayValues = 23,
     kReplyDistArrayValues = 24,
     kExecForLoopDone = 25,
-    kExecForLoopAck = 26
+    kExecForLoopAck = 26,
+    kExecForLoopDistArrayBufferData = 27,
+    kExecForLoopDistArrayCacheData = 28,
+    kExecForLoopDistArrayBufferDataPtr = 29,
+    kExecForLoopDistArrayCacheDataPtr = 30
 };
 
 struct ExecuteMsg {

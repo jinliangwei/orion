@@ -100,20 +100,41 @@ extern "C" {
       int32_t id,
       const char *partition_func_name,
       int32_t partition_scheme,
-      int32_t index_type) {
+      int32_t index_type,
+      bool contiguous_partitions) {
     driver->RepartitionDistArray(id, partition_func_name,
                                  partition_scheme,
-                                 index_type);
+                                 index_type,
+                                 contiguous_partitions);
   }
 
-  void orion_set_dist_array_buffer(
+  void orion_update_dist_array_index(
+      int32_t id,
+      int32_t index_type) {
+    driver->UpdateDistArrayIndex(id, index_type);
+  }
+
+  void orion_set_dist_array_buffer_info(
+      int32_t dist_array_buffer_id,
       int32_t dist_array_id,
-      int32_t *buffer_ids,
-      size_t num_buffers) {
-    driver->SetDistArrayBuffer(
+      const char *apply_buffer_func_name,
+      const int32_t *helper_buffer_ids,
+      size_t num_helper_buffers,
+      const int32_t *helper_dist_array_ids,
+      size_t num_helper_dist_arrays) {
+    driver->SetDistArrayBufferInfo(
+        dist_array_buffer_id,
         dist_array_id,
-        buffer_ids,
-        num_buffers);
+        apply_buffer_func_name,
+        helper_buffer_ids,
+        num_helper_buffers,
+        helper_dist_array_ids,
+        num_helper_dist_arrays);
+  }
+
+  void orion_delete_dist_array_buffer_info(
+      int32_t dist_array_buffer_id) {
+    driver->DeleteDistArrayBufferInfo(dist_array_buffer_id);
   }
 
   void orion_exec_for_loop(
@@ -125,10 +146,10 @@ extern "C" {
       size_t num_time_partitioned_dist_arrays,
       const int32_t *global_indexed_dist_array_ids,
       size_t num_global_indexed_dist_arrays,
-      const int32_t *buffered_dist_array_ids,
-      size_t num_buffered_dist_arrays,
       const int32_t *dist_array_buffer_ids,
-      const size_t *num_buffers_each_dist_array,
+      size_t num_dist_array_buffers,
+      const int32_t *written_dist_array_ids,
+      size_t num_written_dist_array_ids,
       const char *loop_batch_func_name,
       const char *prefetch_batch_func_name,
       bool is_ordered) {
@@ -141,10 +162,10 @@ extern "C" {
         num_time_partitioned_dist_arrays,
         global_indexed_dist_array_ids,
         num_global_indexed_dist_arrays,
-        buffered_dist_array_ids,
-        num_buffered_dist_arrays,
         dist_array_buffer_ids,
-        num_buffers_each_dist_array,
+        num_dist_array_buffers,
+        written_dist_array_ids,
+        num_written_dist_array_ids,
         loop_batch_func_name,
         prefetch_batch_func_name,
         is_ordered);

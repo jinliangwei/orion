@@ -305,7 +305,6 @@ PeerRecvThread::HandleExecutorMsg() {
       break;
     case message::ExecuteMsgType::kRequestExecForLoopGlobalIndexedDistArrays:
       {
-        LOG(INFO) << "executor request global indexed dist_arrays";
         has_executor_requested_global_indexed_dist_array_data_ = true;
         ServeGlobalIndexedDistArrayDataRequest();
         ret = EventHandler<PollConn>::kClearOneMsg;
@@ -370,8 +369,6 @@ PeerRecvThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
         server_[msg->server_id].reset(sock_conn);
         executor_server_sock_fds_[msg->server_id + kNumExecutors] = sock_conn->sock.get_fd();
         poll_conn_ptr->id = msg->server_id;
-        LOG(INFO) << "ptr = " << (void*) poll_conn_ptr
-                  << " id = " << poll_conn_ptr->id;
         poll_conn_ptr->type = PollConn::ConnType::server;
         num_identified_peers_++;
         if (kIsServer) {
@@ -412,11 +409,9 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
   auto msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
   int ret = EventHandler<PollConn>::kClearOneMsg;
   int32_t sender_id = poll_conn_ptr->id;
-  LOG(INFO) << __func__ << " ptr = " << (void*) poll_conn_ptr;
   switch (msg_type) {
     case message::ExecuteMsgType::kRepartitionDistArrayData:
       {
-        LOG(INFO) << "received RepartitionDistArrayData from " << sender_id;
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgRepartitionDistArrayData>(recv_buff);
         size_t expected_size = msg->data_size;
@@ -542,9 +537,6 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgReplyDistArrayValues>(recv_buff);
         size_t expected_size = msg->reply_size;
-        LOG(INFO) << __func__ << " ReplyDistArrayValues, expected_size = "
-                  << expected_size
-                  << " sender_id = " << sender_id;
         auto &recv_byte_buff = server_recv_byte_buff_[sender_id];
         bool received_next_msg = ReceiveArbitraryBytes(
             sock, &recv_buff,
@@ -562,6 +554,64 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         } else {
           ret = EventHandler<PollConn>::kNoAction;
         }
+      }
+      break;
+    case message::ExecuteMsgType::kExecForLoopDistArrayCacheData:
+      {
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgExecForLoopDistArrayCacheData>(recv_buff);
+        size_t expected_size = msg->num_bytes;
+        auto &recv_byte_buff = peer_recv_byte_buff_[sender_id];
+        bool received_next_msg = ReceiveArbitraryBytes(
+            sock, &recv_buff,
+            &recv_byte_buff, expected_size);
+        if (received_next_msg) {
+          uint8_t *bytes = new uint8_t[recv_byte_buff.GetSize()];
+          memcpy(bytes, recv_byte_buff.GetBytes(), recv_byte_buff.GetSize());
+          peer_recv_byte_buff_[sender_id].Reset(0);
+          message::ExecuteMsgHelper::CreateMsg<
+            message::ExecuteMsgExecForLoopDistArrayCacheDataPtr>(&send_buff_, bytes);
+          SendToExecutor();
+          send_buff_.clear_to_send();
+          send_buff_.reset_sent_sizes();
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+        } else {
+          ret = EventHandler<PollConn>::kNoAction;
+        }
+      }
+      break;
+    case message::ExecuteMsgType::kExecForLoopDistArrayBufferData:
+      {
+        LOG(INFO) << "received from " << sender_id;
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgExecForLoopDistArrayBufferData>(recv_buff);
+        size_t expected_size = msg->num_bytes;
+        auto &recv_byte_buff = peer_recv_byte_buff_[sender_id];
+        bool received_next_msg = ReceiveArbitraryBytes(
+            sock, &recv_buff,
+            &recv_byte_buff, expected_size);
+        if (received_next_msg) {
+          uint8_t *bytes = new uint8_t[recv_byte_buff.GetSize()];
+          memcpy(bytes, recv_byte_buff.GetBytes(), recv_byte_buff.GetSize());
+          peer_recv_byte_buff_[sender_id].Reset(0);
+          message::ExecuteMsgHelper::CreateMsg<
+            message::ExecuteMsgExecForLoopDistArrayBufferDataPtr>(&send_buff_, bytes);
+          SendToExecutor();
+          send_buff_.clear_to_send();
+          send_buff_.reset_sent_sizes();
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+        } else {
+          ret = EventHandler<PollConn>::kNoAction;
+        }
+      }
+      break;
+    case message::ExecuteMsgType::kExecForLoopDone:
+      {
+        send_buff_.Copy(recv_buff);
+        SendToExecutor();
+        send_buff_.clear_to_send();
+        send_buff_.reset_sent_sizes();
+        ret = EventHandler<PollConn>::kClearOneMsg;
       }
       break;
     default:

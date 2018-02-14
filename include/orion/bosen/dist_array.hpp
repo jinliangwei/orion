@@ -59,7 +59,7 @@ class DistArray {
   DistArrayMeta meta_;
   JuliaThreadRequester *julia_requester_;
   std::vector<jl_value_t*> gc_partitions_;
-  AbstractDistArrayPartition *buffer_partition_ {nullptr};
+  std::unique_ptr<AbstractDistArrayPartition> buffer_partition_;
  public:
   DistArray(int32_t id,
             const Config& config,
@@ -136,7 +136,7 @@ class DistArray {
   void GetMaxPartitionIdsSpaceTime(std::vector<int32_t>* ids);
   void GetMaxPartitionIds1D(std::vector<int32_t>* ids);
   void BuildPartitionIndices();
-
+  void BuildPartitionKeyValueBuffersFromSparseIndex();
   void ComputeMaxPartitionIds();
   void ComputeMaxPartitionIdsSpaceTime();
   void ComputeMaxPartitionIds1D();

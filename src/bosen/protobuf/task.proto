@@ -41,6 +41,20 @@ message RepartitionDistArray {
   optional string partition_func_name = 2;
   required int32 partition_scheme = 3;
   required int32 index_type = 4;
+  required bool contiguous_partitions = 5;
+}
+
+message UpdateDistArrayIndex {
+  required int32 id = 1;
+  required int32 index_type = 2;
+}
+
+message SetDistArrayBufferInfo {
+  required int32 dist_array_buffer_id = 1;
+  required int32 dist_array_id = 2;
+  required string apply_buffer_func_name = 3;
+  repeated int32 helper_dist_array_ids = 4;
+  repeated int32 helper_dist_array_buffer_ids = 5;
 }
 
 message ExecForLoop {
@@ -49,12 +63,11 @@ message ExecForLoop {
   repeated int32 space_partitioned_dist_array_ids = 3;
   repeated int32 time_partitioned_dist_array_ids = 4;
   repeated int32 global_indexed_dist_array_ids = 5;
-  repeated int32 buffered_dist_array_ids = 6;
-  repeated int32 dist_array_buffer_ids = 7;
-  repeated uint64 num_buffers_each_dist_array = 8;
-  required string loop_batch_func_name = 9;
-  optional string prefetch_batch_func_name = 10;
-  required bool is_ordered = 11;
+  repeated int32 dist_array_buffer_ids = 6;
+  repeated int32 written_dist_array_ids = 7;
+  required string loop_batch_func_name = 8;
+  optional string prefetch_batch_func_name = 9;
+  required bool is_ordered = 10;
 }
 
 message GetAccumulatorValue {
