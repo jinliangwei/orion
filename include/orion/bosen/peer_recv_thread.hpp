@@ -347,7 +347,7 @@ PeerRecvThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
         poll_conn_ptr->type = PollConn::ConnType::executor;
         num_identified_peers_++;
         if (kIsServer) {
-          if (num_identified_peers_ == kNumExecutors) {
+          if (num_identified_peers_ == (kNumExecutors + kServerId)) {
             action_ = Action::kAckConnectToPeers;
           } else {
             action_ = Action::kNone;
@@ -372,7 +372,7 @@ PeerRecvThread::HandlePeerMsg(PollConn* poll_conn_ptr) {
         poll_conn_ptr->type = PollConn::ConnType::server;
         num_identified_peers_++;
         if (kIsServer) {
-          if (num_identified_peers_ == kNumExecutors) {
+          if (num_identified_peers_ == (kNumExecutors + kServerId)) {
             action_ = Action::kAckConnectToPeers;
           } else {
             action_ = Action::kNone;
@@ -541,6 +541,8 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         bool received_next_msg = ReceiveArbitraryBytes(
             sock, &recv_buff,
             &recv_byte_buff, expected_size);
+        LOG(INFO) << "received ReplyDistArrayValues from " << sender_id
+                  << " received_next_msg = " << received_next_msg;
         if (received_next_msg) {
           auto *global_indexed_dist_array_data_buff = new PeerRecvGlobalIndexedDistArrayDataBuffer();
           global_indexed_dist_array_data_buff->server_id = sender_id;
@@ -582,7 +584,6 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
       break;
     case message::ExecuteMsgType::kExecForLoopDistArrayBufferData:
       {
-        LOG(INFO) << "received from " << sender_id;
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgExecForLoopDistArrayBufferData>(recv_buff);
         size_t expected_size = msg->num_bytes;

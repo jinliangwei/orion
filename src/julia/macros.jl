@@ -44,11 +44,17 @@ function parallelize_for_loop(loop_stmt::Expr, is_ordered::Bool)
 
     inherited_var = scope_context.inherited_var
     inherited_vars_to_mark_global = Set{Symbol}()
+    global_vars_written = Set{Symbol}()
     for (var, var_info) in inherited_var
+        println("inherited_var: ", var, " ", var_info)
+        @assert !var_info.is_marked_local
         if var_info.is_assigned_to &&
-            !var_info.is_marked_local &&
             !var_info.is_marked_global
             push!(inherited_vars_to_mark_global, var)
+        end
+        if var_info.is_assigned_to &&
+            var_info.is_mutated
+            push!(global_vars_written, var)
         end
     end
 
@@ -59,6 +65,7 @@ function parallelize_for_loop(loop_stmt::Expr, is_ordered::Bool)
     exec_loop_stmts = static_parallelize(iteration_space,
                                          iteration_var,
                                          inherited_vars_to_mark_global,
+                                         global_vars_written,
                                          loop_body,
                                          is_ordered,
                                          ssa_context.ssa_defs,

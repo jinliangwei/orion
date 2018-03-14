@@ -8,20 +8,22 @@ Orion.helloworld()
 const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 2
-const num_servers = 1
+const num_executors = 1
+const num_servers = 2
 
 # initialize logging of the runtime library
 Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity, num_executors,
            num_servers)
 
-const data_path = "file:///proj/BigLearning/jinlianw/data/kdda.10K"
-const num_iterations = 2
+const data_path = "file:///proj/BigLearning/jinlianw/data/a1a"
+const num_iterations = 8
 const step_size = 0.001
-const num_features = 20216830
+#const num_features = 20216830
+const num_features = 123
 
 Orion.@accumulator err = 0
+Orion.@accumulator loss = 0
 Orion.@accumulator line_cnt = 0
 
 Orion.@share function parse_line(index::Int64, line::AbstractString)::Tuple{Tuple{Int64},
@@ -60,6 +62,13 @@ Orion.@share function sigmoid(z)
     return 1.0 ./ (1.0 .+ exp(-z))
 end
 
+Orion.@share function safe_log(x)
+    if abs(x) < 1e-15
+        x = 1e-15
+    end
+    return log(x)
+end
+
 Orion.@dist_array weights_buf = Orion.create_sparse_dist_array_buffer((weights.dims...), 0.0)
 Orion.materialize(weights_buf)
 
@@ -68,8 +77,11 @@ Orion.@share function apply_buffered_update(key, weight, update)
 end
 
 Orion.set_write_buffer(weights_buf, weights, apply_buffered_update)
+Orion.dist_array_set_num_partitions_per_dim(samples_mat, 16)
 
 error_vec = Vector{Float64}()
+loss_vec = Vector{Float64}()
+
 for iteration = 1:num_iterations
     Orion.@parallel_for for sample in samples_mat
         sum = 0.0
@@ -80,14 +92,14 @@ for iteration = 1:num_iterations
             fval = feature[2]
             sum += weights[fid] * fval
         end
-        diff = label - sigmoid(sum)
+        diff = sigmoid(sum) - label
         for feature in features
             fid = feature[1]
             fval = feature[2]
             weights_buf[fid] -= step_size * fval * diff
         end
     end
-    if iteration % 4 == 1 ||
+    if iteration % 1 == 0 ||
         iteration == num_iterations
         Orion.@parallel_for for sample in samples_mat
             sum = 0.0
@@ -99,15 +111,27 @@ for iteration = 1:num_iterations
                 fval = feature[2]
                 sum += weights[fid] * fval
             end
+
+            if label == 1
+                loss += -safe_log(sigmoid(sum))
+            else
+                loss += -safe_log(1 - sigmoid(sum))
+            end
+
             diff = label - sigmoid(sum)
             err += diff ^ 2
         end
         err = Orion.get_aggregated_value(:err, :+)
-        println("iteration = ", iteration, " err = ", err)
+        loss = Orion.get_aggregated_value(:loss, :+)
         Orion.reset_accumulator(:err)
+        Orion.reset_accumulator(:loss)
+        println("iteration = ", iteration, " err = ", err, " loss = ", loss)
         push!(error_vec, err)
+        push!(loss_vec, loss)
     end
 end
 
+println(error_vec)
+println(loss_vec)
 Orion.stop()
 exit()

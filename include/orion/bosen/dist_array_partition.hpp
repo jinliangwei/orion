@@ -652,13 +652,13 @@ DistArrayPartition<ValueType>::ApplyBufferedUpdates(
     auto old_value_iter = sparse_index_.find(key);
     CHECK(old_value_iter != sparse_index_.end()) << " key = " << key;
     auto old_value = old_value_iter->second;
-
     JuliaEvaluator::BoxValue(kValueType, reinterpret_cast<uint8_t*>(&old_value), &args_vec[1]);
 
     for (size_t i = 0; i < helper_dist_array_buffers.size(); i++) {
       CHECK(helper_dist_array_buffers[i]->GetNext(&key_tmp, &args_vec[i + 3]));
       CHECK_EQ(key, key_tmp);
     }
+
     jl_value_t *new_value_jl = jl_call(apply_buffer_func, args_vec.data(), num_args);
     JuliaEvaluator::AbortIfException();
     ValueType new_value;

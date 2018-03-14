@@ -1143,7 +1143,9 @@ end
 # reads from a DistArray other than the iteration space
 # and SSA variables that recursively depend on them.
 
-function get_deleted_syms(bb_list::Vector{BasicBlock})
+function get_deleted_syms(bb_list::Vector{BasicBlock},
+                          ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
+                          global_vars_written::Set{Symbol})
     syms_deleted = Set{Symbol}()
     for bb in bb_list
         if !(bb.id in keys(bb_dist_array_access_dict))
@@ -1166,6 +1168,14 @@ function get_deleted_syms(bb_list::Vector{BasicBlock})
             #TODO: more accurate!
             if stmt_idx in keys(bb.stmt_ssa_defs)
                 union!(syms_deleted, bb.stmt_ssa_defs[stmt_idx])
+            end
+        end
+        for (stmt_idx, ssa_defs_set) in bb.stmt_ssa_defs
+            for ssa_sym in ssa_defs_set
+                @assert ssa_sym in keys(ssa_defs)
+                if ssa_defs[ssa_sym][1] in global_vars_written
+                    union!(syms_deleted, ssa_defs_set)
+                end
             end
         end
     end
@@ -1313,7 +1323,6 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
         if_stmt = :(if $(bb.stmts[end]) end)
         if_stmt_vec = if_stmt.args[2].args
         @assert length(bb.successors) == 2
-        branch_unhandled_suc = nothing
         default_suc = nothing
         true_branch_stmt_vec = Vector{Any}()
         for suc in bb.successors
@@ -1325,6 +1334,7 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                                                       true_branch_stmt_vec,
                                                                       appended_bbs,
                                                                       ssa_defs)
+                @assert branch_unhandled_suc == nothing
             end
         end
         if !isempty(true_branch_stmt_vec)
@@ -1346,34 +1356,30 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
         @assert default_suc != nothing &&
             (unhandled_suc == nothing ||
              unhandled_suc == default_suc)
-    elseif bb.control_flow == :(:if, :else)
+    elseif bb.control_flow == (:if, :else)
         if_stmt = :(if $(bb.stmts[end]) else end)
         @assert length(bb.successors) == 2
-        true_unhandled_suc = nothing
-        false_unhandled_suc = nothing
         true_branch_stmt_vec = Vector{Any}()
         false_branch_stmt_vec = Vector{Any}()
         for suc in bb.successors
             @assert isa(suc, Tuple{Bool, BasicBlock})
             if suc[1]
-                true_unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
-                                                                    bb_stmts_dict,
-                                                                    transform_dist_array_read_func,
-                                                                    true_branch_stmt_vec,
-                                                                    appended_bbs,
-                                                                    ssa_defs)
+                unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
+                                                               bb_stmts_dict,
+                                                               transform_dist_array_read_func,
+                                                               true_branch_stmt_vec,
+                                                               appended_bbs,
+                                                               ssa_defs)
             else
-                false_unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
-                                                                     bb_stmts_dict,
-                                                                     transform_dist_array_read_func,
-                                                                     false_branch_stmt_vec,
-                                                                     appended_bbs,
-                                                                     ssa_defs)
+                unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
+                                                               bb_stmts_dict,
+                                                               transform_dist_array_read_func,
+                                                               false_branch_stmt_vec,
+                                                               appended_bbs,
+                                                               ssa_defs)
 
             end
         end
-        @assert true_unhandled_suc == false_unhandled_suc
-        unhandled_suc = true_unhandled_suc
         if !isempty(true_branch_stmt_vec)
             append!(if_stmt.args[2].args, true_branch_stmt_vec)
         end
@@ -1394,7 +1400,6 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
             loop_stmt.args[1] = bb.stmts[end]
         end
         @assert length(bb.successors) == 2
-        true_unhandled_suc = nothing
         false_unhandled_suc = nothing
         true_branch_stmt_vec = Vector{Any}()
         for suc in bb.successors
@@ -1406,9 +1411,9 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                                                     true_branch_stmt_vec,
                                                                     appended_bbs,
                                                                     ssa_defs)
+                @assert true_unhandled_suc == nothing
             end
         end
-        @assert true_unhandled_suc == nothing
         if !isempty(true_branch_stmt_vec)
             append!(loop_stmt.args[2].args, true_branch_stmt_vec)
             push!(stmt_vec, loop_stmt)
@@ -1459,10 +1464,11 @@ end
 
 function get_prefetch_stmts(flow_graph::BasicBlock,
                             dist_array_syms::Set{Symbol},
-                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
+                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
+                            global_vars_written::Set{Symbol})
     bb_list = flow_graph_to_list(flow_graph)
 
-    syms_deleted = get_deleted_syms(bb_list)
+    syms_deleted = get_deleted_syms(bb_list, ssa_defs, global_vars_written)
 
     # The set of symbols to be defined include symbols that are
     # used to define DistArray access subscripts
@@ -1514,7 +1520,7 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
             bb_stmt_dict[bb.id] = stmt_dict
         end
     end
-    println(syms_to_be_defined)
+
     stmts_are_added = true
     while stmts_are_added
         stmts_are_added = false

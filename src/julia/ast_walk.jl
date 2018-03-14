@@ -109,6 +109,11 @@ function from_expr_helper(ast::Expr,
             args[i] = from_expr(args[i], depth, callback, cbdata,
                                 top_level_number, false, read)
         end
+    elseif head == :if
+        for i = 1:length(args)
+            args[i] = from_expr(args[i], depth, callback, cbdata,
+                                top_level_number, false, read)
+        end
     elseif head in Set([:(=), :(.=), :(+=), :(/=), :(*=), :(-=)])
          args[1] = from_expr(args[1], depth, callback, cbdata, top_level_number,
                             false, false)

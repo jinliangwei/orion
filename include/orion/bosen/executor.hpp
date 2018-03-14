@@ -356,6 +356,7 @@ Executor::Executor(const Config& config,
     prt_send_mem_(kCommBuffCapacity),
     prt_recv_mem_(kCommBuffCapacity) {
   set_julia_thread_requester(julia_requester_);
+  LOG(INFO) << __func__ << " id = " << kId;
 }
 
 Executor::~Executor() { }
@@ -870,7 +871,6 @@ Executor::HandlePeerRecvThrMsg(PollConn* poll_conn_ptr) {
 
 int
 Executor::HandlePeerRecvThrExecuteMsg() {
-  LOG(INFO) << __func__;
   auto &recv_buff = prt_poll_conn_.get_recv_buff();
   int ret = EventHandler<PollConn>::kClearOneMsg;
   auto msg_type = message::ExecuteMsgHelper::get_type(recv_buff);
@@ -1003,7 +1003,6 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         auto *bytes = msg->bytes;
         int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
-        LOG(INFO) << "removed";
         ret = EventHandler<PollConn>::kClearOneMsg;
         ret |= EventHandler<PollConn>::kExit;
         auto cpp_func = std::bind(
@@ -1022,7 +1021,6 @@ Executor::HandlePeerRecvThrExecuteMsg() {
         auto *bytes = msg->bytes;
         int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
-        LOG(INFO) << "removed";
         ret = EventHandler<PollConn>::kClearOneMsg;
         ret |= EventHandler<PollConn>::kExit;
         auto cpp_func = std::bind(
@@ -1054,15 +1052,12 @@ Executor::HandlePeerRecvThrExecuteMsg() {
     case message::ExecuteMsgType::kExecForLoopDone:
       {
         CHECK(kIsServer);
-        LOG(INFO) << "received ExecForLoopDone!";
         bool clear = server_exec_for_loop_->NotifyExecForLoopDone();
         if (clear) {
-          LOG(INFO) << "ExecForLoop Done and clear ServerExecForLoop";
           server_exec_for_loop_.reset();
           int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
           CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
           ServerExecForLoopAck();
-          LOG(INFO) << "Ack done!";
         }
         ret = EventHandler<PollConn>::kClearOneMsg;
         ret |= EventHandler<PollConn>::kExit;
@@ -1220,15 +1215,12 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
               {
                 action_ = Action::kNone;
                 event_handler_.SetToReadOnly(&prt_poll_conn_);
-                LOG(INFO) << "added";
               }
               break;
             case TaskLabel::kExecForLoopApplyDistArrayCacheData:
               {
                 action_ = Action::kNone;
-                LOG(INFO) << "apply cache data done!!";
                 event_handler_.SetToReadOnly(&prt_poll_conn_);
-                LOG(INFO) << "added";
               }
               break;
             default:
@@ -1390,7 +1382,6 @@ Executor::HandleDriverMsg() {
         if (received_next_msg) {
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           action_ = Action::kEvalExpr;
-          LOG(INFO) << __func__ << " EvalExpr";
         } else {
           ret = EventHandler<PollConn>::kNoAction;
           action_ = Action::kNone;
@@ -1622,7 +1613,7 @@ Executor::ClearBeforeExit() {
 
 void
 Executor::Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn) {
-  auto& send_buff = poll_conn_ptr->get_send_buff();
+  auto& send_buff = sock_conn->send_buff;
   if (send_buff.get_remaining_to_send_size() > 0
       || send_buff.get_remaining_next_to_send_size() > 0) {
     bool sent = sock_conn->sock.Send(&send_buff);
@@ -1645,7 +1636,7 @@ Executor::Send(PollConn* poll_conn_ptr, conn::SocketConn* sock_conn) {
 
 void
 Executor::Send(PollConn* poll_conn_ptr, conn::PipeConn* pipe_conn) {
-  auto& send_buff = poll_conn_ptr->get_send_buff();
+  auto& send_buff = pipe_conn->send_buff;
   if (send_buff.get_remaining_to_send_size() > 0
       || send_buff.get_remaining_next_to_send_size() > 0) {
     bool sent = pipe_conn->pipe.Send(&send_buff);
@@ -1925,7 +1916,6 @@ Executor::RepartitionDistArraySend() {
   auto &receiver = to_server ? server_ : executor_;
   for (size_t recv_id = 0; recv_id < num_receivers; recv_id++) {
     if (recv_id == skip_id) continue;
-    LOG(INFO) << "send to " << recv_id;
     auto iter = repartition_send_buffer_.find(recv_id);
     if (iter == repartition_send_buffer_.end()) {
       message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayData>(

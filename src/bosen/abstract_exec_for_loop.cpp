@@ -135,6 +135,8 @@ AbstractExecForLoop::SerializeAndClearPrefetchIds(ExecutorSendBufferMap *send_bu
   }
 
   num_pending_prefetch_requests_ = server_point_key_map.size();
+  LOG(INFO) << __func__ << " num_pending_prefetch_requests = "
+            << num_pending_prefetch_requests_;
   for (const auto &server_point_key_pair : server_point_key_map) {
     int32_t server_id = server_point_key_pair.first;
     const auto &dist_array_point_key_map = server_point_key_pair.second;
@@ -412,6 +414,8 @@ AbstractExecForLoop::CachePrefetchDistArrayValues(
   }
   delete[] buff_vec;
   num_pending_prefetch_requests_ -= 1;
+  LOG(INFO) << __func__ << " num_pending_prefetch_requests = "
+            << num_pending_prefetch_requests_;
   if (num_pending_prefetch_requests_ == 0) {
     prefetch_status_ = PrefetchStatus::kPrefetchRecved;
     for (auto& dist_array_pair : global_indexed_dist_arrays_) {
