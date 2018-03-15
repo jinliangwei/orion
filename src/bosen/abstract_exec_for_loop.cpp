@@ -413,7 +413,7 @@ AbstractExecForLoop::CachePrefetchDistArrayValues(
     delete buff;
   }
   delete[] buff_vec;
-  num_pending_prefetch_requests_ -= 1;
+  num_pending_prefetch_requests_ -= num_buffs;
   LOG(INFO) << __func__ << " num_pending_prefetch_requests = "
             << num_pending_prefetch_requests_;
   if (num_pending_prefetch_requests_ == 0) {

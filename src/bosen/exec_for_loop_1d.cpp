@@ -43,7 +43,7 @@ ExecForLoop1D::ExecForLoop1D(
   auto &max_ids = meta.GetMaxPartitionIds();
   CHECK(max_ids.size() == 1) << "max_ids.size() = " << max_ids.size();
   kMaxPartitionId = max_ids[0];
-  kNumClocks = (kMaxPartitionId + kNumExecutors - 1) / kNumExecutors;
+  kNumClocks = (kMaxPartitionId + kNumExecutors) / kNumExecutors;
 
   clock_ = 0;
   ComputePartitionIdsAndFindPartitionToExecute();

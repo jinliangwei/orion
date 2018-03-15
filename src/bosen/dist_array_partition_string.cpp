@@ -586,7 +586,8 @@ DistArrayPartition<std::string>::ApplyBufferedUpdates(
     const std::string &apply_buffer_func_name) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
   size_t num_args = helper_dist_array_buffers.size() + 3;
-  std::vector<jl_value_t*> args_vec(num_args);
+  jl_value_t **args_vec;
+  JL_GC_PUSHARGS(args_vec, num_args);
   jl_function_t *apply_buffer_func = JuliaEvaluator::GetFunction(
       jl_main_module, apply_buffer_func_name.c_str());
 
@@ -603,14 +604,15 @@ DistArrayPartition<std::string>::ApplyBufferedUpdates(
     auto old_value = old_value_iter->second;
     args_vec[1] = jl_cstr_to_string(old_value.c_str());
     for (size_t i = 0; i < helper_dist_array_buffers.size(); i++) {
-      CHECK(helper_dist_array_buffers[i]->GetNext(&key_tmp, &args_vec[i + 3]));
+      CHECK(helper_dist_array_buffers[i]->GetNext(&key_tmp, &(args_vec[i + 3])));
       CHECK_EQ(key, key_tmp);
     }
-    jl_value_t *string_jl = jl_call(apply_buffer_func, args_vec.data(),
+    jl_value_t *string_jl = jl_call(apply_buffer_func, args_vec,
                                     num_args);
     const char* c_str = jl_string_ptr(string_jl);
     sparse_index_[key] = std::string(c_str);
   }
+  JL_GC_POP();
 }
 
 bool

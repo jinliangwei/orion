@@ -637,7 +637,8 @@ DistArrayPartition<ValueType>::ApplyBufferedUpdates(
   LOG(INFO) << __func__;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
   size_t num_args = helper_dist_array_buffers.size() + 3;
-  std::vector<jl_value_t*> args_vec(num_args);
+  jl_value_t **args_vec;
+  JL_GC_PUSHARGS(args_vec, num_args);
   jl_function_t *apply_buffer_func = JuliaEvaluator::GetFunction(
       jl_main_module, apply_buffer_func_name.c_str());
 
@@ -652,20 +653,21 @@ DistArrayPartition<ValueType>::ApplyBufferedUpdates(
     auto old_value_iter = sparse_index_.find(key);
     CHECK(old_value_iter != sparse_index_.end()) << " key = " << key;
     auto old_value = old_value_iter->second;
-    JuliaEvaluator::BoxValue(kValueType, reinterpret_cast<uint8_t*>(&old_value), &args_vec[1]);
+    JuliaEvaluator::BoxValue(kValueType, reinterpret_cast<uint8_t*>(&old_value), &(args_vec[1]));
 
     for (size_t i = 0; i < helper_dist_array_buffers.size(); i++) {
-      CHECK(helper_dist_array_buffers[i]->GetNext(&key_tmp, &args_vec[i + 3]));
+      CHECK(helper_dist_array_buffers[i]->GetNext(&key_tmp, &(args_vec[i + 3])));
       CHECK_EQ(key, key_tmp);
     }
 
-    jl_value_t *new_value_jl = jl_call(apply_buffer_func, args_vec.data(), num_args);
+    jl_value_t *new_value_jl = jl_call(apply_buffer_func, args_vec, num_args);
     JuliaEvaluator::AbortIfException();
     ValueType new_value;
     JuliaEvaluator::UnboxValue(new_value_jl, kValueType,
                                reinterpret_cast<uint8_t*>(&new_value));
     sparse_index_[key] = new_value;
   }
+  JL_GC_POP();
 }
 
 template<typename ValueType>
