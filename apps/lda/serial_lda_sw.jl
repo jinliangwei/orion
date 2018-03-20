@@ -1,9 +1,9 @@
-const data_path = "/Users/shijiewu/github/Research/20news.csv"
+const data_path = "/Users/shijiewu/github/Research/20news.dat.200"
 const vocab_size = 60057
-const num_topics = 400
+const num_topics = 100
 const alpha = 0.1
 const beta = 0.1
-const num_iterations = 8
+const num_iterations = 4
 
 function parse_line(index::Int64, line::AbstractString)::Vector{Tuple{Tuple{Int64, Int64},
                                                                       Int64}
@@ -41,6 +41,7 @@ function load_data(path::AbstractString)::Vector{Vector{Tuple{Tuple{Int64, Int64
     end
     return docs
 end
+
 
 function logDirichlet_vector(alpha::Vector{Float64})::Float64
     sumLogGamma = 0.0
@@ -135,10 +136,10 @@ alpha_beta = alpha * beta
 beta_sum = beta * vocab_size
 
 @time for iteration = 1:num_iterations
-    println("iteration = ", iteration)
     tic()
+    println("iteration = ", iteration)
     for doc_id in eachindex(docs)
-        topic_assignmnt_vector = doc_topic_assignmnts[doc_id]
+        topic_assignmnt_vec = doc_topic_assignmnts[doc_id]
         doc_topic_dict = doc_topic_table[doc_id]
         s_sum = 0
         r_sum = 0
@@ -162,7 +163,7 @@ beta_sum = beta * vocab_size
             word_topic_dict = word_topic_table[word_id]
 
             for c = 1:count
-                old_topic = topic_assignmnt_vector[word_index]
+                old_topic = topic_assignmnt_vec[word_index]
                 denom = topic_summary[old_topic] + beta_sum
                 s_sum -= alpha_beta / denom
                 s_sum += alpha_beta / (denom - 1)
@@ -236,12 +237,12 @@ beta_sum = beta * vocab_size
                     word_topic_dict[new_topic] = 1
                 end
                 topic_summary[new_topic] += 1
+                topic_assignmnt_vec[word_index] = new_topic
                 word_index += 1
             end # sampling for this token done
         end # sampling for this word done
     end # sampling for this doc done
-    total_sec += toc()
-    sec[iteration] = total_sec
+    sec[iteration] = toc()
     llh[iteration] = getLogLikelihood(word_topic_table, doc_topic_table)
     println("Client completed iteration $(iteration)")
     println("    Elapsed seconds: $(sec[iteration])")
