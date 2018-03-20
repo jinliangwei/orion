@@ -1,9 +1,9 @@
 const data_path = "/Users/shijiewu/github/Research/20news.dat.200"
 const vocab_size = 60057
-const num_topics = 100
+const num_topics = 400
 const alpha = 0.1
 const beta = 0.1
-const num_iterations = 4
+const num_iterations = 10
 
 function parse_line(index::Int64, line::AbstractString)::Vector{Tuple{Tuple{Int64, Int64},
                                                                       Int64}
@@ -43,10 +43,10 @@ function load_data(path::AbstractString)::Vector{Vector{Tuple{Tuple{Int64, Int64
 end
 
 
-function logDirichlet_vector(alpha::Vector{Float64})::Float64
+function logDirichlet_vector(vector::Vector{Float64})::Float64
     sumLogGamma = 0.0
     logSumGamma = 0.0
-    for value in alpha
+    for value in vector
         sumLogGamma += lgamma(value)
         logSumGamma += value
     end
@@ -116,10 +116,25 @@ for doc_id in eachindex(docs)
             else
                 doc_topic_table[doc_id][topic] = 1
             end
+            topic_summary[topic] += 1
         end
     end
     push!(doc_topic_assignmnts, doc_topic_assign_vec)
 end
+
+word_topic_sum = [0 for word = 1:vocab_size]
+for word_id = 1:vocab_size
+    word_topic_dict = word_topic_table[word_id]
+    word_topic_sum[word_id] = sum(values(word_topic_dict))
+end
+
+doc_topic_sum = [0 for doc_id = 1:num_docs]
+for doc_id = 1:num_docs
+    doc_topic_dict = doc_topic_table[doc_id]
+    doc_topic_sum[doc_id] = sum(values(doc_topic_dict))
+end
+
+topic_sum = sum(topic_summary[topic] for topic = 1:num_topics)
 
 type TopicCountPair
     topic::Int32
@@ -167,10 +182,15 @@ beta_sum = beta * vocab_size
                 denom = topic_summary[old_topic] + beta_sum
                 s_sum -= alpha_beta / denom
                 s_sum += alpha_beta / (denom - 1)
+
                 r_sum -= (doc_topic_dict[old_topic] * beta) / denom
                 r_sum += ((doc_topic_dict[old_topic] - 1)* beta) / (denom - 1)
                 q_coeff[old_topic] = (alpha + doc_topic_dict[old_topic] - 1) / (denom - 1)
 
+                word_topic_dict[old_topic] -= 1
+                if word_topic_dict[old_topic] == 0
+                    delete!(word_topic_dict, old_topic)
+                end
                 doc_topic_dict[old_topic] -= 1
                 if doc_topic_dict[old_topic] == 0
                     delete!(doc_topic_dict, old_topic)
@@ -239,6 +259,15 @@ beta_sum = beta * vocab_size
                 topic_summary[new_topic] += 1
                 topic_assignmnt_vec[word_index] = new_topic
                 word_index += 1
+
+                word_topic_sum_inline = sum(values(word_topic_dict))
+                @assert word_topic_sum_inline == word_topic_sum[word_id]
+
+                doc_topic_sum_inline = sum(values(doc_topic_dict))
+                @assert doc_topic_sum_inline == doc_topic_sum[doc_id]
+
+                topic_sum_inline = sum(topic_summary[topic] for topic = 1:num_topics)
+                @assert topic_sum_inline == topic_sum
             end # sampling for this token done
         end # sampling for this word done
     end # sampling for this doc done
