@@ -159,8 +159,6 @@ Executor::CheckAndExecuteForLoop(bool next_partition) {
   bool stop_search = false;
   while (true) {
     auto runnable_status = exec_for_loop_->GetCurrPartitionRunnableStatus();
-    LOG(INFO) << __func__
-              << " runnable_status = " << static_cast<int>(runnable_status);
     switch (runnable_status) {
       case AbstractExecForLoop::RunnableStatus::kRunnable:
         {
@@ -291,7 +289,6 @@ Executor::SendGlobalIndexedDistArrays() {
 
   for (auto &buffer_pair : buffer_send_buffer_map) {
     int32_t server_id = buffer_pair.first;
-    LOG(INFO) << __func__ << " buffer = " << server_id;
     auto &send_data_buffer = buffer_pair.second;
     auto *data_bytes = send_data_buffer.first;
     size_t num_bytes = send_data_buffer.second;
@@ -327,7 +324,7 @@ Executor::SendPredCompletion() {
       = exec_for_loop_->GetSuccessorToNotify();
   if (successor_to_send < 0) return;
   message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyExecForLoopPredecessorCompletion>(
-      &send_buff_);
+      &send_buff_, nullptr, 0);
   Send(&executor_conn_[successor_to_send], executor_[successor_to_send].get());
   send_buff_.clear_to_send();
   send_buff_.reset_sent_sizes();
@@ -365,7 +362,6 @@ Executor::ServerExecForLoopAck() {
 
 void
 Executor::RequestExecForLoopGlobalIndexedDistArrays() {
-  LOG(INFO) << __func__;
   message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRequestExecForLoopGlobalIndexedDistArrays>(
       &send_buff_);
   Send(&prt_poll_conn_, prt_pipe_conn_.get());
@@ -401,7 +397,6 @@ Executor::SerializeAndSendExecForLoopPrefetchRequests() {
   exec_for_loop_ptr->SerializeAndClearPrefetchIds(&send_buffer_map);
   for (auto &executor_send_buffer_pair : send_buffer_map) {
     int32_t server_id = executor_send_buffer_pair.first;
-    LOG(INFO) << __func__ << " to " << server_id;
     auto &send_data_buffer = executor_send_buffer_pair.second;
     auto *data_bytes = send_data_buffer.first;
     size_t num_bytes = send_data_buffer.second;
@@ -427,15 +422,10 @@ Executor::ReplyDistArrayValues() {
       &send_buff_, num_bytes);
   send_buff_.set_next_to_send(bytes, num_bytes, true);
   int32_t recv_id = dist_array_value_request_meta_.requester_id;
-  LOG(INFO) << __func__ << " num_bytes = " << num_bytes << " recv_id = " << recv_id;
   bool is_requester_executor = dist_array_value_request_meta_.is_requester_executor;
 
   auto &recv_conn = is_requester_executor ? executor_conn_ : server_conn_;
   auto &receiver = is_requester_executor ? executor_ : server_;
-
-  LOG(INFO) << "is_requester_executor = " << is_requester_executor
-            << " sock_conn_ptr = " << (void*) receiver[recv_id].get()
-            << " poll_conn_ptr = " << (void*) &recv_conn[recv_id];
 
   Send(&recv_conn[recv_id], receiver[recv_id].get());
   send_buff_.clear_to_send();

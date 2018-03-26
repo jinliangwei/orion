@@ -11,7 +11,7 @@ DistArrayPartition<void>::DistArrayPartition(
     JuliaThreadRequester *julia_requester):
     AbstractDistArrayPartition(dist_array, config, value_type, julia_requester),
     orion_worker_module_(GetOrionWorkerModule()) {
-  JL_GC_PUSH2(&dist_array_jl_, &partition_jl_);
+  JL_GC_PUSH1(&dist_array_jl_);
 
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
@@ -19,6 +19,7 @@ DistArrayPartition<void>::DistArrayPartition(
   jl_function_t *create_partition_func = JuliaEvaluator::GetOrionWorkerFunction(
       "dist_array_create_and_append_partition");
   partition_jl_ = jl_call1(create_partition_func, dist_array_jl_);
+  LOG(INFO) << "partition created";
   auto *partition_get_values_func = JuliaEvaluator::GetOrionWorkerFunction(
       "dist_array_partition_get_values");
   values_array_jl_ = jl_call1(partition_get_values_func, partition_jl_);

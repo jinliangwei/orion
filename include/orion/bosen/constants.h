@@ -23,6 +23,7 @@ extern "C" {
   extern const int32_t ORION_DIST_ARRAY_INIT_TYPE_EMPTY;
   extern const int32_t ORION_DIST_ARRAY_INIT_TYPE_UNIFORM_RANDOM;
   extern const int32_t ORION_DIST_ARRAY_INIT_TYPE_NORMAL_RANDOM;
+  extern const int32_t ORION_DIST_ARRAY_INIT_TYPE_FILL;
 
   extern const int32_t ORION_DIST_ARRAY_MAP_TYPE_NO_MAP;
   extern const int32_t ORION_DIST_ARRAY_MAP_TYPE_MAP;

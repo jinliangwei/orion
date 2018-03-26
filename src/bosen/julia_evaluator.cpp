@@ -631,6 +631,48 @@ JuliaEvaluator::RandUniform(
 }
 
 void
+JuliaEvaluator::Fill(
+    std::vector<uint8_t> serialized_init_value,
+    jl_value_t **values_ptr,
+    size_t num_values) {
+  jl_value_t *init_value_jl = nullptr;
+  jl_value_t *num_values_jl = nullptr;
+  jl_value_t *serialized_value_array = nullptr,
+              *serialized_value_buff = nullptr,
+        *serialized_value_array_type = nullptr;
+
+  JL_GC_PUSH5(&init_value_jl,
+              &num_values_jl,
+              &serialized_value_array,
+              &serialized_value_buff,
+              &serialized_value_array_type);
+  num_values_jl = jl_box_uint64(num_values);
+  LOG(INFO) << __func__ << " serialized_init_value size = "
+            << serialized_init_value.size();
+  serialized_value_array_type = jl_apply_array_type(jl_uint8_type, 1);
+  serialized_value_array = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(serialized_value_array_type,
+                         serialized_init_value.data(),
+                         serialized_init_value.size(), 0));
+  jl_function_t *io_buffer_func
+      = GetFunction(jl_base_module, "IOBuffer");
+  CHECK(io_buffer_func != nullptr);
+  serialized_value_buff = jl_call1(io_buffer_func,
+                                   reinterpret_cast<jl_value_t*>(serialized_value_array));
+  jl_function_t *deserialize_func
+      = GetFunction(jl_base_module, "deserialize");
+  CHECK(deserialize_func != nullptr);
+  init_value_jl = jl_call1(deserialize_func, serialized_value_buff);
+
+  jl_function_t *fill_func = GetFunction(jl_base_module, "fill");
+  *values_ptr = jl_call2(fill_func, init_value_jl,
+                         num_values_jl);
+
+  JL_GC_POP();
+  AbortIfException();
+}
+
+void
 JuliaEvaluator::RunMapGeneric(
     DistArrayMapType map_type,
     const std::vector<int64_t> &parent_dims,

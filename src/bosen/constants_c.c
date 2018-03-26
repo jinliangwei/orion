@@ -31,6 +31,8 @@ extern "C" {
   = static_cast<int32_t>(orion::bosen::DistArrayInitType::kUniformRandom);
   const int32_t ORION_DIST_ARRAY_INIT_TYPE_NORMAL_RANDOM
   = static_cast<int32_t>(orion::bosen::DistArrayInitType::kNormalRandom);
+  const int32_t ORION_DIST_ARRAY_INIT_TYPE_FILL
+  = static_cast<int32_t>(orion::bosen::DistArrayInitType::kFill);
 
   const int32_t ORION_JULIA_MODULE_CORE = static_cast<int32_t>(orion::bosen::JuliaModule::kCore);
   const int32_t ORION_JULIA_MODULE_BASE = static_cast<int32_t>(orion::bosen::JuliaModule::kBase);

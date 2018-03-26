@@ -466,7 +466,7 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         size_t expected_size = msg->data_size;
 
         if (pipelined_time_partitions_buff_ == nullptr) {
-          pipelined_time_partitions_buff_=
+          pipelined_time_partitions_buff_ =
               new PeerRecvPipelinedTimePartitionsBuffer();
         }
         pipelined_time_partitions_buff_->pred_notice = msg->pred_notice;
@@ -477,7 +477,6 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
               sock, &recv_buff,
               &byte_buff, expected_size);
         }
-
         if (received_next_msg || (expected_size == 0)) {
           pipelined_time_partitions_buff_vec_.push_back(pipelined_time_partitions_buff_);
           pipelined_time_partitions_buff_ = nullptr;
@@ -541,8 +540,6 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         bool received_next_msg = ReceiveArbitraryBytes(
             sock, &recv_buff,
             &recv_byte_buff, expected_size);
-        LOG(INFO) << "received ReplyDistArrayValues from " << sender_id
-                  << " received_next_msg = " << received_next_msg;
         if (received_next_msg) {
           auto *global_indexed_dist_array_data_buff = new PeerRecvGlobalIndexedDistArrayDataBuffer();
           global_indexed_dist_array_data_buff->server_id = sender_id;
@@ -647,9 +644,6 @@ PeerRecvThread::ServePipelinedTimePartitionsRequest() {
 
 void
 PeerRecvThread::ServeGlobalIndexedDistArrayDataRequest() {
-  LOG(INFO) << __func__ << " "
-            << has_executor_requested_global_indexed_dist_array_data_
-            << " " << global_indexed_dist_arrays_buff_vec_.size();
   if (!has_executor_requested_global_indexed_dist_array_data_) return;
   if (global_indexed_dist_arrays_buff_vec_.empty()) return;
   auto *buff_vec = new PeerRecvGlobalIndexedDistArrayDataBuffer*[global_indexed_dist_arrays_buff_vec_.size()];
@@ -668,8 +662,19 @@ void
 PeerRecvThread::ServeExecForLoopPredCompletion() {
   if (!has_executor_requested_pred_completion_) return;
   if (!pred_completed_) return;
-  message::ExecuteMsgHelper::CreateMsg<
-    message::ExecuteMsgReplyExecForLoopPredecessorCompletion>(&send_buff_);
+
+  if (!pipelined_time_partitions_buff_vec_.empty()) {
+    auto* buff_vec = new PeerRecvPipelinedTimePartitionsBuffer*[pipelined_time_partitions_buff_vec_.size()];
+    memcpy(buff_vec, pipelined_time_partitions_buff_vec_.data(),
+           pipelined_time_partitions_buff_vec_.size() * sizeof(PeerRecvPipelinedTimePartitionsBuffer*));
+    message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyExecForLoopPredecessorCompletion>(
+        &send_buff_, buff_vec, pipelined_time_partitions_buff_vec_.size());
+    pipelined_time_partitions_buff_vec_.clear();
+  } else {
+    message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgReplyExecForLoopPredecessorCompletion>(
+        &send_buff_, nullptr, 0);
+  }
+
   has_executor_requested_pred_completion_ = false;
   SendToExecutor();
   send_buff_.clear_to_send();

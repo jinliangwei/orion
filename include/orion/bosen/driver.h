@@ -37,7 +37,9 @@ extern "C" {
       bool is_dense,
       const char* symbol,
       const uint8_t* value_type_bytes,
-      size_t value_type_size);
+      size_t value_type_size,
+      const uint8_t* init_value_bytes,
+      size_t init_value_size);
 
   void orion_create_dist_array_buffer(
       int32_t id,

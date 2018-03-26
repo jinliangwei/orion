@@ -119,6 +119,11 @@ class JuliaEvaluator {
       jl_value_t **values_ptr,
       size_t num_values);
 
+  static void Fill(
+      std::vector<uint8_t> serialized_init_value,
+      jl_value_t **values_ptr,
+      size_t num_values);
+
   static void RunMapGeneric(
       DistArrayMapType map_type,
       const std::vector<int64_t> &parent_dims,

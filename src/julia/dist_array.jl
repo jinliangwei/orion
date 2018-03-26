@@ -10,7 +10,8 @@ import Base: size, getindex, setindex!
 @enum DistArrayInitType DistArrayInitType_empty =
     1 DistArrayInitType_uniform_random =
     2 DistArrayInitType_normal_random =
-    3
+    3 DistArrayInitType_fill =
+    4
 
 @enum DistArrayMapType DistArrayMapType_no_map =
     1 DistArrayMapType_map =
@@ -111,6 +112,7 @@ end
 
 immutable DistArrayPartition{T}
     values::Vector{T}
+    DistArrayPartition() = new(Vector{T}())
 end
 
 function dist_array_partition_get_values(partition::DistArrayPartition)::Vector
@@ -190,6 +192,7 @@ type DenseDistArray{T, N} <: DistArray{T, N}
     cache_accessor::Nullable{DistArrayCacheAccessor{T, N}}
     iterate_dims::Nullable{Vector{Int64}}
     num_partitions_per_dim::Int64
+    init_value::Nullable{T}
 
     DenseDistArray(id::Integer,
                    parent_type::DistArrayParentType,
@@ -210,7 +213,8 @@ type DenseDistArray{T, N} <: DistArray{T, N}
                        Nullable{DistArrayAccessor{T, N}}(),
                        Nullable{DistArrayCacheAccessor{T, N}}(),
                        Nullable{Vector{Int64}}(),
-                       num_executors * 2)
+                       num_executors * 2,
+                       Nullable{T}())
 
     DenseDistArray(id::Integer,
                    dims::Vector{Int64},
@@ -232,7 +236,8 @@ type DenseDistArray{T, N} <: DistArray{T, N}
                        Nullable{DistArrayAccessor{T, N}}(),
                        Nullable{DistArrayCacheAccessor{T, N}}(),
                        Nullable{Vector{Int64}}(),
-                       num_executors * 2)
+                       num_executors * 2,
+                       Nullable{T}())
 end
 
 function copy{T, N}(dist_array::DenseDistArray{T, N})::DenseDistArray{T, N}
@@ -255,6 +260,7 @@ function copy{T, N}(dist_array::DenseDistArray{T, N})::DenseDistArray{T, N}
     new_dist_array.cache_accessor = dist_array.cache_accessor
     new_dist_array.iterate_dims = Nullable{Vector{Int64}}(copy(get(dist_array.iterate_dims)))
     new_dist_array.num_partitions_per_dim = dist_array.num_partitions_per_dim
+    new_dist_array.init_value = dist_array.init_value
     return new_dist_array
 end
 
@@ -462,6 +468,29 @@ function text_file(file_path::AbstractString;
     return dist_array
 end
 
+function fill(x, dims...)::DenseDistArray
+    ValueType = typeof(x)
+    global dist_array_id_counter
+    id = dist_array_id_counter
+    dist_array_id_counter += 1
+    dist_array = DenseDistArray{ValueType, length(dims)}(
+        id,
+        DistArrayParentType_init,
+        DistArrayMapType_no_map)
+    dist_array.init_info = Nullable{DistArrayInitInfo}(
+        DistArrayInitInfo(
+            DistArrayInitType_fill,
+            ValueType
+        ))
+    dist_array.partition_info = DistArrayPartitionInfo(DistArrayPartitionType_range,
+                                                       DistArrayIndexType_none)
+    dist_array.dims = [dims...]
+    dist_array.iterate_dims = Nullable{Vector{Int64}}([dims...])
+    dist_array.init_value = Nullable{ValueType}(x)
+    dist_arrays[id] = dist_array
+    return dist_array
+end
+
 function rand(ValueType::DataType, dims...)::DenseDistArray
     @assert ValueType == Float32 || ValueType == Float64
     global dist_array_id_counter
@@ -515,8 +544,12 @@ function randn(dims...)::DistArray
     randn(Float32, dims...)
 end
 
-function call_create_dist_array{T, N}(dist_array::DistArray{T, N},
-                                   value_type_buff_array::Vector{UInt8})
+function call_create_dist_array{T, N}(dist_array::DistArray{T, N})
+
+    value_type_buff = IOBuffer()
+    serialize(value_type_buff, eltype(dist_array))
+    value_type_buff_array = takebuf_array(value_type_buff)
+
     flatten_results = false
     file_path = ""
     parent_id = -1
@@ -525,6 +558,7 @@ function call_create_dist_array{T, N}(dist_array::DistArray{T, N},
     map_func_name = ""
     random_init_type = Float32
     is_dense = isa(dist_array, DenseDistArray) ? true : false
+    init_value_buff_array = Vector{UInt8}()
 
     if !isnull(dist_array.map_info)
         map_info = get(dist_array.map_info)
@@ -540,6 +574,12 @@ function call_create_dist_array{T, N}(dist_array::DistArray{T, N},
         init_info = get(dist_array.init_info)
         init_type = init_info.init_type
         random_init_type = init_info.random_init_type
+        if !isnull(dist_array.init_value)
+            init_value = get(dist_array.init_value)
+            init_value_buff = IOBuffer()
+            serialize(init_value_buff, init_value)
+            init_value_buff_array = takebuf_array(init_value_buff)
+        end
     end
 
     if !isnull(dist_array.file_path)
@@ -563,8 +603,9 @@ function call_create_dist_array{T, N}(dist_array::DistArray{T, N},
                  Bool, # is_dense
                  Cstring, # symbol
                  Ref{UInt8}, # value_type_bytes
-                 UInt64 # value_type_size
-                 ),
+                 UInt64, # value_type_size
+                 Ref{UInt8},
+                 UInt64),
           dist_array.id,
           dist_array_parent_type_to_int32(dist_array.parent_type),
           dist_array_map_type_to_int32(dist_array.map_type),
@@ -582,7 +623,9 @@ function call_create_dist_array{T, N}(dist_array::DistArray{T, N},
           is_dense,
           string(get(dist_array.symbol)),
           value_type_buff_array,
-          length(value_type_buff_array))
+          length(value_type_buff_array),
+          init_value_buff_array,
+          length(init_value_buff_array))
 end
 
 function materialize{T, N}(dist_array::DistArray{T, N})
@@ -596,11 +639,7 @@ function materialize{T, N}(dist_array::DistArray{T, N})
         dist_array_to_create = dist_array
     end
 
-    buff = IOBuffer()
-    serialize(buff, eltype(dist_array_to_create))
-    buff_array = takebuf_array(buff)
-
-    call_create_dist_array(dist_array_to_create, buff_array)
+    call_create_dist_array(dist_array_to_create)
     dist_array.is_materialized = true
     if isnull(dist_array.iterate_dims)
         dist_array.iterate_dims = Nullable{Vector{Int64}}(copy(dist_array.dims))
@@ -814,7 +853,9 @@ end
 
 function check_and_repartition(dist_array::DistArray,
                                partition_info::DistArrayPartitionInfo)
-    println("check_and_repartition ", dist_array.id, " ", partition_info.partition_type)
+    println("check_and_repartition ", dist_array.id,
+            " ", partition_info.partition_type,
+            " ", partition_info.partition_dims)
     curr_partition_info = dist_array.partition_info
     dist_array.target_partition_info = Nullable{DistArrayPartitionInfo}()
     repartition = false
@@ -994,8 +1035,7 @@ function Base.setindex!(dist_array::DistArray,
 end
 
 function dist_array_create_and_append_partition{T, N}(dist_array::AbstractDistArray{T, N})::DistArrayPartition{T}
-    values = Vector{T}()
-    partition = DistArrayPartition{T}(values)
+    partition = DistArrayPartition{T}()
     push!(dist_array.partitions, partition)
     return partition
 end

@@ -367,9 +367,17 @@ AbstractDistArrayPartition::Init(int64_t key_begin,
       break;
     case DistArrayInitType::kUniformRandom:
       {
-        JuliaEvaluator::RandNormal(random_init_type,
-                                   &init_values,
-                                   num_elements);
+        JuliaEvaluator::RandUniform(random_init_type,
+                                    &init_values,
+                                    num_elements);
+      }
+      break;
+    case DistArrayInitType::kFill:
+      {
+        const auto &serialized_init_value = dist_array_->GetMeta().GetInitValue();
+        JuliaEvaluator::Fill(serialized_init_value,
+                             &init_values,
+                             num_elements);
       }
       break;
     default:

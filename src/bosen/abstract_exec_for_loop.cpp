@@ -135,8 +135,6 @@ AbstractExecForLoop::SerializeAndClearPrefetchIds(ExecutorSendBufferMap *send_bu
   }
 
   num_pending_prefetch_requests_ = server_point_key_map.size();
-  LOG(INFO) << __func__ << " num_pending_prefetch_requests = "
-            << num_pending_prefetch_requests_;
   for (const auto &server_point_key_pair : server_point_key_map) {
     int32_t server_id = server_point_key_pair.first;
     const auto &dist_array_point_key_map = server_point_key_pair.second;
@@ -307,7 +305,6 @@ AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
   std::unordered_map<int32_t, SendDataBuffer> data_buffers;
   for (auto &dist_array_pair : time_partitioned_dist_arrays_) {
     int32_t dist_array_id = dist_array_pair.first;
-
     auto *dist_array = dist_array_pair.second;
     auto *dist_array_partition = dist_array->GetLocalPartition(
         time_partition_id_to_send);
@@ -357,7 +354,8 @@ AbstractExecForLoop::DeserializePipelinedTimePartitions(const uint8_t* bytes) {
     int32_t dist_array_id = *reinterpret_cast<const int32_t*>(cursor);
     cursor += sizeof(int32_t);
     auto iter = time_partitioned_dist_arrays_.find(dist_array_id);
-    CHECK(iter != time_partitioned_dist_arrays_.end());
+    CHECK(iter != time_partitioned_dist_arrays_.end())
+        << "id = " << dist_array_id;
     auto *dist_array = iter->second;
     auto create_pair = dist_array->GetAndCreateLocalPartition(time_partition_id);
     CHECK(create_pair.second);
@@ -414,8 +412,6 @@ AbstractExecForLoop::CachePrefetchDistArrayValues(
   }
   delete[] buff_vec;
   num_pending_prefetch_requests_ -= num_buffs;
-  LOG(INFO) << __func__ << " num_pending_prefetch_requests = "
-            << num_pending_prefetch_requests_;
   if (num_pending_prefetch_requests_ == 0) {
     prefetch_status_ = PrefetchStatus::kPrefetchRecved;
     for (auto& dist_array_pair : global_indexed_dist_arrays_) {

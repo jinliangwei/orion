@@ -930,7 +930,23 @@ Executor::HandlePeerRecvThrExecuteMsg() {
     case message::ExecuteMsgType::kReplyExecForLoopPredecessorCompletion:
       {
         CHECK(exec_for_loop_.get());
-        ExecForLoopAck();
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgReplyExecForLoopPredecessorCompletion>(recv_buff);
+        auto **buff_vec = reinterpret_cast<
+          PeerRecvPipelinedTimePartitionsBuffer**>(msg->data_buff_vec);
+        size_t num_buffs = msg->num_data_buffs;
+        if (buff_vec != nullptr) {
+          auto cpp_func = std::bind(
+              &AbstractExecForLoop::DeserializePipelinedTimePartitionsBuffVec,
+              exec_for_loop_.get(),
+              buff_vec,
+              num_buffs);
+          exec_cpp_func_task_.func = cpp_func;
+          exec_cpp_func_task_.label = TaskLabel::kDeserializeDistArrayTimePartitionsPredCompletion;
+          julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+        } else {
+          ExecForLoopAck();
+        }
         int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
         ret = EventHandler<PollConn>::kClearOneMsg;
@@ -1176,6 +1192,12 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
               {
                 action_ = Action::kNone;
                 CheckAndExecuteForLoop(false);
+              }
+              break;
+            case TaskLabel::kDeserializeDistArrayTimePartitionsPredCompletion:
+              {
+                action_ = Action::kNone;
+                ExecForLoopAck();
               }
               break;
             case TaskLabel::kGetAccumulatorValue:
@@ -1686,8 +1708,6 @@ Executor::CreateDistArray() {
     else
       return false;
   }
-  LOG(INFO) << __func__ << " parent_type = "
-            << static_cast<int32_t>(parent_type);
   switch (parent_type) {
     case DistArrayParentType::kTextFile:
       {
@@ -1723,7 +1743,8 @@ Executor::CreateDistArray() {
         auto &dist_array_meta = dist_array.GetMeta();
         auto init_type = dist_array_meta.GetInitType();
         if (init_type == DistArrayInitType::kUniformRandom ||
-            init_type == DistArrayInitType::kNormalRandom) {
+            init_type == DistArrayInitType::kNormalRandom ||
+            init_type == DistArrayInitType::kFill) {
           dist_array_meta.SetContiguousPartitions(true);
         }
         dist_array.SetDims(create_dist_array.dims().data(), create_dist_array.num_dims());
@@ -2031,6 +2052,13 @@ Executor::DefineJuliaDistArray() {
     const int64_t *dims = create_dist_array.dims().data();
     CHECK_EQ(num_dims, create_dist_array.dims_size());
     dist_array.SetDims(dims, num_dims);
+  }
+
+  if (create_dist_array.has_serialized_init_value()) {
+    std::string serialized_init_value = create_dist_array.serialized_init_value();
+    dist_array.GetMeta().SetInitValue(
+        reinterpret_cast<const uint8_t*>(serialized_init_value.data()),
+        serialized_init_value.size());
   }
 
   auto &meta = dist_array.GetMeta();

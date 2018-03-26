@@ -143,7 +143,9 @@ class Driver {
       bool is_dense,
       const char* symbol,
       const uint8_t* value_type_bytes,
-      size_t value_type_size);
+      size_t value_type_size,
+      const uint8_t* init_value_bytes,
+      size_t init_value_size);
 
   void RepartitionDistArray(
       int32_t id,
@@ -387,7 +389,9 @@ Driver::CreateDistArray(
       bool is_dense,
       const char* symbol,
       const uint8_t* value_type_bytes,
-      size_t value_type_size) {
+      size_t value_type_size,
+      const uint8_t* init_value_bytes,
+      size_t init_value_size) {
   task::CreateDistArray create_dist_array;
   create_dist_array.set_id(id);
   create_dist_array.set_parent_type(parent_type);
@@ -438,6 +442,10 @@ Driver::CreateDistArray(
   LOG(INFO) << "create_dist_array, symbol = " << symbol;
   create_dist_array.set_serialized_value_type(
       std::string(reinterpret_cast<const char*>(value_type_bytes), value_type_size));
+  if (init_value_size > 0) {
+    create_dist_array.set_serialized_init_value(
+        std::string(reinterpret_cast<const char*>(init_value_bytes), init_value_size));
+  }
   create_dist_array.SerializeToString(&msg_buff_);
 
   message::DriverMsgHelper::CreateMsg<message::DriverMsgCreateDistArray>(

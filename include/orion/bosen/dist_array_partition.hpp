@@ -117,10 +117,11 @@ DistArrayPartition<ValueType>::CreateAccessor() {
   auto *create_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
       "create_dist_array_accessor");
   if (is_dense) {
+    LOG(INFO) << "create dense accessor! " << __func__;
     Sort();
     key_begin_jl = jl_box_int64(keys_.size() > 0 ? keys_[0] : 0);
     jl_call3(create_accessor_func, dist_array_jl, key_begin_jl,
-               values_array_jl);
+             values_array_jl);
   } else {
     keys_array_type_jl = jl_apply_array_type(
         reinterpret_cast<jl_datatype_t*>(value_type_jl), 1);
@@ -197,6 +198,7 @@ DistArrayPartition<ValueType>::CreateCacheAccessor() {
   values_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       values_array_type_jl,
       values_.data(), values_.size(), 0));
+
   keys_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
   keys_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       keys_array_type_jl,
@@ -394,6 +396,7 @@ DistArrayPartition<ValueType>::GetAndSerializeValues(const int64_t *keys,
                                         << " size = " << sparse_index_.size();
     auto value = iter->second;
     *reinterpret_cast<ValueType*>(cursor) = value;
+    cursor += sizeof(ValueType);
   }
 }
 
@@ -706,6 +709,7 @@ DistArrayPartition<ValueType>::AppendJuliaValue(jl_value_t *value) {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::AppendJuliaValueArray(jl_value_t *value) {
+  LOG(INFO) << __func__ << " " << static_cast<int>(kValueType);
   size_t num_elements = jl_array_len(reinterpret_cast<jl_array_t*>(value));
   ValueType* value_array = reinterpret_cast<ValueType*>(jl_array_data(reinterpret_cast<jl_array_t*>(value)));
   for (size_t i = 0; i < num_elements; i++) {

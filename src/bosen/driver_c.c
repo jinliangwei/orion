@@ -43,7 +43,9 @@ extern "C" {
       bool is_dense,
       const char* symbol,
       const uint8_t* value_type_bytes,
-      size_t value_type_size) {
+      size_t value_type_size,
+      const uint8_t* init_value_bytes,
+      size_t init_value_size) {
     driver->CreateDistArray(
         id,
         parent_type,
@@ -62,7 +64,9 @@ extern "C" {
         is_dense,
         symbol,
         value_type_bytes,
-        value_type_size);
+        value_type_size,
+        init_value_bytes,
+        init_value_size);
   }
 
   void orion_create_dist_array_buffer(

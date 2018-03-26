@@ -730,15 +730,14 @@ function compute_ssa_defs_stmt(stmt,
             end
         elseif stmt.head in Set([:call, :invoke, :call1, :foreigncall])
             arguments = call_get_arguments(stmt)
-            if call_get_func_name(stmt) in Set([:+, :-, :*, :/, :(.*), :(./), :dot, :eachindex])
-                for idx in eachindex(arguments)
-                    arg = arguments[idx]
-                    stmt.args[idx + 1] = compute_ssa_defs_stmt(arg, context,
-                                                               sym_to_ssa_var_map,
-                                                               bb_ssa_defs,
-                                                               stmt_ssa_defs)
-                end
-            else
+            for idx in eachindex(arguments)
+                arg = arguments[idx]
+                stmt.args[idx + 1] = compute_ssa_defs_stmt(arg, context,
+                                                           sym_to_ssa_var_map,
+                                                           bb_ssa_defs,
+                                                           stmt_ssa_defs)
+            end
+            if !(call_get_func_name(stmt) in Set([:+, :-, :*, :/, :(.*), :(./), :dot, :eachindex]))
                 for idx in eachindex(arguments)
                     arg = arguments[idx]
                     var_mutated = nothing
@@ -747,12 +746,6 @@ function compute_ssa_defs_stmt(stmt,
                     elseif isa(arg, Expr) && (is_ref(arg) || is_dot(arg))
                         var_mutated = ref_dot_get_mutated_var(arg)
                     end
-                    #arg_copy = isa(arg, Expr) ? copy(arg) : arg
-                    arg_copy = arg
-                    stmt.args[idx + 1] = compute_ssa_defs_stmt(arg_copy, context,
-                                                               sym_to_ssa_var_map,
-                                                               bb_ssa_defs,
-                                                               stmt_ssa_defs)
                     if var_mutated != nothing
                         new_ssa_var = gen_unique_sp_symbol()
                         if var_mutated in keys(sym_to_ssa_var_map)
@@ -1295,7 +1288,6 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                         stmt_vec::Vector{Any},
                                         appended_bbs::Set{Int64},
                                         ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
-    println("recreate_stmts_from_flow_graph ", bb.id)
     if bb.id in keys(bb_stmts_dict) &&
         length(bb_stmts_dict[bb.id]) > 0
         stmt_dict = bb_stmts_dict[bb.id]

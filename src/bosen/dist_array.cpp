@@ -207,7 +207,6 @@ DistArray::Init() {
   size_t num_params_this_executor = num_params / kConfig.kNumExecutors
                                     + ((kExecutorId < (num_params % kConfig.kNumExecutors))
                                        ? 1 : 0);
-  LOG(INFO) << __func__ << " num_params_this_executor = " << num_params_this_executor;
   if (num_params_this_executor == 0) return;
   int64_t key_begin = (kExecutorId < (num_params % kConfig.kNumExecutors))
                       ? (num_params / kConfig.kNumExecutors + 1) * kExecutorId
@@ -316,7 +315,6 @@ AbstractDistArrayPartition*
 DistArray::GetLocalPartition(int32_t partition_id) {
   auto partition_iter = partitions_.find(partition_id);
   if (partition_iter == partitions_.end()) return nullptr;
-  LOG(INFO) << __func__ << "got partition";
   return partition_iter->second;
 }
 
@@ -531,8 +529,7 @@ DistArray::RepartitionSerializeAndClear1D(
     mem += sizeof(int32_t);
     const auto& partition_buff = partition_buff_pair.second;
     memcpy(mem, partition_buff.first, partition_buff.second);
-    LOG(INFO) << __func__ << " to recv_id = " << recv_id
-              << " size = " << partition_buff.second;
+
     mem += partition_buff.second;
     delete[] partition_buff.first;
     send_buff_offsets[recv_id] = mem - buff;
@@ -542,7 +539,6 @@ DistArray::RepartitionSerializeAndClear1D(
 void
 DistArray::RepartitionDeserialize(
     PeerRecvRepartitionDistArrayDataBuffer *data_buff_ptr) {
-  LOG(INFO) << __func__;
   auto byte_buffs = data_buff_ptr->byte_buffs;
   for (auto &buff_pair : byte_buffs) {
     auto &buff = buff_pair.second;
@@ -588,7 +584,6 @@ DistArray::RepartitionDeserialize1D(
   const uint8_t *cursor = mem;
   while (cursor - mem < mem_size) {
     int32_t partition_id = *reinterpret_cast<const int32_t*>(cursor);
-    LOG(INFO) << __func__ << " partition_id = " << partition_id;
     cursor += sizeof(int32_t);
     auto partition_pair = GetAndCreateLocalPartition(partition_id);
     auto *partition = partition_pair.first;
@@ -662,7 +657,6 @@ void
 DistArray::GetAndSerializeValues(const int64_t *keys,
                                  size_t num_keys,
                                  Blob *bytes_buff) {
-  LOG(INFO) << __func__;
   auto iter = partitions_.begin();
   CHECK(iter != partitions_.end());
   auto *partition = iter->second;

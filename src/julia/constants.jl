@@ -66,6 +66,8 @@ function load_dist_array_init_type_int32()
     global const dist_array_init_type_uniform_random = unsafe_load(ptr_val)
     ptr_val = cglobal((:ORION_DIST_ARRAY_INIT_TYPE_NORMAL_RANDOM, lib_path), Int32)
     global const dist_array_init_type_normal_random = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_INIT_TYPE_FILL, lib_path), Int32)
+    global const dist_array_init_type_fill = unsafe_load(ptr_val)
 end
 
 function load_dist_array_map_type_int32()
@@ -130,6 +132,8 @@ function dist_array_init_type_to_int32(init_type::DistArrayInitType)::Int32
         return dist_array_init_type_uniform_random
     elseif init_type == DistArrayInitType_normal_random
         return dist_array_init_type_normal_random
+    elseif init_type == DistArrayInitType_fill
+        return dist_array_init_type_fill
     else
         error("Unknown ", init_type)
     end

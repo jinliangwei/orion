@@ -50,7 +50,8 @@ enum class DistArrayParentType {
 enum class DistArrayInitType {
   kEmpty = 0,
     kUniformRandom = 1,
-    kNormalRandom = 2
+    kNormalRandom = 2,
+    kFill = 3
 };
 
 enum class DistArrayMapType {

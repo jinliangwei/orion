@@ -376,11 +376,19 @@ struct ExecuteMsgReplyDistArrayValues {
 };
 
 struct ExecuteMsgReplyExecForLoopPredecessorCompletion {
+ public:
+  void *data_buff_vec;
+  size_t num_data_buffs;
+
  private:
   ExecuteMsgReplyExecForLoopPredecessorCompletion() = default;
   friend class DefaultMsgCreator;
  public:
-  void Init() { }
+  void Init(void *_data_buff_vec,
+            size_t _num_data_buffs) {
+    data_buff_vec = _data_buff_vec;
+    num_data_buffs = _num_data_buffs;
+  }
   static constexpr ExecuteMsgType get_type() {
     return ExecuteMsgType::kReplyExecForLoopPredecessorCompletion;
   }

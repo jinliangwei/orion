@@ -1061,6 +1061,13 @@ MasterThread::CreateDistArrayMeta() {
   if (create_dist_array.dims_size() > 0) {
     meta_iter->second.AssignDims(create_dist_array.dims().data());
   }
+
+  if (create_dist_array.has_serialized_init_value()) {
+    std::string serialized_init_value = create_dist_array.serialized_init_value();
+    meta_iter->second.SetInitValue(
+        reinterpret_cast<const uint8_t*>(serialized_init_value.data()),
+        serialized_init_value.size());
+  }
   return num_expected_executor_acks;
 }
 
@@ -1101,6 +1108,10 @@ MasterThread::CreateDistArrayBufferMeta() {
                             symbol));
   auto meta_iter = iter_pair.first;
   meta_iter->second.AssignDims(create_dist_array_buffer.dims().data());
+
+  std::string serialized_init_value = create_dist_array_buffer.serialized_init_value();
+  meta_iter->second.SetInitValue(reinterpret_cast<const uint8_t*>(serialized_init_value.data()),
+                                 serialized_init_value.size());
 }
 
 void

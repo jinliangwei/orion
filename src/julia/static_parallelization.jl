@@ -468,6 +468,7 @@ end
 function parallelize_2d(iteration_space::Symbol,
                         iteration_var::Symbol,
                         dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
+                        buffer_set::Set{Symbol},
                         inherited_vars_to_mark_global::Set{Symbol},
                         global_vars_written::Set{Symbol},
                         loop_body::Expr,
