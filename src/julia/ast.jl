@@ -1,3 +1,5 @@
+const_func_set = Set([:+, :-, :*, :/, :(.*), :(./), :dot, :eachindex, :println])
+
 @inline function macrocall_get_symbol(macrocall_expr::Expr)::Symbol
     macro_identifier = macrocall_expr.args[1]
     if isa(macro_identifier, Symbol)

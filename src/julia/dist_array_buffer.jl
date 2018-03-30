@@ -1,7 +1,8 @@
 import Base: size, getindex, setindex!
-abstract DistArrayBuffer{T, N} <: AbstractDistArray{T, N}
+abstract type DistArrayBuffer{T, N} <: AbstractDistArray{T, N}
+end
 
-type DenseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
+mutable struct DenseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
     id::Int32
     dims::Vector{Int64}
     init_value::T
@@ -9,16 +10,16 @@ type DenseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
     partitions::Vector{DistArrayPartition{T}}
     accessor::Nullable{DenseDistArrayAccessor{T, N}}
     is_materialized::Bool
-    DenseDistArrayBuffer(id::Integer,
-                         dims::Vector{Int64},
-                         init_value::T) = new(
-                             id,
-                             copy(dims),
-                             init_value,
-                             Nullable{Symbol}(),
-                             Vector{DistArrayPartition{T}}(),
-                             Nullable{DenseDistArrayAccessor{T, N}}(),
-                             false)
+    DenseDistArrayBuffer{T, N}(id::Integer,
+                               dims::Vector{Int64},
+                               init_value::T) where {T, N} = new(
+                                   id,
+                                   copy(dims),
+                                   init_value,
+                                   Nullable{Symbol}(),
+                                   Vector{DistArrayPartition{T}}(),
+                                   Nullable{DenseDistArrayAccessor{T, N}}(),
+                                   false)
 end
 
 type SparseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
@@ -29,16 +30,16 @@ type SparseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
     partitions::Vector{DistArrayPartition{T}}
     accessor::Nullable{SparseInitDistArrayAccessor{T, N}}
     is_materialized::Bool
-    SparseDistArrayBuffer(id::Integer,
-                          dims::Vector{Int64},
-                          init_value::T) = new(
-                              id,
-                              copy(dims),
-                              init_value,
-                              Nullable{Symbol}(),
-                              Vector{DistArrayPartition{T}}(),
-                              Nullable{SparseInitDistArrayAccessor{T, N}}(),
-                              false)
+    SparseDistArrayBuffer{T, N}(id::Integer,
+                                dims::Vector{Int64},
+                                init_value::T) where {T, N} = new(
+                                    id,
+                                    copy(dims),
+                                    init_value,
+                                    Nullable{Symbol}(),
+                                    Vector{DistArrayPartition{T}}(),
+                                    Nullable{SparseInitDistArrayAccessor{T, N}}(),
+                                    false)
 end
 
 function Base.getindex(dist_array::DistArrayBuffer,

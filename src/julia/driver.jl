@@ -45,7 +45,7 @@ end
 function eval_expr_on_all(ex, eval_module::Symbol)
     buff = IOBuffer()
     serialize(buff, ex)
-    buff_array = takebuf_array(buff)
+    buff_array = take!(buff)
     result_array = ccall((:orion_eval_expr_on_all, lib_path),
                          Any, (Ref{UInt8}, UInt64, Int32),
                          buff_array, length(buff_array),
@@ -76,10 +76,32 @@ function exec_for_loop(iteration_space_id::Integer,
                        global_indexed_dist_array_ids::Vector{Int32},
                        dist_array_buffer_ids::Vector{Int32},
                        written_dist_array_ids::Vector{Int32},
+                       accessed_dist_array_ids::Vector{Int32},
+                       global_read_only_vars::Vector{Symbol},
+                       accumulator_vars::Vector{Symbol},
                        loop_batch_func_name::AbstractString,
                        prefetch_batch_func_name::AbstractString,
                        is_ordered::Bool)
-    println(written_dist_array_ids)
+
+    global_read_only_var_vals = Vector{Vector{UInt8}}(length(global_read_only_vars))
+    index = 1
+    for var_sym in global_read_only_vars
+        var_val = eval(current_module(), var_sym)
+        buff = IOBuffer()
+        serialize(buff, var_val)
+        buff_array = take!(buff)
+        global_read_only_var_vals[index] = buff_array
+        index += 1
+    end
+
+    accumulator_var_syms = Vector{String}(length(accumulator_vars))
+    index = 1
+    for var_sym in accumulator_vars
+        var_sym_str = string(var_sym)
+        accumulator_var_syms[index] = var_sym_str
+        index += 1
+    end
+
     ccall((:orion_exec_for_loop, lib_path),
           Void, (Int32,
                  Int32,
@@ -88,6 +110,9 @@ function exec_for_loop(iteration_space_id::Integer,
                  Ref{Int32}, UInt64,
                  Ref{Int32}, UInt64,
                  Ref{Int32}, UInt64,
+                 Ref{Int32}, UInt64,
+                 Any,
+                 Ref{Cstring}, UInt64,
                  Cstring, Cstring, Bool),
           iteration_space_id,
           for_loop_parallel_scheme_to_int32(parallel_scheme),
@@ -96,6 +121,9 @@ function exec_for_loop(iteration_space_id::Integer,
           global_indexed_dist_array_ids, length(global_indexed_dist_array_ids),
           dist_array_buffer_ids, length(dist_array_buffer_ids),
           written_dist_array_ids, length(written_dist_array_ids),
+          accessed_dist_array_ids, length(accessed_dist_array_ids),
+          global_read_only_var_vals,
+          accumulator_var_syms, length(accumulator_var_syms),
           loop_batch_func_name, prefetch_batch_func_name, is_ordered)
 end
 

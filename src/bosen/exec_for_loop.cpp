@@ -44,6 +44,20 @@ Executor::CreateExecForLoop() {
   size_t num_written_dist_array_ids
       = exec_for_loop_task.written_dist_array_ids_size();
 
+  const int32_t *accessed_dist_array_ids
+      = exec_for_loop_task.accessed_dist_array_ids().data();
+  size_t num_accessed_dist_arrays = exec_for_loop_task.accessed_dist_array_ids_size();
+
+  const std::string * const *global_read_only_var_vals
+      = exec_for_loop_task.global_read_only_var_vals().data();
+  size_t num_global_read_only_var_vals
+      = exec_for_loop_task.global_read_only_var_vals_size();
+
+  const std::string * const *accumulator_var_syms
+      = exec_for_loop_task.accumulator_var_syms().data();
+  size_t num_accumulator_var_syms
+      = exec_for_loop_task.accumulator_var_syms_size();
+
   std::string loop_batch_func_name = exec_for_loop_task.loop_batch_func_name();
   std::string prefetch_batch_func_name = exec_for_loop_task.prefetch_batch_func_name();
   bool is_ordered = exec_for_loop_task.is_ordered();
@@ -65,6 +79,12 @@ Executor::CreateExecForLoop() {
                 num_dist_array_buffers,
                 written_dist_array_ids,
                 num_written_dist_array_ids,
+                accessed_dist_array_ids,
+                num_accessed_dist_arrays,
+                global_read_only_var_vals,
+                num_global_read_only_var_vals,
+                accumulator_var_syms,
+                num_accumulator_var_syms,
                 loop_batch_func_name.c_str(),
                 prefetch_batch_func_name.c_str(),
                 &dist_arrays_,
@@ -90,6 +110,12 @@ Executor::CreateExecForLoop() {
                 num_dist_array_buffers,
                 written_dist_array_ids,
                 num_written_dist_array_ids,
+                accessed_dist_array_ids,
+                num_accessed_dist_arrays,
+                global_read_only_var_vals,
+                num_global_read_only_var_vals,
+                accumulator_var_syms,
+                num_accumulator_var_syms,
                 loop_batch_func_name.c_str(),
                 prefetch_batch_func_name.c_str(),
                 &dist_arrays_,
@@ -111,6 +137,12 @@ Executor::CreateExecForLoop() {
                 num_dist_array_buffers,
                 written_dist_array_ids,
                 num_written_dist_array_ids,
+                accessed_dist_array_ids,
+                num_accessed_dist_arrays,
+                global_read_only_var_vals,
+                num_global_read_only_var_vals,
+                accumulator_var_syms,
+                num_accumulator_var_syms,
                 loop_batch_func_name.c_str(),
                 prefetch_batch_func_name.c_str(),
                 &dist_arrays_,
@@ -122,6 +154,14 @@ Executor::CreateExecForLoop() {
       LOG(FATAL) << "unknown parallel_scheme = "
                  << static_cast<int32_t>(parallel_scheme);
   }
+
+  auto cpp_func = std::bind(
+      &AbstractExecForLoop::Init,
+      exec_for_loop_.get());
+
+  exec_cpp_func_task_.func = cpp_func;
+  exec_cpp_func_task_.label = TaskLabel::kExecForLoopInit;
+  julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
 }
 
 void
@@ -208,7 +248,7 @@ Executor::CheckAndExecuteForLoop(bool next_partition) {
           if (requested) {
             event_handler_.SetToReadOnly(&prt_poll_conn_);
           } else {
-            ExecForLoopAck();
+            ExecForLoopClear();
           }
         }
         break;
@@ -328,6 +368,17 @@ Executor::SendPredCompletion() {
   Send(&executor_conn_[successor_to_send], executor_[successor_to_send].get());
   send_buff_.clear_to_send();
   send_buff_.reset_sent_sizes();
+}
+
+void
+Executor::ExecForLoopClear() {
+  auto cpp_func = std::bind(
+      &AbstractExecForLoop::Clear,
+      exec_for_loop_.get());
+
+  exec_cpp_func_task_.func = cpp_func;
+  exec_cpp_func_task_.label = TaskLabel::kExecForLoopClear;
+  julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
 }
 
 void

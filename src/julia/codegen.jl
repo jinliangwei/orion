@@ -27,9 +27,9 @@ function gen_2d_partition_function(func_name::Symbol,
                             dims::Vector{Int64})
           repartition_ids = Vector{Int32}(length(keys) * 2)
           i = 1
+          dim_keys = Vector{Int64}(length(dims))
           for key in keys
-            #println(key)
-            dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+            OrionWorker.from_int64_to_keys(key, dims, dim_keys)
             $add_space_partition_id_stmt
             $add_time_partition_id_stmt
             i += 1
@@ -52,8 +52,9 @@ function gen_1d_partition_function(func_name::Symbol,
                             dims::Vector{Int64})
           repartition_ids = Vector{Int32}(length(keys))
           i = 1
+          dim_keys = Vector{Int64}(length(dims))
           for key in keys
-              dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+              OrionWorker.from_int64_to_keys(key, dims, dim_keys)
               $add_partition_id_stmt
               i += 1
           end
@@ -95,9 +96,10 @@ function gen_utransform_2d_partition_function(func_name::Symbol,
           println("keys.size() = ", length(keys),
                 " typeof(OrionWorker) = ", typeof(OrionWorker))
           i = 1
+          dim_keys = Vector{Int64}(length(dims))
           for key in keys
             #println(key)
-            dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+            OrionWorker.from_int64_to_keys(key, dims, dim_keys)
             $add_space_partition_id_stmt
             $add_time_partition_id_stmt
             i += 1
@@ -119,13 +121,15 @@ function gen_map_function(func_name::Symbol,
                           map_func_modules::Vector{Module},
                           map_types::Vector{DistArrayMapType},
                           map_flattens::Vector{Bool})
-
-    loop_stmt = :(for i = 1:length(keys)
-                  key = keys[i]
-                  value = values[i]
-                  dim_keys = OrionWorker.from_int64_to_keys(key, parent_dims)
-                  dim_keys = tuple(dim_keys...)
-                  end)
+    loop_stmt = quote
+        dim_keys_vec = Vector{Int64}(length(parent_dims))
+        for i = 1:length(keys)
+            key = keys[i]
+            value = values[i]
+            OrionWorker.from_int64_to_keys(key, parent_dims, dims_keys_vec)
+            dim_keys = tuple(dim_keys_vec...)
+        end
+    end
     stmt_array_to_append = loop_stmt.args[2].args
     key_sym_counter = 1
     value_sym_counter = 1
@@ -386,55 +390,159 @@ function gen_loop_body_function(func_name::Symbol,
                                 loop_body::Expr,
                                 iteration_space::Symbol,
                                 iteration_var::Symbol,
-                                inherited_vars_to_mark_global::Set{Symbol},
+                                accessed_dist_arrays::Vector{Symbol},
+                                global_read_only_vars::Vector{Symbol},
+                                accumulator_vars::Vector{Symbol},
                                 ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
-
     @assert isa(loop_body, Expr)
     @assert loop_body.head == :block
-    iteration_space_dist_array = eval(current_module(), iteration_space)
-    iter_space_value_type = dist_array_get_value_type(iteration_space_dist_array)
-    iteration_var_string = string(iteration_var)
 
-    for var in inherited_vars_to_mark_global
-        insert!(loop_body.args, 1, :(global $var))
+    return_stmt = :(return)
+    if length(accumulator_vars) > 0
+        return_args = Vector{Symbol}()
+        for var_sym in accumulator_vars
+            push!(return_args, var_sym)
+        end
+        return_stmt.args = return_args
     end
 
     loop_body_func = :(
         function $func_name($iteration_var)
         $loop_body
+        $return_stmt
         end
     )
+
+    for da_sym in accessed_dist_arrays
+        push!(loop_body_func.args[1].args, da_sym)
+    end
+    for var_sym in global_read_only_vars
+        push!(loop_body_func.args[1].args, var_sym)
+    end
+    for var_sym in accumulator_vars
+        push!(loop_body_func.args[1].args, var_sym)
+    end
     return loop_body_func
 end
 
 function gen_loop_body_batch_function(batch_func_name::Symbol,
                                       func_name::Symbol,
-                                      iter_space_value_type::DataType)
-    batch_loop_stmt = :(
-    for i in 1:length(keys)
+                                      iter_space_value_type::DataType,
+                                      accessed_dist_arrays::Vector{Symbol},
+                                      global_read_only_vars::Vector{Symbol},
+                                      accumulator_vars::Vector{Symbol})
+    loop_body_func_call = :(new_accum_vals = $(func_name)(key_value))
+
+    for da_sym in accessed_dist_arrays
+        push!(loop_body_func_call.args[2].args, da_sym)
+    end
+
+    for var_sym in global_read_only_vars
+        push!(loop_body_func_call.args[2].args, var_sym)
+    end
+
+    update_accumulator_vars_stmts = quote end
+    update_global_accumulator_vars_stmts = quote end
+
+    renamed_accumulator_vars = Vector{Symbol}()
+    if length(accumulator_vars) > 0
+        for var_sym in accumulator_vars
+            push!(renamed_accumulator_vars, Symbol(:oriongen, var_sym))
+        end
+
+        for var_sym in renamed_accumulator_vars
+            push!(loop_body_func_call.args[2].args, var_sym)
+        end
+
+        for i = 1:length(renamed_accumulator_vars)
+            update_accumulator_vars_stmt = :($(renamed_accumulator_vars[i]) = new_accum_vals[$i])
+            push!(update_accumulator_vars_stmts.args, update_accumulator_vars_stmt)
+        end
+
+        for i = 1:length(accumulator_vars)
+            update_global_accumulator_vars_stmt = :(global $(accumulator_vars[i]) = $(renamed_accumulator_vars[i]))
+            push!(update_global_accumulator_vars_stmts.args, update_global_accumulator_vars_stmt)
+        end
+    end
+
+    batch_loop_stmt = quote
+        dim_keys = Vector{Int64}(length(dims))
+        for i in 1:length(keys)
         key = keys[i]
         value = values[i]
-        dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+        OrionWorker.from_int64_to_keys(key, dims, dim_keys)
 
         key_value = (dim_keys, value)
-        $(func_name)(key_value)
+        $(loop_body_func_call)
+        $(update_accumulator_vars_stmts)
+        end
+    end
+
+    batch_func = :(
+        function $batch_func_name(keys::Vector{Int64},
+                                  values::Vector{$iter_space_value_type},
+                                  dims::Vector{Int64})
+        $(batch_loop_stmt)
+        $(update_global_accumulator_vars_stmts)
         end
     )
 
-    batch_func = :(
-    function $batch_func_name(keys::Vector{Int64},
-                              values::Vector{$iter_space_value_type},
-                              dims::Vector{Int64})
-        $(batch_loop_stmt)
+    for da_sym in accessed_dist_arrays
+        push!(batch_func.args[1].args, da_sym)
     end
-    )
+
+    for var_sym in global_read_only_vars
+        push!(batch_func.args[1].args, var_sym)
+    end
+
+    for var_sym in renamed_accumulator_vars
+        push!(batch_func.args[1].args, var_sym)
+    end
+
     return batch_func
 end
 
 function gen_loop_body_batch_function_iter_dims(batch_func_name::Symbol,
                                                 func_name::Symbol,
                                                 iter_space_value_type::DataType,
-                                                iterate_dims_length::Int64)
+                                                iterate_dims_length::Int64,
+                                                accessed_dist_arrays::Vector{Symbol},
+                                                global_read_only_vars::Vector{Symbol},
+                                                accumulator_vars::Vector{Symbol})
+
+    loop_body_func_call = :(new_accum_vals = $(func_name)(:key_value))
+
+    for da_sym in accessed_dist_arrays
+        push!(loop_body_func_call.args[2].args, da_sym)
+    end
+
+    for var_sym in global_read_only_vars
+        push!(loop_body_func_call.args[2].args, var_sym)
+    end
+
+    update_accumulator_vars_stmts = quote end
+    update_global_accumulator_vars_stmts = quote end
+
+    renamed_accumulator_vars = Vector{Symbol}()
+    if length(accumulator_vars) > 0
+        for var_sym in accumulator_vars
+            push!(renamed_accumulator_vars, Symbol(:oriongen, var_sym))
+        end
+
+        for var_sym in renamed_accumulator_vars
+            push!(loop_body_func_call.args[2].args, var_sym)
+        end
+
+        for i = 1:length(renamed_accumulator_vars)
+            update_accumulator_vars_stmt = :($(renamed_accumulator_vars[i]) = new_accum_vals[$i])
+            push!(update_accumulator_vars_stmts.args, update_accumulator_vars_stmt)
+        end
+
+        for i = 1:length(accumulator_vars)
+            update_global_accumulator_vars_stmt = :(global $(accumulator_vars[i]) = $(renamed_accumulator_vars[i]))
+            push!(update_global_accumulator_vars_stmts.args, update_global_accumulator_vars_stmt)
+        end
+    end
 
     batch_loop_stmt = quote
         if length(keys) == 0
@@ -442,25 +550,27 @@ function gen_loop_body_batch_function_iter_dims(batch_func_name::Symbol,
         end
         first_key = keys[1]
         first_dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+        dim_keys = Vector{Int64}(length(dims))
         prefix = first_dim_keys[(end - $iterate_dims_length):end]
         dim_keys_vec = Vector{Vector{Int64}}()
         value_vec = Vector{$iter_space_value_type}()
         for i in 1:length(keys)
-          key = keys[i]
-          value = values[i]
-          dim_keys = OrionWorker.from_int64_to_keys(key, dims)
-          curr_prefix = dim_keys[(end - $iterate_dims_length):end]
+            key = keys[i]
+            value = values[i]
+            OrionWorker.from_int64_to_keys(key, dims, dim_keys)
+            curr_prefix = dim_keys[(end - $iterate_dims_length):end]
 
-          if curr_prefix == prefix
-            push!(dim_keys_vec, dim_keys)
-            push!(value_vec, value)
-          else
-            key_value = (dim_keys_vec, value_vec)
-            $(func_name)(key_value)
-            dim_keys_vec = [dim_keys]
-            value_vec = [value]
-            prefix = curr_prefix
-          end
+            if curr_prefix == prefix
+                push!(dim_keys_vec, dim_keys)
+                push!(value_vec, value)
+            else
+                key_value = (dim_keys_vec, value_vec)
+                $(loop_body_func_call)
+                $(update_accumulator_vars_stmts)
+                dim_keys_vec = [dim_keys]
+                value_vec = [value]
+                prefix = curr_prefix
+            end
         end
     end
 
@@ -469,33 +579,72 @@ function gen_loop_body_batch_function_iter_dims(batch_func_name::Symbol,
                               values::Vector{$iter_space_value_type},
                               dims::Vector{Int64})
         $(batch_loop_stmt)
-    end
+        $(update_global_accumulator_vars_stmts)
+        end
     )
+    for da_sym in accessed_dist_arrays
+        push!(batch_func.args[1].args, da_sym)
+    end
 
+    for var_sym in global_read_only_vars
+        push!(batch_func.args[1].args, var_sym)
+    end
+
+    for var_sym in renamed_accumulator_vars
+        push!(batch_func.args[1].args, var_sym)
+    end
     return batch_func
 end
 
 function gen_prefetch_function(prefetch_func_name::Symbol,
                                iterate_var::Symbol,
-                               prefetch_stmts::Expr)
+                               prefetch_stmts::Expr,
+                               accessed_dist_arrays::Vector{Symbol},
+                               global_read_only_vars::Vector{Symbol},
+                               accumulator_vars::Vector{Symbol})
     prefetch_func = :(
         function $prefetch_func_name($iterate_var,
                                      oriongen_prefetch_point_dict::Dict{Int32, OrionWorker.DistArrayAccessSetRecorder})
             $prefetch_stmts
         end
     )
+
+    for da_sym in accessed_dist_arrays
+        push!(prefetch_func.args[1].args, da_sym)
+    end
+    for var_sym in global_read_only_vars
+        push!(prefetch_func.args[1].args, var_sym)
+    end
+    for var_sym in accumulator_vars
+        push!(prefetch_func.args[1].args, var_sym)
+    end
     return prefetch_func
 end
 
 function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
                                      prefetch_func_name::Symbol,
-                                     iter_space_value_type::DataType)
-        prefetch_batch_func = :(
-            function $prefetch_batch_func_name(keys::Vector{Int64},
-                                               values::Vector{$iter_space_value_type},
-                                               dims::Vector{Int64},
-                                               global_indexed_dist_array_ids::Vector{Int32},
-                                               global_indexed_dist_array_dims::Vector{Vector{Int64}})::Vector{Vector{Int64}}
+                                     iter_space_value_type::DataType,
+                                     accessed_dist_arrays::Vector{Symbol},
+                                     global_read_only_vars::Vector{Symbol},
+                                     accumulator_vars::Vector{Symbol})
+
+    prefetch_func_call = :($(prefetch_func_name)(key_value, prefetch_point_dict))
+    for da_sym in accessed_dist_arrays
+        push!(prefetch_func_call.args, da_sym)
+    end
+    for var_sym in global_read_only_vars
+        push!(prefetch_func_call.args, var_sym)
+    end
+    for var_sym in accumulator_vars
+        push!(prefetch_func_call.args, var_sym)
+    end
+
+    prefetch_batch_func = :(
+        function $prefetch_batch_func_name(keys::Vector{Int64},
+                                           values::Vector{$iter_space_value_type},
+                                           dims::Vector{Int64},
+                                           global_indexed_dist_array_ids::Vector{Int32},
+                                           global_indexed_dist_array_dims::Vector{Vector{Int64}})::Vector{Vector{Int64}}
 
             prefetch_point_dict = Dict{Int32, OrionWorker.DistArrayAccessSetRecorder}()
             for idx in eachindex(global_indexed_dist_array_ids)
@@ -510,7 +659,7 @@ function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
                 dim_keys = OrionWorker.from_int64_to_keys(key, dims)
 
                 key_value = (dim_keys, value)
-                $(prefetch_func_name)(key_value, prefetch_point_dict)
+                $(prefetch_func_call)
             end
 
             prefetch_point_array = Vector{Vector{Int64}}()
@@ -522,6 +671,15 @@ function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
         end
     )
 
+    for da_sym in accessed_dist_arrays
+        push!(prefetch_batch_func.args[1].args, da_sym)
+    end
+    for var_sym in global_read_only_vars
+        push!(prefetch_batch_func.args[1].args, var_sym)
+    end
+    for var_sym in accumulator_vars
+        push!(prefetch_batch_func.args[1].args, var_sym)
+    end
 
     return prefetch_batch_func
 end
@@ -530,8 +688,23 @@ end
 function gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name::Symbol,
                                                prefetch_func_name::Symbol,
                                                iter_space_value_type::DataType,
-                                               iterate_dims_length::Int64)
-        prefetch_batch_func = :(
+                                               iterate_dims_length::Int64,
+                                               accessed_dist_arrays::Vector{Symbol},
+                                               global_read_only_vars::Vector{Symbol},
+                                               accumulator_vars::Vector{Symbol})
+
+    prefetch_func_call = :($(prefetch_func_name)(key_value, prefetch_point_dict))
+    for da_sym in accessed_dist_arrays
+        push!(prefetch_func_call.args, da_sym)
+    end
+    for var_sym in global_read_only_vars
+        push!(prefetch_func_call.args, var_sym)
+    end
+    for var_sym in accumulator_vars
+        push!(prefetch_func_call.args, var_sym)
+    end
+
+    prefetch_batch_func = :(
             function $prefetch_batch_func_name(keys::Vector{Int64},
                                                values::Vector{$iter_space_value_type},
                                                dims::Vector{Int64},
@@ -561,7 +734,7 @@ function gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name::Symbol,
                         push!(value_vec, value)
                     else
                         key_value = (dim_keys_vec, value_vec)
-                        $(prefetch_func_name)(key_value, prefetch_point_dict)
+                        $(prefetch_func_call)
                         dim_keys_vec = [dim_keys]
                         value_vec = [value]
                         prefix = curr_prefix
@@ -577,6 +750,16 @@ function gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name::Symbol,
             return prefetch_point_array
         end
     )
+
+    for da_sym in accessed_dist_arrays
+        push!(prefetch_batch_func.args[1].args, da_sym)
+    end
+    for var_sym in global_read_only_vars
+        push!(prefetch_batch_func.args[1].args, var_sym)
+    end
+    for var_sym in accumulator_vars
+        push!(prefetch_batch_func.args[1].args, var_sym)
+    end
 
     return prefetch_batch_func
 end

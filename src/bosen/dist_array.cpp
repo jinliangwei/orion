@@ -748,7 +748,7 @@ DistArray::GcPartitions() {
   jl_value_t *array_type = nullptr,
           *partition_vec = nullptr;
   JL_GC_PUSH2(&array_type, &partition_vec);
-  array_type = jl_apply_array_type(jl_any_type, 1);
+  array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_any_type), 1);
   partition_vec = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(array_type, gc_partitions_.size()));
   for (size_t i = 0; i < gc_partitions_.size(); i++) {
     auto* gc_partition = gc_partitions_[i];

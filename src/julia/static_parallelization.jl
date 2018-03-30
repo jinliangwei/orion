@@ -188,8 +188,8 @@ function parallelize_naive(iteration_space::Symbol,
                            iteration_var::Symbol,
                            dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
                            buffer_set::Set{Symbol},
-                           inherited_vars_to_mark_global::Set{Symbol},
-                           global_vars_written::Set{Symbol},
+                           global_read_only_vars::Vector{Symbol},
+                           accumulator_vars::Vector{Symbol},
                            loop_body::Expr,
                            is_ordered::Bool,
                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
@@ -208,8 +208,8 @@ function parallelize_naive(iteration_space::Symbol,
                               iteration_var,
                               dist_array_access_dict,
                               buffer_set,
-                              inherited_vars_to_mark_global,
-                              global_vars_written,
+                              global_read_only_vars,
+                              accumulator_vars,
                               loop_body,
                               is_ordered,
                               [partition_dim],
@@ -220,8 +220,8 @@ function parallelize_naive(iteration_space::Symbol,
                               iteration_var,
                               dist_array_access_dict,
                               buffer_set,
-                              inherited_vars_to_mark_global,
-                              global_vars_written,
+                              global_read_only_vars,
+                              accumulator_vars,
                               loop_body,
                               is_ordered,
                               [get(iteration_space_partition_info.partition_dims)[1]],
@@ -232,8 +232,8 @@ function parallelize_naive(iteration_space::Symbol,
                               iteration_var,
                               dist_array_access_dict,
                               buffer_set,
-                              inherited_vars_to_mark_global,
-                              global_vars_written,
+                              global_read_only_vars,
+                              accumulator_vars,
                               loop_body,
                               is_ordered,
                               [get(iteration_space_partition_info.partition_dims)],
@@ -244,8 +244,8 @@ function parallelize_naive(iteration_space::Symbol,
                                       iteration_var,
                                       dist_array_access_dict,
                                       buffer_set,
-                                      inherited_vars_to_mark_global,
-                                      global_vars_written,
+                                      global_read_only_vars,
+                                      accumulator_vars,
                                       loop_body,
                                       is_ordered,
                                       [get(iteration_space_partition_info.partition_dims)...],
@@ -283,8 +283,8 @@ function parallelize_1d(iteration_space::Symbol,
                         iteration_var::Symbol,
                         dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
                         buffer_set::Set{Symbol},
-                        inherited_vars_to_mark_global::Set{Symbol},
-                        global_vars_written::Set{Symbol},
+                        global_read_only_vars::Vector{Symbol},
+                        accumulator_vars::Vector{Symbol},
                         loop_body::Expr,
                         is_ordered::Bool,
                         par_dims::Vector{Int64},
@@ -333,11 +333,17 @@ function parallelize_1d(iteration_space::Symbol,
     end
 
     written_dist_array_id_vec = Vector{Int32}()
+    accessed_dist_array_sym_vec = Vector{Int32}()
+    accessed_dist_array_id_vec = Vector{Int32}()
+
     for (da_sym, da_access_vec) in dist_array_access_dict
         push!(accessed_da_syms, da_sym)
+        push!(accessed_dist_array_sym_vec, da_sym)
+        push!(accessed_dist_array_id_vec, eval(current_module(), da_sym).id)
+
         for da_access in da_access_vec
             if !da_access.is_read
-                push!(written_dist_array_id_vec, eval(current_module(), iteration_space).id)
+                push!(written_dist_array_id_vec, eval(current_module(), da_sym).id)
                 break
             end
         end
@@ -390,18 +396,26 @@ function parallelize_1d(iteration_space::Symbol,
                                             loop_body,
                                             iteration_space,
                                             iteration_var,
-                                            inherited_vars_to_mark_global,
+                                            accessed_dist_array_sym_vec,
+                                            global_read_only_vars,
+                                            accumulator_vars,
                                             ssa_defs)
     iter_space_value_type = dist_array_get_value_type(iteration_space_dist_array)
     if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
         loop_batch_func = gen_loop_body_batch_function(loop_batch_func_name,
                                                        loop_body_func_name,
-                                                       iter_space_value_type)
+                                                       iter_space_value_type,
+                                                       accessed_dist_array_sym_vec,
+                                                       global_read_only_vars,
+                                                       accumulator_vars)
     else
         loop_batch_func = gen_loop_body_batch_function_iter_dims(loop_batch_func_name,
                                                                  loop_body_func_name,
                                                                  iter_space_value_type,
-                                                                 length(get(iteration_space_dist_array.iterate_dims)))
+                                                                 length(get(iteration_space_dist_array.iterate_dims)),
+                                                                 accessed_dist_array_sym_vec,
+                                                                 global_read_only_vars,
+                                                                 accumulator_vars)
     end
     println("generate prefetch_function")
     prefetch_func = nothing
@@ -410,26 +424,36 @@ function parallelize_1d(iteration_space::Symbol,
     if !isempty(global_indexed_dist_array_sym_set)
        prefetch_stmts = get_prefetch_stmts(flow_graph,
                                            global_indexed_dist_array_sym_set,
-                                           ssa_defs,
-                                           global_vars_written)
+                                           ssa_defs)
         if prefetch_stmts != nothing
             prefetch = true
             prefetch_func_name = gen_unique_symbol()
             prefetch_batch_func_name = gen_unique_symbol()
             prefetch_func = gen_prefetch_function(prefetch_func_name,
                                                   iteration_var,
-                                                  prefetch_stmts)
+                                                  prefetch_stmts,
+                                                  accessed_dist_array_sym_vec,
+                                                  global_read_only_vars,
+                                                  accumulator_vars)
+            println(prefetch_func)
             prefetch_func.args[2] = remap_ssa_vars(prefetch_func.args[2], ssa_defs)
             if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
                 prefetch_batch_func = gen_prefetch_batch_function(prefetch_batch_func_name,
                                                                   prefetch_func_name,
-                                                                  iter_space_value_type)
+                                                                  iter_space_value_type,
+                                                                  accessed_dist_array_sym_vec,
+                                                                  global_read_only_vars,
+                                                                  accumulator_vars)
             else
                 prefetch_batch_func = gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name,
                                                                             prefetch_func_name,
                                                                             iter_space_value_type,
-                                                                            length(get(iteration_space_dist_array.iterate_dims)))
+                                                                            length(get(iteration_space_dist_array.iterate_dims)),
+                                                                            accessed_dist_array_sym_vec,
+                                                                            global_read_only_vars,
+                                                                            accumulator_vars)
             end
+            println(prefetch_func)
         end
     end
 
@@ -458,6 +482,9 @@ function parallelize_1d(iteration_space::Symbol,
                                            $(global_indexed_dist_array_id_vec),
                                            $(dist_array_buffer_id_vec),
                                            $(written_dist_array_id_vec),
+                                           $(accessed_dist_array_ids),
+                                           $(global_read_only_vars),
+                                           $(accumulator_vars),
                                            $loop_batch_func_name_str,
                                            $prefetch_batch_func_name_str,
                                            $(is_ordered)))
@@ -469,8 +496,8 @@ function parallelize_2d(iteration_space::Symbol,
                         iteration_var::Symbol,
                         dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
                         buffer_set::Set{Symbol},
-                        inherited_vars_to_mark_global::Set{Symbol},
-                        global_vars_written::Set{Symbol},
+                        global_read_only_vars::Vector{Symbol},
+                        accumulator_vars::Vector{Symbol},
                         loop_body::Expr,
                         is_ordered::Bool,
                         par_dims::Vector{Tuple{Int64, Int64}},
@@ -529,11 +556,16 @@ function parallelize_2d(iteration_space::Symbol,
     time_partitioned_dist_array_id_vec = Vector{Int32}()
 
     written_dist_array_id_vec = Vector{Int32}()
+    accessed_dist_array_sym_vec = Vector{Symbol}()
+    accessed_dist_array_id_vec = Vector{Int32}()
     for (da_sym, da_access_vec) in dist_array_access_dict
         push!(accessed_da_syms, da_sym)
+        push!(accessed_dist_array_sym_vec, da_sym)
+        push!(accessed_dist_array_id_vec, eval(current_module(), da_sym).id)
+
         for da_access in da_access_vec
             if !da_access.is_read
-                push!(written_dist_array_id_vec, eval(current_module(), iteration_space).id)
+                push!(written_dist_array_id_vec, eval(current_module(), da_sym).id)
                 break
             end
         end
@@ -595,45 +627,62 @@ function parallelize_2d(iteration_space::Symbol,
                                             loop_body,
                                             iteration_space,
                                             iteration_var,
-                                            inherited_vars_to_mark_global,
+                                            accessed_dist_array_sym_vec,
+                                            global_read_only_vars,
+                                            accumulator_vars,
                                             ssa_defs)
-
+    println(loop_body_func)
     iter_space_value_type = dist_array_get_value_type(iteration_space_dist_array)
     if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
         loop_batch_func = gen_loop_body_batch_function(loop_batch_func_name,
                                                        loop_body_func_name,
-                                                       iter_space_value_type)
+                                                       iter_space_value_type,
+                                                       accessed_dist_array_sym_vec,
+                                                       global_read_only_vars,
+                                                       accumulator_vars)
     else
         loop_batch_func = gen_loop_body_batch_function_iter_dims(loop_batch_func_name,
                                                                  loop_body_func_name,
                                                                  iter_space_value_type,
-                                                                 length(get(iteration_space_dist_array.iterate_dims)))
+                                                                 length(get(iteration_space_dist_array.iterate_dims)),
+                                                                 accessed_dist_array_sym_vec,
+                                                                 global_read_only_vars,
+                                                                 accumulator_vars)
     end
+    println(loop_batch_func)
 
     prefetch_func = nothing
     prefetch = false
     if !isempty(global_indexed_dist_array_sym_set)
         prefetch_stmts = get_prefetch_stmts(flow_graph,
                                             global_indexed_dist_array_sym_set,
-                                            ssa_defs,
-                                            global_vars_written)
+                                            ssa_defs)
         if prefetch_stmts != nothing
             prefetch = true
             prefetch_func_name = gen_unique_symbol()
             prefetch_batch_func_name = gen_unique_symbol()
             prefetch_func = gen_prefetch_function(prefetch_func_name,
                                                   iteration_var,
-                                                  prefetch_stmts)
+                                                  prefetch_stmts,
+                                                  accessed_dist_array_sym_vec,
+                                                  global_read_only_vars,
+                                                  accumulator_vars)
             prefetch_func.args[2] = remap_ssa_vars(prefetch_func.args[2], ssa_defs)
             if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
                 prefetch_batch_func = gen_prefetch_batch_function(prefetch_batch_func_name,
                                                                   prefetch_func_name,
-                                                                  iter_space_value_type)
+                                                                  iter_space_value_type,
+                                                                  accessed_dist_array_sym_vec,
+                                                                  global_read_only_vars,
+                                                                  accumulator_vars)
             else
                 prefetch_batch_func = gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name,
                                                                             prefetch_func_name,
                                                                             iter_space_value_type,
-                                                                            length(get(iteration_space_dist_array.iterate_dims)))
+                                                                            length(get(iteration_space_dist_array.iterate_dims)),
+                                                                            accessed_dist_array_sym_vec,
+                                                                            global_read_only_vars,
+                                                                            accumulator_vars)
             end
         end
     end
@@ -664,6 +713,9 @@ function parallelize_2d(iteration_space::Symbol,
                                            $(global_indexed_dist_array_id_vec),
                                            $(dist_array_buffer_id_vec),
                                            $(written_dist_array_id_vec),
+                                           $(accessed_dist_array_id_vec),
+                                           $(global_read_only_vars),
+                                           $(accumulator_vars),
                                            $loop_batch_func_name_str,
                                            $prefetch_batch_func_name_str,
                                            $(is_ordered)))
@@ -676,8 +728,8 @@ end
 function parallelize_unimodular(iteration_space::Symbol,
                                 iteration_var::Symbol,
                                 dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
-                                inherited_vars_to_mark_global::Set{Symbol},
-                                global_vars_written::Set{Symbol},
+                                global_read_only_vars::Vector{Symbol},
+                                accumulator_vars::Vector{Symbol},
                                 loop_body::Expr,
                                 is_ordered::Bool,
                                 par_dims::Vector{Int64},
@@ -735,8 +787,8 @@ end
 
 function static_parallelize(iteration_space::Symbol,
                             iteration_var::Symbol,
-                            inherited_vars_to_mark_global::Set{Symbol},
-                            global_vars_written::Set{Symbol},
+                            global_read_only_vars::Vector{Symbol},
+                            accumulator_vars::Vector{Symbol},
                             loop_body::Expr,
                             is_ordered::Bool,
                             ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
@@ -746,7 +798,7 @@ function static_parallelize(iteration_space::Symbol,
     num_dims = length(get(iteration_space_dist_array.iterate_dims))
     println("get_dist_array_access")
     dist_array_access_dict, buffer_set = get_dist_array_access(flow_graph, iteration_var, ssa_defs)
-    println("compute_dependence_vectors")
+
     dep_vecs = compute_dependence_vectors(dist_array_access_dict, is_ordered)
     par_scheme = determine_parallelization_scheme(dep_vecs, num_dims)
 
@@ -756,8 +808,8 @@ function static_parallelize(iteration_space::Symbol,
                                  iteration_var,
                                  dist_array_access_dict,
                                  buffer_set,
-                                 inherited_vars_to_mark_global,
-                                 global_vars_written,
+                                 global_read_only_vars,
+                                 accumulator_vars,
                                  loop_body,
                                  is_ordered,
                                  ssa_defs,
@@ -768,8 +820,8 @@ function static_parallelize(iteration_space::Symbol,
                               iteration_var,
                               dist_array_access_dict,
                               buffer_set,
-                              inherited_vars_to_mark_global,
-                              global_vars_written,
+                              global_read_only_vars,
+                              accumulator_vars,
                               loop_body,
                               is_ordered,
                               par_scheme[2],
@@ -781,8 +833,8 @@ function static_parallelize(iteration_space::Symbol,
                               iteration_var,
                               dist_array_access_dict,
                               buffer_set,
-                              inherited_vars_to_mark_global,
-                              global_vars_written,
+                              global_read_only_vars,
+                              accumulator_vars,
                               loop_body,
                               is_ordered,
                               par_scheme[2],
@@ -794,8 +846,8 @@ function static_parallelize(iteration_space::Symbol,
                                       iteration_var,
                                       dist_array_access_dict,
                                       buffer_set,
-                                      inherited_vars_to_mark_global,
-                                      global_vars_written,
+                                      global_read_only_vars,
+                                      accumulator_vars,
                                       loop_body,
                                       is_ordered,
                                       par_scheme[2],

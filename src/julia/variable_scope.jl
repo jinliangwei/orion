@@ -22,6 +22,8 @@ function add_var!(scope_context::ScopeContext,
     elseif info.is_marked_global
         add_global_var!(scope_context, var, info)
     else
+        println("add_var - add_uncertain_var ", var, " ", info,
+                " ", is_var_defined_in_parent(scope_context, var, info))
         add_uncertain_var!(scope_context, var, info)
     end
 end
@@ -116,9 +118,8 @@ function add_local_var!(scope_context::ScopeContext,
     end
 end
 
-function get_vars_to_broadcast(scope_context::ScopeContext)::Set{Symbol}
-    bc_vars = Set{Symbol}()
-    accumulator_vars = Set{Symbol}()
+function get_global_read_only_vars(scope_context::ScopeContext)::Vector{Symbol}
+    var_vec = Vector{Symbol}()
     for (var, info) in scope_context.inherited_var
         if !isdefined(current_module(), var) ||
             isa(eval(current_module(), var), AbstractDistArray) ||
@@ -127,10 +128,20 @@ function get_vars_to_broadcast(scope_context::ScopeContext)::Set{Symbol}
         end
 
         if var in keys(scope_context.inherited_var)
-            push!(bc_vars, var)
+            push!(var_vec, var)
         end
     end
-    return bc_vars
+    return var_vec
+end
+
+function get_accumulator_vars(scope_context::ScopeContext)::Vector{Symbol}
+    var_vec = Vector{Symbol}()
+    for (var, info) in scope_context.inherited_var
+        if var in keys(accumulator_info_dict)
+            push!(var_vec, var)
+        end
+    end
+    return var_vec
 end
 
 function add_child_scope!(parent::ScopeContext,
@@ -142,6 +153,7 @@ function add_child_scope!(parent::ScopeContext,
             (parent.is_hard_scope && info.is_assigned_to)
             add_local_var!(parent, var, info)
         else
+            println("add_child_scope! - add_uncertain_var ", var, " ", info)
             add_uncertain_var!(parent, var, info)
         end
     end

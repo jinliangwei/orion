@@ -1,68 +1,67 @@
 import Base: linearindexing, size, getindex, setindex!, similar
-abstract DistArrayAccessor{T, N} <: AbstractArray{T, N}
 
-immutable DenseDistArrayAccessor{T, N} <: DistArrayAccessor{T, N}
+abstract type DistArrayAccessor{T, N} <: AbstractArray{T, N}
+end
+
+struct DenseDistArrayAccessor{T, N} <: DistArrayAccessor{T, N}
     key_begin::Int64
     values::Vector{T}
     dims::NTuple{N, Int64}
-    access_buff::Vector{T}
-    DenseDistArrayAccessor(key_begin::Int64,
-                           values::Vector{T},
-                           dims::Vector{Int64}) = new(key_begin,
-                                                      values,
-                                                      tuple(dims...),
-                                                      Vector{T}(dims[1]))
+    DenseDistArrayAccessor{T, N}(key_begin::Int64,
+                                 values::Vector{T},
+                                 dims::Vector{Int64}) where {T, N} = new(key_begin,
+                                                                         values,
+                                                                         tuple(dims...))
 
-    DenseDistArrayAccessor(dims::Vector{Int64}) = new(0,
-                                                      Vector{T}(reduce(*, dims)),
-                                                      tuple(dims...),
-                                                      Vector{T}(dims[1]))
+    DenseDistArrayAccessor{T, N}(dims::Vector{Int64}) where {T, N} = new(0,
+                                                                          Vector{T}(reduce(*, dims)),
+                                                                          tuple(dims...))
 end
 
-immutable SparseDistArrayAccessor{T, N} <: DistArrayAccessor{T, N}
+struct SparseDistArrayAccessor{T, N} <: DistArrayAccessor{T, N}
     key_value::Dict{Int64, T}
     dims::NTuple{N, Int64}
-    SparseDistArrayAccessor(keys::Vector{Int64},
-                            values::Vector{T},
-                            dims::Vector{Int64}) = new(Dict(zip(keys, values)),
-                                                       tuple(dims...))
+    SparseDistArrayAccessor{T, N}(keys::Vector{Int64},
+                                  values::Vector{T},
+                                  dims::Vector{Int64}) where {T, N} = new(Dict(zip(keys, values)),
+                                                                          tuple(dims...))
 
-    SparseDistArrayAccessor(dims::Vector{Int64}) = new(Dict{Int64, T}(),
-                                                       tuple(dims...))
+    SparseDistArrayAccessor{T, N}(dims::Vector{Int64}) where {T, N} = new(Dict{Int64, T}(),
+                                                                          tuple(dims...))
 end
 
-immutable SparseInitDistArrayAccessor{T, N} <: DistArrayAccessor{T, N}
+struct SparseInitDistArrayAccessor{T, N} <: DistArrayAccessor{T, N}
     init_value::T
     key_value::Dict{Int64, T}
     dims::NTuple{N, Int64}
-    SparseInitDistArrayAccessor(init_value::T,
-                                keys::Vector{Int64},
-                                values::Vector{T},
-                                dims::Vector{Int64}) = new(init_value,
-                                                           Dict(zip(keys, values)),
-                                                           tuple(dims...))
+    SparseInitDistArrayAccessor{T, N}(init_value::T,
+                                      keys::Vector{Int64},
+                                      values::Vector{T},
+                                      dims::Vector{Int64}) where {T, N} = new(init_value,
+                                                                              Dict(zip(keys, values)),
+                                                                              tuple(dims...))
 
-    SparseInitDistArrayAccessor(init_value::T,
-                                dims::Vector{Int64}) = new(init_value,
-                                                           Dict{Int64, T}(),
-                                                           tuple(dims...))
+    SparseInitDistArrayAccessor{T, N}(init_value::T,
+                                      dims::Vector{Int64}) where {T, N} = new(init_value,
+                                                                              Dict{Int64, T}(),
+                                                                              tuple(dims...))
 end
 
-immutable DistArrayCacheAccessor{T, N} <: DistArrayAccessor{T, N}
+struct DistArrayCacheAccessor{T, N} <: DistArrayAccessor{T, N}
     dist_array_id::Int32
     key_value::Dict{Int64, T}
     dims::NTuple{N, Int64}
-    DistArrayCacheAccessor(dist_array_id::Int32,
-                           keys::Vector{Int64},
-                           values::Vector{T},
-                           dims::Vector{Int64}) = new(dist_array_id,
-                                                      Dict(zip(keys, values)),
-                                                      tuple(dims...))
+    DistArrayCacheAccessor{T, N}(dist_array_id::Int32,
+                                 keys::Vector{Int64},
+                                 values::Vector{T},
+                                 dims::Vector{Int64}) where {T, N} = new(dist_array_id,
+                                                                         Dict(zip(keys, values)),
+                                                                         tuple(dims...))
 
-    DistArrayCacheAccessor(dist_array_id::Int32,
-                           dims::Vector{Int64}) = new(dist_array_id,
-                                                      Dict{Int64, T}(),
-                                                      tuple(dims...))
+    DistArrayCacheAccessor{T, N}(dist_array_id::Int32,
+                                 dims::Vector{Int64}) where {T, N} = new(dist_array_id,
+                                                                         Dict{Int64, T}(),
+                                                                         tuple(dims...))
 end
 
 function dist_array_cache_fetch(dist_array_id::Int32,
@@ -80,9 +79,7 @@ function dist_array_cache_fetch(dist_array_id::Int32,
           value)
 end
 
-function Base.linearindexing{T<:DistArrayAccessor}(::Type{T})
-    return Base.LinearFast()
-end
+Base.IndexStyle{T<:DistArrayAccessor}(::Type{T}) = IndexLinear()
 
 function Base.size(accessor::DistArrayAccessor)
     return accessor.dims
@@ -100,12 +97,7 @@ end
 
 function Base.similar{T}(accessor::DenseDistArrayAccessor,
                          ::Type{T}, dims::Dims)
-    if dims == size(accessor.access_buff)
-        return accessor.access_buff
-    else
-        return Array{T, N}(dims)
-    end
-
+    return Array{T, length(dims)}(dims)
 end
 
 function getindex(accessor::SparseDistArrayAccessor,

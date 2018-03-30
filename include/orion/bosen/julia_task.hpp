@@ -34,7 +34,9 @@ enum class TaskLabel {
     kCachePrefetchDistArrayValues = 21,
     kUpdateDistArrayIndex = 22,
     kExecForLoopApplyDistArrayCacheData = 23,
-    kExecForLoopApplyDistArrayBufferData = 24
+    kExecForLoopApplyDistArrayBufferData = 24,
+    kExecForLoopInit = 25,
+    kExecForLoopClear = 26
           };
 
 class JuliaTask {

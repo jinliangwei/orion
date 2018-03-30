@@ -1,12 +1,12 @@
 import Base: copy
 
-type VarDef
+mutable struct VarDef
     assignment
     mutation
     VarDef(assigned) = new(assigned, nothing)
 end
 
-type BasicBlock
+mutable struct BasicBlock
     id::Int64
     predecessors::Vector{Any}
     successors::Vector{Tuple{Any, BasicBlock}}
@@ -79,7 +79,7 @@ function copy(bb::BasicBlock)::BasicBlock
     new_bb.stmt_ssa_uses = copy(bb.stmt_ssa_uses)
 end
 
-type FlowGraphContext
+mutable struct FlowGraphContext
     bb_counter::Int64
     FlowGraphContext() = new(0)
 end
@@ -298,7 +298,7 @@ function compute_use_def_expr(stmt, bb::BasicBlock)
                 compute_use_def_expr(assigned_to, bb)
             end
         elseif stmt.head in Set([:call, :invoke, :call1, :foreigncall])
-            if call_get_func_name(stmt) in Set([:+, :-, :*, :/])
+            if call_get_func_name(stmt) in const_func_set
                 for arg in call_get_arguments(stmt)
                     compute_use_def_expr(arg, bb)
                 end
@@ -737,7 +737,7 @@ function compute_ssa_defs_stmt(stmt,
                                                            bb_ssa_defs,
                                                            stmt_ssa_defs)
             end
-            if !(call_get_func_name(stmt) in Set([:+, :-, :*, :/, :(.*), :(./), :dot, :eachindex]))
+            if !(call_get_func_name(stmt) in const_func_set)
                 for idx in eachindex(arguments)
                     arg = arguments[idx]
                     var_mutated = nothing
@@ -1137,8 +1137,7 @@ end
 # and SSA variables that recursively depend on them.
 
 function get_deleted_syms(bb_list::Vector{BasicBlock},
-                          ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
-                          global_vars_written::Set{Symbol})
+                          ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
     syms_deleted = Set{Symbol}()
     for bb in bb_list
         if !(bb.id in keys(bb_dist_array_access_dict))
@@ -1163,19 +1162,12 @@ function get_deleted_syms(bb_list::Vector{BasicBlock},
                 union!(syms_deleted, bb.stmt_ssa_defs[stmt_idx])
             end
         end
-        for (stmt_idx, ssa_defs_set) in bb.stmt_ssa_defs
-            for ssa_sym in ssa_defs_set
-                @assert ssa_sym in keys(ssa_defs)
-                if ssa_defs[ssa_sym][1] in global_vars_written
-                    union!(syms_deleted, ssa_defs_set)
-                end
-            end
-        end
     end
 
     syms_are_deleted = !isempty(syms_deleted)
     while syms_are_deleted
         syms_are_deleted = false
+        new_syms_deleted = copy(syms_deleted)
         for bb in bb_list
             if bb.control_flow == (:if, :else) ||
                 bb.control_flow == :if ||
@@ -1456,11 +1448,10 @@ end
 
 function get_prefetch_stmts(flow_graph::BasicBlock,
                             dist_array_syms::Set{Symbol},
-                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
-                            global_vars_written::Set{Symbol})
+                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
     bb_list = flow_graph_to_list(flow_graph)
 
-    syms_deleted = get_deleted_syms(bb_list, ssa_defs, global_vars_written)
+    syms_deleted = get_deleted_syms(bb_list, ssa_defs)
 
     # The set of symbols to be defined include symbols that are
     # used to define DistArray access subscripts

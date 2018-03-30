@@ -37,35 +37,19 @@ function parallelize_for_loop(loop_stmt::Expr, is_ordered::Bool)
 
     # find variables that need to be broadcast and marked global
     @time scope_context = get_scope_context!(nothing, loop_stmt)
-    bc_vars = get_vars_to_broadcast(scope_context)
+    global_read_only_vars = get_global_read_only_vars(scope_context)
+    accumulator_vars = get_accumulator_vars(scope_context)
+
 
     loop_body = for_get_loop_body(loop_stmt)
     @time (flow_graph, _, ssa_context) = flow_analysis(loop_body)
 
-    inherited_var = scope_context.inherited_var
-    inherited_vars_to_mark_global = Set{Symbol}()
-    global_vars_written = Set{Symbol}()
-    for (var, var_info) in inherited_var
-        println("inherited_var: ", var, " ", var_info)
-        @assert !var_info.is_marked_local
-        if var_info.is_assigned_to &&
-            !var_info.is_marked_global
-            push!(inherited_vars_to_mark_global, var)
-        end
-        if var_info.is_assigned_to &&
-            var_info.is_mutated
-            push!(global_vars_written, var)
-        end
-    end
-
     parallelized_loop = quote end
-    define_dynamic_bc_vars_stmt = :(Orion.define_vars($bc_vars))
-    push!(parallelized_loop.args, define_dynamic_bc_vars_stmt)
     println("before static_parallelize")
     exec_loop_stmts = static_parallelize(iteration_space,
                                          iteration_var,
-                                         inherited_vars_to_mark_global,
-                                         global_vars_written,
+                                         global_read_only_vars,
+                                         accumulator_vars,
                                          loop_body,
                                          is_ordered,
                                          ssa_context.ssa_defs,

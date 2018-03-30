@@ -46,7 +46,7 @@ JuliaThreadRequester::RequestDistArrayData(
     jl_value_t *serialized_value_array_type = nullptr;
     JL_GC_PUSH3(&buff_jl, &serialized_value_array,
                 &serialized_value_array_type);
-    serialized_value_array_type = jl_apply_array_type(jl_uint8_type, 1);
+    serialized_value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
     jl_function_t *io_buffer_func
         = JuliaEvaluator::GetFunction(jl_base_module, "IOBuffer");
     jl_function_t *deserialize_func

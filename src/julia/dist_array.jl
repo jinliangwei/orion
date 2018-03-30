@@ -40,7 +40,7 @@ import Base: size, getindex, setindex!
     4 ForLoopParallelScheme_none =
     5
 
-immutable DistArrayPartitionInfo
+struct DistArrayPartitionInfo
     partition_type::DistArrayPartitionType
     partition_func_name::Nullable{String}
     partition_dims::Nullable{Tuple}
@@ -84,7 +84,7 @@ return partition_a.partition_type == partition_b.partition_type &&
     )
 end
 
-immutable DistArrayMapInfo
+struct DistArrayMapInfo
     parent_id::Nullable{Int32}
     flatten_results::Bool
     map_func_module::Module
@@ -105,14 +105,14 @@ immutable DistArrayMapInfo
                                                   map_func_name)
 end
 
-immutable DistArrayInitInfo
+struct DistArrayInitInfo
     init_type::DistArrayInitType
     random_init_type::DataType
 end
 
-immutable DistArrayPartition{T}
+struct DistArrayPartition{T}
     values::Vector{T}
-    DistArrayPartition() = new(Vector{T}())
+    DistArrayPartition{T}() where {T} = new(Vector{T}())
 end
 
 function dist_array_partition_get_values(partition::DistArrayPartition)::Vector
@@ -124,11 +124,13 @@ function dist_array_partition_set_values(partition::DistArrayPartition,
     partition.values = values
 end
 
-abstract AbstractDistArray{T, N} <: AbstractArray{T, N}
+abstract type AbstractDistArray{T, N} <: AbstractArray{T, N}
+end
 
-abstract DistArray{T, N} <: AbstractDistArray{T, N}
+abstract type DistArray{T, N} <: AbstractDistArray{T, N}
+end
 
-type ValueOnlyDistArray{T} <: DistArray{T, 0}
+mutable struct ValueOnlyDistArray{T} <: DistArray{T, 0}
     id::Int32
     symbol::Nullable{Symbol}
     partitions::Vector{DistArrayPartition{T}}
@@ -141,21 +143,21 @@ type ValueOnlyDistArray{T} <: DistArray{T, 0}
     partition_info::DistArrayPartitionInfo
     target_partition_info::Nullable{DistArrayPartitionInfo}
 
-    ValueOnlyDistArray(id::Integer,
-                       parent_type::DistArrayParentType,
-                       map_type::DistArrayMapType) = new(
-                           id,
-                           Nullable{Symbol}(),
-                           Vector{Vector{T}}(),
-                           false,
-                           parent_type,
-                           Nullable{String}(),
-                           map_type,
-                           Nullable{DistArrayMapInfo}(),
-                           Nullable{DistArrayInitInfo}(),
-                           DistArrayPartitionInfo(DistArrayPartitionType_naive,
-                                                  DistArrayIndexType_none),
-                           Nullable{DistArrayPartitionInfo}())
+    ValueOnlyDistArray{T}(id::Integer,
+                          parent_type::DistArrayParentType,
+                          map_type::DistArrayMapType) where {T} = new(
+                              id,
+                              Nullable{Symbol}(),
+                              Vector{Vector{T}}(),
+                              false,
+                              parent_type,
+                              Nullable{String}(),
+                              map_type,
+                              Nullable{DistArrayMapInfo}(),
+                              Nullable{DistArrayInitInfo}(),
+                              DistArrayPartitionInfo(DistArrayPartitionType_naive,
+                                                     DistArrayIndexType_none),
+                              Nullable{DistArrayPartitionInfo}())
 end
 
 function copy{T}(dist_array::ValueOnlyDistArray{T})::ValueOnlyDistArray{T}
@@ -175,7 +177,7 @@ function copy{T}(dist_array::ValueOnlyDistArray{T})::ValueOnlyDistArray{T}
     return new_dist_array
 end
 
-type DenseDistArray{T, N} <: DistArray{T, N}
+mutable struct DenseDistArray{T, N} <: DistArray{T, N}
     id::Int32
     dims::Vector{Int64}
     symbol::Nullable{Symbol}
@@ -189,55 +191,52 @@ type DenseDistArray{T, N} <: DistArray{T, N}
     partition_info::DistArrayPartitionInfo
     target_partition_info::Nullable{DistArrayPartitionInfo}
     accessor::Nullable{DistArrayAccessor{T, N}}
-    cache_accessor::Nullable{DistArrayCacheAccessor{T, N}}
     iterate_dims::Nullable{Vector{Int64}}
     num_partitions_per_dim::Int64
     init_value::Nullable{T}
 
-    DenseDistArray(id::Integer,
-                   parent_type::DistArrayParentType,
-                   map_type::DistArrayMapType) = new(
-                       id,
-                       Vector{Int64}(N),
-                       Nullable{Symbol}(),
-                       Vector{DistArrayPartition{T}}(),
-                       false,
-                       parent_type,
-                       Nullable{String}(),
-                       map_type,
-                       Nullable{DistArrayMapInfo}(),
-                       Nullable{DistArrayInitInfo}(),
-                       DistArrayPartitionInfo(DistArrayPartitionType_naive,
-                                              DistArrayIndexType_none),
-                       Nullable{DistArrayPartitionInfo}(),
-                       Nullable{DistArrayAccessor{T, N}}(),
-                       Nullable{DistArrayCacheAccessor{T, N}}(),
-                       Nullable{Vector{Int64}}(),
-                       num_executors * 2,
-                       Nullable{T}())
+    DenseDistArray{T, N}(id::Integer,
+                         parent_type::DistArrayParentType,
+                         map_type::DistArrayMapType) where {T, N} = new(
+                             id,
+                             Vector{Int64}(N),
+                             Nullable{Symbol}(),
+                             Vector{DistArrayPartition{T}}(),
+                             false,
+                             parent_type,
+                             Nullable{String}(),
+                             map_type,
+                             Nullable{DistArrayMapInfo}(),
+                             Nullable{DistArrayInitInfo}(),
+                             DistArrayPartitionInfo(DistArrayPartitionType_naive,
+                                                    DistArrayIndexType_none),
+                             Nullable{DistArrayPartitionInfo}(),
+                             Nullable{DistArrayAccessor{T, N}}(),
+                             Nullable{Vector{Int64}}(),
+                             num_executors * 2,
+                             Nullable{T}())
 
-    DenseDistArray(id::Integer,
-                   dims::Vector{Int64},
-                   parent_type::DistArrayParentType,
-                   map_type::DistArrayMapType) = new(
-                       id,
-                       copy(dims),
-                       Nullable{Symbol}(),
-                       Vector{DistArrayPartition{T}}(),
-                       false,
-                       parent_type,
-                       Nullable{String}(),
-                       map_type,
-                       Nullable{DistArrayMapInfo}(),
-                       Nullable{DistArrayInitInfo}(),
-                       DistArrayPartitionInfo(DistArrayPartitionType_naive,
-                                              DistArrayIndexType_none),
-                       Nullable{DistArrayPartitionInfo}(),
-                       Nullable{DistArrayAccessor{T, N}}(),
-                       Nullable{DistArrayCacheAccessor{T, N}}(),
-                       Nullable{Vector{Int64}}(),
-                       num_executors * 2,
-                       Nullable{T}())
+    DenseDistArray{T, N}(id::Integer,
+                         dims::Vector{Int64},
+                         parent_type::DistArrayParentType,
+                         map_type::DistArrayMapType) where {T, N} = new(
+                             id,
+                             copy(dims),
+                             Nullable{Symbol}(),
+                             Vector{DistArrayPartition{T}}(),
+                             false,
+                             parent_type,
+                             Nullable{String}(),
+                             map_type,
+                             Nullable{DistArrayMapInfo}(),
+                             Nullable{DistArrayInitInfo}(),
+                             DistArrayPartitionInfo(DistArrayPartitionType_naive,
+                                                    DistArrayIndexType_none),
+                             Nullable{DistArrayPartitionInfo}(),
+                             Nullable{DistArrayAccessor{T, N}}(),
+                             Nullable{Vector{Int64}}(),
+                             num_executors * 2,
+                             Nullable{T}())
 end
 
 function copy{T, N}(dist_array::DenseDistArray{T, N})::DenseDistArray{T, N}
@@ -257,7 +256,6 @@ function copy{T, N}(dist_array::DenseDistArray{T, N})::DenseDistArray{T, N}
     new_dist_array.partition_info = dist_array.partition_info
     new_dist_array.target_partition_info = dist_array.target_partition_info
     new_dist_array.accessor = dist_array.accessor
-    new_dist_array.cache_accessor = dist_array.cache_accessor
     new_dist_array.iterate_dims = Nullable{Vector{Int64}}(copy(get(dist_array.iterate_dims)))
     new_dist_array.num_partitions_per_dim = dist_array.num_partitions_per_dim
     new_dist_array.init_value = dist_array.init_value
@@ -277,53 +275,50 @@ type SparseDistArray{T, N} <: DistArray{T, N}
     init_info::Nullable{DistArrayInitInfo}
     partition_info::DistArrayPartitionInfo
     target_partition_info::Nullable{DistArrayPartitionInfo}
-    accessor::Nullable{SparseDistArrayAccessor{T, N}}
-    cache_accessor::Nullable{DistArrayCacheAccessor{T, N}}
+    accessor::Nullable{DistArrayAccessor{T, N}}
     iterate_dims::Nullable{Vector{Int64}}
     num_partitions_per_dim::Int64
 
-   SparseDistArray(id::Integer,
-                   parent_type::DistArrayParentType,
-                   map_type::DistArrayMapType) = new(
-                       id,
-                       Vector{Int64}(N),
-                       Nullable{Symbol}(),
-                       Vector{DistArrayPartition{T}}(),
-                       false,
-                       parent_type,
-                       Nullable{String}(),
-                       map_type,
-                       Nullable{DistArrayMapInfo}(),
-                       Nullable{DistArrayInitInfo}(),
-                       DistArrayPartitionInfo(DistArrayPartitionType_naive,
-                                              DistArrayIndexType_none),
-                       Nullable{DistArrayPartitionInfo}(),
-                       Nullable{SparseDistArrayAccessor{T, N}}(),
-                       Nullable{DistArrayCacheAccessor{T, N}}(),
-                       Nullable{Vector{Int64}}(),
-                       num_executors * 2)
+   SparseDistArray{T, N}(id::Integer,
+                         parent_type::DistArrayParentType,
+                         map_type::DistArrayMapType) where {T, N} = new(
+                             id,
+                             Vector{Int64}(N),
+                             Nullable{Symbol}(),
+                             Vector{DistArrayPartition{T}}(),
+                             false,
+                             parent_type,
+                             Nullable{String}(),
+                             map_type,
+                             Nullable{DistArrayMapInfo}(),
+                             Nullable{DistArrayInitInfo}(),
+                             DistArrayPartitionInfo(DistArrayPartitionType_naive,
+                                                    DistArrayIndexType_none),
+                             Nullable{DistArrayPartitionInfo}(),
+                             Nullable{DistArrayAccessor{T, N}}(),
+                             Nullable{Vector{Int64}}(),
+                             num_executors * 2)
 
-    SparseDistArray(id::Integer,
-                    dims::Vector{Int64},
-                    parent_type::DistArrayParentType,
-                    map_type::DistArrayMapType) = new(
-                        id,
-                        copy(dims),
-                        Nullable{Symbol}(),
-                        Vector{DistArrayPartition{T}}(),
-                        false,
-                        parent_type,
-                        Nullable{String}(),
-                        map_type,
-                        Nullable{DistArrayMapInfo}(),
-                        Nullable{DistArrayInitInfo}(),
-                        DistArrayPartitionInfo(DistArrayPartitionType_naive,
-                                               DistArrayIndexType_none),
-                        Nullable{DistArrayPartitionInfo}(),
-                        Nullable{SparseDistArrayAccessor{T, N}}(),
-                        Nullable{DistArrayCacheAccessor{T, N}}(),
-                        Nullable{Vector{Int64}}(),
-                        num_executors * 2)
+    SparseDistArray{T, N}(id::Integer,
+                          dims::Vector{Int64},
+                          parent_type::DistArrayParentType,
+                          map_type::DistArrayMapType) where {T, N} = new(
+                              id,
+                              copy(dims),
+                              Nullable{Symbol}(),
+                              Vector{DistArrayPartition{T}}(),
+                              false,
+                              parent_type,
+                              Nullable{String}(),
+                              map_type,
+                              Nullable{DistArrayMapInfo}(),
+                              Nullable{DistArrayInitInfo}(),
+                              DistArrayPartitionInfo(DistArrayPartitionType_naive,
+                                                     DistArrayIndexType_none),
+                              Nullable{DistArrayPartitionInfo}(),
+                              Nullable{DistArrayAccessor{T, N}}(),
+                              Nullable{Vector{Int64}}(),
+                              num_executors * 2)
 end
 
 function copy{T, N}(dist_array::SparseDistArray{T, N})::SparseDistArray{T, N}
@@ -342,7 +337,6 @@ function copy{T, N}(dist_array::SparseDistArray{T, N})::SparseDistArray{T, N}
     new_dist_array.partition_info = dist_array.partition_info
     new_dist_array.target_partition_info = dist_array.target_partition_info
     new_dist_array.accessor = dist_array.accessor
-    new_dist_array.cache_accessor = dist_array.cache_accessor
     new_dist_array.iterate_dims = Nullable{Vector{Int64}}(copy(get(dist_array.iterate_dims)))
     new_dist_array.num_partitions_per_dim = dist_array.num_partitions_per_dim
     return new_dist_array
@@ -548,7 +542,7 @@ function call_create_dist_array{T, N}(dist_array::DistArray{T, N})
 
     value_type_buff = IOBuffer()
     serialize(value_type_buff, eltype(dist_array))
-    value_type_buff_array = takebuf_array(value_type_buff)
+    value_type_buff_array = take!(value_type_buff)
 
     flatten_results = false
     file_path = ""
@@ -578,7 +572,7 @@ function call_create_dist_array{T, N}(dist_array::DistArray{T, N})
             init_value = get(dist_array.init_value)
             init_value_buff = IOBuffer()
             serialize(init_value_buff, init_value)
-            init_value_buff_array = takebuf_array(init_value_buff)
+            init_value_buff_array = take!(init_value_buff)
         end
     end
 
@@ -904,7 +898,7 @@ function dist_array_set_symbol{T, N}(dist_array::AbstractDistArray{T, N},
                                      symbol)
     buff = IOBuffer()
     serialize(buff, T)
-    buff_array = takebuf_array(buff)
+    buff_array = take!(buff)
     dist_array.symbol = symbol
 end
 
@@ -943,6 +937,16 @@ function from_int64_to_keys(key::Int64, dims::Vector{Int64})::Vector{Int64}
         key = fld(key, dim)
     end
     return dim_keys
+end
+
+function from_int64_to_keys(key::Int64, dims::Vector{Int64}, dim_keys::Vector{Int64})
+    index = 1
+    for dim in dims
+        key_this_dim = key % dim + 1
+        dim_keys[index] = key_this_dim
+        key = fld(key, dim)
+        index += 1
+    end
 end
 
 function from_keys_to_int64(key, dims::Vector{Int64})::Int64
@@ -986,7 +990,8 @@ function create_dist_array_cache_accessor{T, N}(
     dist_array::DistArray{T, N},
     keys::Vector{Int64},
     values::Vector{T})
-    dist_array.cache_accessor = Nullable{DistArrayCacheAccessor{T, N}}(
+    println("create_dist_array_cache_accessor")
+    dist_array.accessor = Nullable{DistArrayCacheAccessor{T, N}}(
         DistArrayCacheAccessor{T, N}(dist_array.id,
                                      keys, values,
                                      dist_array.dims))
@@ -995,14 +1000,11 @@ end
 
 function delete_dist_array_accessor{T, N}(dist_array::DistArray{T, N})
     dist_array.accessor = Nullable{DistArrayAccessor{T, N}}()
-    dist_array.cache_accessor = Nullable{DistArrayAccessor{T, N}}()
 end
 
 function dist_array_get_accessor_keys_values_vec{T, N}(dist_array::DistArray{T, N})::Tuple{Vector{Int64},
                                                                                            Vector{T}}
-    accessor = isnull(dist_array.cache_accessor) ?
-        get(dist_array.accessor) :
-        get(dist_array.cache_accessor)
+    accessor = get(dist_array.accessor)
     dist_array_accessor_get_keys_values_vec(accessor)
 end
 
@@ -1018,20 +1020,18 @@ end
 
 function Base.getindex(dist_array::DistArray,
                        I...)
-    if !isnull(dist_array.cache_accessor)
-        accessor = get(dist_array.cache_accessor)
-        return getindex(accessor, I...)
-    else
-        accessor = get(dist_array.accessor)
-        return getindex(accessor, I...)
-    end
-
+    accessor = get(dist_array.accessor)
+    return getindex(accessor, I...)
 end
 
 function Base.setindex!(dist_array::DistArray,
                         v, I...)
     accessor = get(dist_array.accessor)
     setindex!(accessor, v, I...)
+end
+
+function dist_array_get_accessor(dist_array::DistArray)
+    return get(dist_array.accessor)
 end
 
 function dist_array_create_and_append_partition{T, N}(dist_array::AbstractDistArray{T, N})::DistArrayPartition{T}
@@ -1056,19 +1056,17 @@ function dist_array_clear_partition(partition::DistArrayPartition)
     resize!(partition.values, 0)
 end
 
-immutable DistArrayAccessSetRecorder{N} <: AbstractArray{Int32, N}
+struct DistArrayAccessSetRecorder{N} <: AbstractArray{Int32, N}
     keys_set::Set{Int64}
     dims::NTuple{N, Int64}
-    DistArrayAccessSetRecorder(dims::Vector{Int64}) = new(Set{Int64}(),
+    DistArrayAccessSetRecorder{N}(dims::Vector{Int64}) where {N} = new(Set{Int64}(),
                                                           tuple(dims...))
 
-    DistArrayAccessSetRecorder(dims::NTuple{N, Int64}) = new(Set{Int64}(),
+    DistArrayAccessSetRecorder{N}(dims::NTuple{N, Int64}) where {N} = new(Set{Int64}(),
                                                              dims)
 end
 
-function Base.linearindexing{T<:DistArrayAccessSetRecorder}(::Type{T})
-    return Base.LinearFast()
-end
+Base.IndexStyle{T<:DistArrayAccessSetRecorder}(::Type{T}) = IndexLinear()
 
 function Base.size(access_recorder::DistArrayAccessSetRecorder)
     return access_recorder.dims
@@ -1091,19 +1089,18 @@ function Base.similar{T, N}(access_recorder::DistArrayAccessSetRecorder{N},
     return DistArrayAccessSetRecorder{N}(dims)
 end
 
-immutable DistArrayAccessCountRecorder{N} <: AbstractArray{Int32, N}
+struct DistArrayAccessCountRecorder{N} <: AbstractArray{Int32, N}
     keys_dict::Dict{Int64, UInt64}
     dims::NTuple{N, Int64}
-    DistArrayAccessCountRecorder(dims::Vector{Int64}) = new(Dict{Int64, UInt64}(),
+    DistArrayAccessCountRecorder{N}(dims::Vector{Int64}) where {N} = new(Dict{Int64, UInt64}(),
                                                             tuple(dims...))
 
-    DistArrayAccessCountRecorder(dims::NTuple{N, Int64}) = new(Dict{Int64, UInt64}(),
+    DistArrayAccessCountRecorder{N}(dims::NTuple{N, Int64}) where {N} = new(Dict{Int64, UInt64}(),
                                                                dims)
 end
 
-function Base.linearindexing{T<:DistArrayAccessCountRecorder}(::Type{T})
-    return Base.LinearFast()
-end
+Base.IndexStyle(::Type{DistArrayAccessCountRecorder}) = IndexLinear()
+
 
 function Base.size(access_recorder::DistArrayAccessCountRecorder)
     return access_recorder.dims

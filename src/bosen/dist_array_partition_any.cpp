@@ -50,7 +50,7 @@ DistArrayPartition<void>::CreateAccessor() {
     jl_call3(create_accessor_func, dist_array_jl, key_begin_jl,
              values_array_jl_);
   } else {
-    keys_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
+    keys_array_type_jl = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
     keys_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
         keys_array_type_jl,
         keys_.data(), keys_.size(), 0));
@@ -124,7 +124,7 @@ DistArrayPartition<void>::CreateCacheAccessor() {
   const std::string &symbol = dist_array_meta.GetSymbol();
   JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
 
-  keys_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
+  keys_array_type_jl = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
   keys_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       keys_array_type_jl,
       keys_.data(), keys_.size(), 0));
@@ -392,7 +392,7 @@ DistArrayPartition<void>::Sort() {
 
   JuliaEvaluator::GetDistArrayValueType(dist_array_jl_,
                                         reinterpret_cast<jl_datatype_t**>(&value_type));
-  value_array_type = jl_apply_array_type(reinterpret_cast<jl_datatype_t*>(value_type), 1);
+  value_array_type = jl_apply_array_type(value_type, 1);
   new_values_array_jl = reinterpret_cast<jl_value_t*>(
       jl_alloc_array_1d(value_array_type, keys_.size()));
 
@@ -587,7 +587,7 @@ DistArrayPartition<void>::Deserialize(const uint8_t *buffer) {
               &value_jl, &serialized_value_array_type,
               &uint64_jl);
 
-  serialized_value_array_type = jl_apply_array_type(jl_uint8_type, 1);
+  serialized_value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
   jl_function_t *io_buffer_func = JuliaEvaluator::GetFunction(
       jl_base_module, "IOBuffer");
   buff_jl = jl_call0(io_buffer_func);
@@ -636,7 +636,7 @@ DistArrayPartition<void>::DeserializeAndAppend(const uint8_t *buffer) {
   JL_GC_PUSH4(&buff_jl, &serialized_value_array, &value_jl,
               &serialized_value_array_type);
 
-  serialized_value_array_type = jl_apply_array_type(jl_uint8_type, 1);
+  serialized_value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
   jl_function_t *io_buffer_func
       = JuliaEvaluator::GetFunction(jl_base_module, "IOBuffer");
   buff_jl = jl_call0(io_buffer_func);
@@ -681,7 +681,7 @@ DistArrayPartition<void>::DeserializeAndOverwrite(
   JL_GC_PUSH4(&buff_jl, &serialized_value_array, &value_jl,
               &serialized_value_array_type);
 
-  serialized_value_array_type = jl_apply_array_type(jl_uint8_type, 1);
+  serialized_value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
   jl_function_t *io_buffer_func
       = JuliaEvaluator::GetFunction(jl_base_module, "IOBuffer");
   buff_jl = jl_call0(io_buffer_func);
@@ -796,7 +796,7 @@ DistArrayPartition<void>::GetJuliaValueArray(jl_value_t **value) {
 
   JuliaEvaluator::GetDistArrayValueType(dist_array_jl_,
                                         reinterpret_cast<jl_datatype_t**>(&value_type));
-  value_array_type = jl_apply_array_type(reinterpret_cast<jl_datatype_t*>(value_type), 1);
+  value_array_type = jl_apply_array_type(value_type, 1);
 
   *value = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(value_array_type,
                                                            jl_array_len(values_array_jl_)));

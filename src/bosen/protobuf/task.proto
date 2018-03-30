@@ -66,9 +66,12 @@ message ExecForLoop {
   repeated int32 global_indexed_dist_array_ids = 5;
   repeated int32 dist_array_buffer_ids = 6;
   repeated int32 written_dist_array_ids = 7;
-  required string loop_batch_func_name = 8;
-  optional string prefetch_batch_func_name = 9;
-  required bool is_ordered = 10;
+  repeated int32 accessed_dist_array_ids = 8;
+  repeated bytes global_read_only_var_vals = 9;
+  repeated string accumulator_var_syms = 10;
+  required string loop_batch_func_name = 11;
+  optional string prefetch_batch_func_name = 12;
+  required bool is_ordered = 13;
 }
 
 message GetAccumulatorValue {

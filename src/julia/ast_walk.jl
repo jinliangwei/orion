@@ -5,17 +5,17 @@ DebugMsg.init()
 # debug messages set below this level will be printed
 set_debug_level(3)
 
-abstract AST_WALK_DIDNT_MODIFY
+abstract type AST_WALK_DIDNT_MODIFY end
 
-immutable AST_WALK_RECURSE <: AST_WALK_DIDNT_MODIFY
+struct AST_WALK_RECURSE <: AST_WALK_DIDNT_MODIFY
 end
 
-immutable AST_WALK_RECURSE_DUPLICATE <: AST_WALK_DIDNT_MODIFY
+struct AST_WALK_RECURSE_DUPLICATE <: AST_WALK_DIDNT_MODIFY
 end
 
 # Return this node to indicate that AstWalk should remove the current node from
 # the container in which it resides.
-immutable AST_WALK_REMOVE
+struct AST_WALK_REMOVE
 end
 
 export AstWalk, AST_WALK_RECURSE, AST_WALK_REMOVE, AST_WALK_RECURSE_DUPLICATE

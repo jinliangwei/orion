@@ -31,8 +31,7 @@ DistArrayPartition<std::string>::CreateAccessor() {
   JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
   bool is_dense = dist_array_meta.IsDense() && dist_array_meta.IsContiguousPartitions();
   value_type_jl = reinterpret_cast<jl_value_t*>(type::GetJlDataType(kValueType));
-  values_array_type_jl = jl_apply_array_type(
-      reinterpret_cast<jl_datatype_t*>(value_type_jl), 1);
+  values_array_type_jl = jl_apply_array_type(value_type_jl, 1);
   values_array_jl = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(
       values_array_type_jl, values_.size()));
   size_t i = 0;
@@ -50,7 +49,7 @@ DistArrayPartition<std::string>::CreateAccessor() {
     jl_call3(create_accessor_func, dist_array_jl, key_begin_jl,
              values_array_jl);
   } else {
-    keys_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
+    keys_array_type_jl = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
     keys_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
         keys_array_type_jl,
         keys_.data(), keys_.size(), 0));
@@ -135,8 +134,7 @@ DistArrayPartition<std::string>::CreateCacheAccessor() {
   JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
 
   value_type_jl = reinterpret_cast<jl_value_t*>(type::GetJlDataType(kValueType));
-  values_array_type_jl = jl_apply_array_type(
-      reinterpret_cast<jl_datatype_t*>(value_type_jl), 1);
+  values_array_type_jl = jl_apply_array_type(value_type_jl, 1);
   values_array_jl = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(
       values_array_type_jl, values_.size()));
   size_t i = 0;
@@ -145,7 +143,7 @@ DistArrayPartition<std::string>::CreateCacheAccessor() {
     jl_arrayset(reinterpret_cast<jl_array_t*>(values_array_jl), string_jl, i);
     i++;
   }
-  keys_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
+  keys_array_type_jl = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
   keys_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       keys_array_type_jl,
       keys_.data(), keys_.size(), 0));
@@ -631,7 +629,7 @@ DistArrayPartition<std::string>::GetJuliaValueArray(jl_value_t **value) {
   jl_value_t* string_jl = nullptr;
   JL_GC_PUSH2(&value_array_type, &string_jl);
 
-  value_array_type = jl_apply_array_type(jl_string_type, 1);
+  value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_string_type), 1);
   *value = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(value_array_type, values_.size()));
   for (size_t i = 0; i < values_.size(); i++) {
     string_jl = jl_cstr_to_string(values_[i].c_str());

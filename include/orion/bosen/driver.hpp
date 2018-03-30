@@ -114,7 +114,7 @@ class Driver {
     event_handler_.SetClosedConnectionHandler(
       std::bind(&Driver::HandleClosedConnection, this,
                std::placeholders::_1));
-    jl_init(NULL);
+    jl_init();
   }
   ~Driver() { }
 
@@ -194,6 +194,11 @@ class Driver {
       size_t num_dist_array_buffers,
       const int32_t *written_dist_array_ids,
       size_t num_written_dist_array_ids,
+      const int32_t *accessed_dist_array_ids,
+      size_t num_accessed_dist_arrays,
+      jl_value_t *global_read_only_var_vals,
+      const char **accumulator_var_syms,
+      size_t num_accumulator_var_syms,
       const char* loop_batch_func_name,
       const char *prefetch_batch_func_name,
       bool is_ordered);
@@ -325,11 +330,11 @@ Driver::EvalExprOnAll(
       master_recv_temp_buff_);
 
   jl_value_t *result_array = nullptr;
-  jl_value_t *result_array_type = jl_apply_array_type(jl_any_type, 1);
+  jl_value_t *result_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_any_type), 1);
 
   if (msg->result_bytes > 0) {
     uint8_t *cursor = result_buff_.GetBytes();
-    jl_value_t *bytes_array_type = jl_apply_array_type(jl_uint8_type, 1);
+    jl_value_t *bytes_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
 
     jl_function_t *io_buffer_func
         = GetFunction(jl_base_module, "IOBuffer");
@@ -665,6 +670,11 @@ Driver::ExecForLoop(
     size_t num_dist_array_buffers,
     const int32_t *written_dist_array_ids,
     size_t num_written_dist_array_ids,
+    const int32_t *accessed_dist_array_ids,
+    size_t num_accessed_dist_arrays,
+    jl_value_t *global_read_only_var_vals,
+    const char **accumulator_var_syms,
+    size_t num_accumulator_var_syms,
     const char *loop_batch_func_name,
     const char *prefetch_batch_func_name,
     bool is_ordered) {
@@ -693,6 +703,25 @@ Driver::ExecForLoop(
   for (size_t i = 0; i < num_dist_array_buffers; i++) {
     exec_for_loop_task.add_written_dist_array_ids(
         written_dist_array_ids[i]);
+  }
+
+  LOG(INFO) << "num_accessed_dist_arrays = " << num_accessed_dist_arrays;
+  for (size_t i = 0; i < num_accessed_dist_arrays; i++) {
+    exec_for_loop_task.add_accessed_dist_array_ids(accessed_dist_array_ids[i]);
+  }
+
+  size_t num_global_read_only_var_vals = jl_array_len(global_read_only_var_vals);
+  for (size_t i = 0; i < num_global_read_only_var_vals; i++) {
+    jl_value_t *var_val = jl_arrayref(reinterpret_cast<jl_array_t*>(global_read_only_var_vals), i);
+    const uint8_t* val_bytes = reinterpret_cast<uint8_t*>(jl_array_data(var_val));
+    size_t num_bytes = jl_array_len(var_val);
+    exec_for_loop_task.add_global_read_only_var_vals(val_bytes, num_bytes);
+  }
+
+  LOG(INFO) << "num_accumulator_var_syms = " << num_accumulator_var_syms;
+  for (size_t i = 0; i < num_accumulator_var_syms; i++) {
+    exec_for_loop_task.add_accumulator_var_syms(accumulator_var_syms[i]);
+    LOG(INFO) << "accumulator_sym = " << accumulator_var_syms[i];
   }
 
   exec_for_loop_task.set_loop_batch_func_name(loop_batch_func_name);
@@ -740,7 +769,7 @@ Driver::GetAccumulatorValue(
   CHECK_GE(result_size, 0);
 
   uint8_t *cursor = result_buff_.GetBytes();
-  jl_value_t *bytes_array_type = jl_apply_array_type(jl_uint8_type, 1);
+  jl_value_t *bytes_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
 
   jl_function_t *io_buffer_func
       = GetFunction(jl_base_module, "IOBuffer");

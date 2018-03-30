@@ -88,6 +88,11 @@ extern "C" {
       size_t num_dist_array_buffers,
       const int32_t *written_dist_array_ids,
       size_t num_written_dist_array_ids,
+      const int32_t *accessed_dist_array_ids,
+      size_t num_accessed_dist_arrays,
+      jl_value_t *global_read_only_var_vals,
+      const char **accumulator_var_syms,
+      size_t num_accumulator_var_syms,
       const char *loop_batch_func_name,
       const char *prefetch_batch_func_name,
       bool is_ordered);

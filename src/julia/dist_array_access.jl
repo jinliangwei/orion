@@ -26,7 +26,7 @@ function get_dist_array_access_visit(expr,
     ssa_defs = context.ssa_defs
     if isa(expr, Expr)
         head = expr.head
-        if head in Set([:(=), :(+=), :(-=), :(.*=), :(./=)])
+        if head in Set([:(=), :(.=), :(+=), :(-=), :(.*=), :(./=)])
             assigned_to = assignment_get_assigned_to(expr)
             if is_ref(assigned_to)
                 referenced_var = ref_get_referenced_var(assigned_to)
@@ -52,7 +52,8 @@ function get_dist_array_access_visit(expr,
                             context.stmt_access_dict[referenced_var] = Vector{DistArrayAccess}()
                         end
                         push!(context.stmt_access_dict[referenced_var], da_access)
-                        if head != :(=)
+                        if head != :(=) &&
+                            head != :(.=)
                             da_access = copy(da_access)
                             da_access.is_read = true
                             push!(context.access_dict[referenced_var], da_access)

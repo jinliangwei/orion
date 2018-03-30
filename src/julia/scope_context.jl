@@ -1,6 +1,6 @@
 import Base.print, Base.string
 
-type VarInfo
+mutable struct VarInfo
     is_assigned_to::Bool
     is_mutated::Bool
     is_marked_local::Bool
@@ -25,14 +25,14 @@ end
     2 DistArrayAccessSubscript_value_unknown =
     3
 
-type DistArrayAccessSubscript
+mutable struct DistArrayAccessSubscript
     expr
     value_type
     loop_index_dim
     offset
 end
 
-type DistArrayAccess
+mutable struct DistArrayAccess
     dist_array::Symbol
     subscripts::Vector{DistArrayAccessSubscript}
     is_read::Bool
@@ -42,14 +42,14 @@ type DistArrayAccess
             is_read)
 end
 
-type AccumulatorInfo
+mutable struct AccumulatorInfo
     sym::Symbol
     init_value
 end
 
 accumulator_info_dict = Dict{Symbol, AccumulatorInfo}()
 
-type ScopeContext
+mutable struct ScopeContext
     parent_scope
     is_hard_scope::Bool
     inherited_var::Dict{Symbol, VarInfo}

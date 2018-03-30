@@ -16,6 +16,12 @@ ExecForLoop1D::ExecForLoop1D(
       size_t num_dist_array_buffers,
       const int32_t *written_dist_array_ids,
       size_t num_written_dist_array_ids,
+      const int32_t *accessed_dist_array_ids,
+      size_t num_accessed_dist_arrays,
+      const std::string * const *global_read_only_var_vals,
+      size_t num_global_read_only_var_vals,
+      const std::string * const *accumulator_var_syms,
+      size_t num_accumulator_var_syms,
       const char* loop_batch_func_name,
       const char *prefetch_batch_func_name,
       std::unordered_map<int32_t, DistArray> *dist_arrays,
@@ -35,6 +41,12 @@ ExecForLoop1D::ExecForLoop1D(
         num_dist_array_buffers,
         written_dist_array_ids,
         num_written_dist_array_ids,
+        accessed_dist_array_ids,
+        num_accessed_dist_arrays,
+        global_read_only_var_vals,
+        num_global_read_only_var_vals,
+        accumulator_var_syms,
+        num_accumulator_var_syms,
         loop_batch_func_name,
         prefetch_batch_func_name,
         dist_arrays,
@@ -122,6 +134,7 @@ ExecForLoop1D::ClearCurrPartition() {
     LOG(INFO) << "cleared dist_array buffer " << buffer_pair.first;
   }
   curr_partition_prepared_ = false;
+  dist_array_cache_prepared_ = false;
   prefetch_status_ = PrefetchStatus::kNotPrefetched;
 }
 

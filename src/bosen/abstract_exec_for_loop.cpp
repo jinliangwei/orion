@@ -1,4 +1,6 @@
 #include <orion/bosen/abstract_exec_for_loop.hpp>
+#include <orion/bosen/julia_evaluator.hpp>
+#include <orion/bosen/julia_module.hpp>
 #include <vector>
 #include <memory>
 namespace orion {
@@ -19,6 +21,12 @@ AbstractExecForLoop::AbstractExecForLoop(
     size_t num_dist_array_buffers,
     const int32_t *written_dist_array_ids,
     size_t num_written_dist_array_ids,
+    const int32_t *accessed_dist_array_ids,
+    size_t num_accessed_dist_arrays,
+    const std::string * const *global_read_only_var_vals,
+    size_t num_global_read_only_var_vals,
+    const std::string * const *accumulator_var_syms,
+    size_t num_accumulator_var_syms,
     const char* loop_batch_func_name,
     const char *prefetch_batch_func_name,
     std::unordered_map<int32_t, DistArray> *dist_arrays,
@@ -68,9 +76,87 @@ AbstractExecForLoop::AbstractExecForLoop(
   for (size_t i = 0; i < num_written_dist_array_ids; i++) {
     written_dist_array_ids_.emplace(written_dist_array_ids[i]);
   }
+
+  for (size_t i = 0; i < num_accessed_dist_arrays; i++) {
+    int32_t dist_array_id = accessed_dist_array_ids[i];
+    auto iter = dist_arrays->find(dist_array_id);
+    CHECK(iter != dist_arrays->end());
+    auto *dist_array_ptr = &(iter->second);
+    accessed_dist_array_syms_.emplace_back(dist_array_ptr->GetMeta().GetSymbol());
+  }
+
+  for (size_t i = 0; i < num_global_read_only_var_vals; i++) {
+    global_read_only_var_vals_.emplace_back(*global_read_only_var_vals[i]);
+  }
+
+  for (size_t i = 0; i < num_accumulator_var_syms; i++) {
+    accumulator_var_syms_.emplace_back(*accumulator_var_syms[i]);
+  }
 }
 
 AbstractExecForLoop::~AbstractExecForLoop() { }
+
+void
+AbstractExecForLoop::Init() {
+  jl_value_t *num_global_read_only_var_vals_jl = nullptr;
+  jl_value_t *index_jl = nullptr;
+  jl_value_t *serialized_value_array = nullptr;
+  jl_value_t *serialized_value_array_type = nullptr;
+
+  JL_GC_PUSH4(&num_global_read_only_var_vals_jl,
+              &index_jl,
+              &serialized_value_array,
+              &serialized_value_array_type);
+
+  accessed_dist_arrays_.resize(accessed_dist_array_syms_.size());
+  jl_value_t *dist_array = nullptr;
+  for (size_t i = 0; i < accessed_dist_array_syms_.size(); i++) {
+    JuliaEvaluator::GetDistArray(accessed_dist_array_syms_[i], &dist_array);
+    accessed_dist_arrays_[i] = dist_array;
+  }
+
+  size_t num_global_read_only_var_vals = global_read_only_var_vals_.size();
+  global_read_only_var_jl_vals_.resize(num_global_read_only_var_vals);
+
+  jl_module_t *orion_worker_module = GetJlModule(JuliaModule::kOrionWorker);
+  jl_function_t *resize_global_read_only_var_buff_func
+      = JuliaEvaluator::GetFunction(orion_worker_module,
+                                    "resize_global_read_only_var_buff");
+  jl_function_t *deserialize_func
+      = JuliaEvaluator::GetFunction(orion_worker_module,
+                                    "global_read_only_var_buff_deserialize_and_set");
+  num_global_read_only_var_vals_jl = jl_box_uint64(
+      num_global_read_only_var_vals);
+  jl_call1(resize_global_read_only_var_buff_func,
+           num_global_read_only_var_vals_jl);
+  serialized_value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
+  for (size_t i = 0; i < global_read_only_var_vals_.size(); i++) {
+    const std::string &var_val = global_read_only_var_vals_[i];
+    std::vector<uint8_t> temp_var(var_val.size());
+    memcpy(temp_var.data(), var_val.data(), var_val.size());
+    index_jl = jl_box_uint64(i + 1);
+    serialized_value_array = reinterpret_cast<jl_value_t*>(
+        jl_ptr_to_array_1d(serialized_value_array_type,
+                           temp_var.data(),
+                           temp_var.size(), 0));
+    jl_value_t *value_jl = jl_call2(deserialize_func,
+                                    index_jl,
+                                    serialized_value_array);
+    global_read_only_var_jl_vals_[i] = value_jl;
+  }
+  JuliaEvaluator::AbortIfException();
+  JL_GC_POP();
+}
+
+void
+AbstractExecForLoop::Clear() {
+  jl_module_t *orion_worker_module = GetJlModule(JuliaModule::kOrionWorker);
+  jl_function_t *clear_func = JuliaEvaluator::GetFunction(
+      orion_worker_module,
+      "clear_global_read_only_var_buff");
+  jl_call0(clear_func);
+  JuliaEvaluator::AbortIfException();
+}
 
 void
 AbstractExecForLoop::SentAllPrefetchRequests() {
@@ -111,13 +197,20 @@ AbstractExecForLoop::ComputePrefetchIndinces() {
       kPrefetchBatchFuncName,
       dist_array_ids_vec,
       global_indexed_dist_arrays_,
+      accessed_dist_arrays_,
+      global_read_only_var_jl_vals_,
+      accumulator_var_syms_,
       &point_prefetch_dist_array_map_);
 }
 
 void
 AbstractExecForLoop::ExecuteForLoopPartition() {
   PrepareToExecCurrPartition();
-  curr_partition_->Execute(kLoopBatchFuncName);
+  PrepareDistArrayCachePartitions();
+  curr_partition_->Execute(kLoopBatchFuncName,
+                           accessed_dist_arrays_,
+                           global_read_only_var_jl_vals_,
+                           accumulator_var_syms_);
   ClearCurrPartition();
 }
 
@@ -402,6 +495,7 @@ AbstractExecForLoop::CachePrefetchDistArrayValues(
     cursor += sizeof(size_t);
     for (size_t j = 0; j < num_dist_arrays; j++) {
       int32_t dist_array_id = *reinterpret_cast<const int32_t*>(cursor);
+      LOG(INFO) << __func__ << " dist_array_id = " << dist_array_id;
       cursor += sizeof(int32_t);
       auto iter = dist_array_cache_.find(dist_array_id);
       CHECK(iter != dist_array_cache_.end()) << " dist_array_id = " << dist_array_id;
@@ -412,14 +506,21 @@ AbstractExecForLoop::CachePrefetchDistArrayValues(
   }
   delete[] buff_vec;
   num_pending_prefetch_requests_ -= num_buffs;
+
   if (num_pending_prefetch_requests_ == 0) {
     prefetch_status_ = PrefetchStatus::kPrefetchRecved;
-    for (auto& dist_array_pair : global_indexed_dist_arrays_) {
-      auto dist_array_id = dist_array_pair.first;
-      auto *cache_partition = dist_array_cache_.at(dist_array_id).get();
-      cache_partition->CreateCacheAccessor();
-    }
   }
+}
+
+void
+AbstractExecForLoop::PrepareDistArrayCachePartitions() {
+  if (dist_array_cache_prepared_) return;
+  for (auto& dist_array_pair : global_indexed_dist_arrays_) {
+    auto dist_array_id = dist_array_pair.first;
+    auto *cache_partition = dist_array_cache_.at(dist_array_id).get();
+    cache_partition->CreateCacheAccessor();
+  }
+  dist_array_cache_prepared_ = true;
 }
 
 }

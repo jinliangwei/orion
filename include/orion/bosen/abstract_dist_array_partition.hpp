@@ -70,10 +70,16 @@ class AbstractDistArrayPartition {
   // execute computation
   void Init(int64_t key_begin, size_t num_elements);
   void Map(AbstractDistArrayPartition *child_partition);
-  void Execute(const std::string &loop_batch_func_name);
+  void Execute(const std::string &loop_batch_func_name,
+               const std::vector<jl_value_t*> &accessed_dist_arrays,
+               const std::vector<jl_value_t*> &global_read_only_var_vals,
+               const std::vector<std::string> &accumulator_var_syms);
   void ComputePrefetchIndinces(const std::string &prefetch_batch_func_name,
                                const std::vector<int32_t> &dist_array_ids_vec,
                                const std::unordered_map<int32_t, DistArray*> &global_indexed_dist_arrays,
+                               const std::vector<jl_value_t*> &accessed_dist_arrays,
+                               const std::vector<jl_value_t*> &global_read_only_var_vals,
+                               const std::vector<std::string> &accumulator_var_syms,
                                PointQueryKeyDistArrayMap *point_key_vec_map);
 
   // repartition

@@ -182,6 +182,10 @@ class JuliaEvaluator {
       const std::string &symbol,
       Blob *result_buff);
 
+  static void GetVarJlValue(
+      const std::string &symbol,
+      jl_value_t **value_ptr);
+
   static void SetVarValue(
       const std::string &symbol,
       uint8_t *serialized_value,
@@ -214,6 +218,8 @@ class JuliaEvaluator {
   static void GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *dist_arrays,
                                     const uint8_t *request,
                                     Blob *bytes_buff);
+
+  static jl_value_t* GetDistArrayAccessor(jl_value_t *dist_array);
 };
 
 }

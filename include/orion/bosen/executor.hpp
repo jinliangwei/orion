@@ -284,6 +284,7 @@ class Executor {
   void SendGlobalIndexedDistArrays();
   void SendPipelinedTimePartitions();
   void SendPredCompletion();
+  void ExecForLoopClear();
   void ExecForLoopAck();
   void ServerExecForLoopAck();
   void RequestExecForLoopGlobalIndexedDistArrays();
@@ -718,7 +719,6 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
             event_handler_.SetToReadOnly(&prt_poll_conn_);
           } else {
             CreateExecForLoop();
-            CheckAndExecuteForLoop(false);
           }
           action_ = Action::kNone;
         }
@@ -945,7 +945,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
           exec_cpp_func_task_.label = TaskLabel::kDeserializeDistArrayTimePartitionsPredCompletion;
           julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
         } else {
-          ExecForLoopAck();
+          ExecForLoopClear();
         }
         int event_handler_ret = event_handler_.Remove(&prt_poll_conn_);
         CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
@@ -1197,7 +1197,7 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
             case TaskLabel::kDeserializeDistArrayTimePartitionsPredCompletion:
               {
                 action_ = Action::kNone;
-                ExecForLoopAck();
+                ExecForLoopClear();
               }
               break;
             case TaskLabel::kGetAccumulatorValue:
@@ -1243,6 +1243,18 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
               {
                 action_ = Action::kNone;
                 event_handler_.SetToReadOnly(&prt_poll_conn_);
+              }
+              break;
+            case TaskLabel::kExecForLoopInit:
+              {
+                CheckAndExecuteForLoop(false);
+                action_ = Action::kNone;
+              }
+              break;
+            case TaskLabel::kExecForLoopClear:
+              {
+                ExecForLoopAck();
+                action_ = Action::kNone;
               }
               break;
             default:

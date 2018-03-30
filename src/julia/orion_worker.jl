@@ -16,6 +16,23 @@ function helloworld()
     ccall((:orion_helloworld, lib_path), Void, ())
 end
 
+global_read_only_var_buff = Vector{Any}()
+
+function clear_global_read_only_var_buff()
+    resize!(global_read_only_var_buff, 0)
+end
+
+function resize_global_read_only_var_buff(size::UInt64)
+    resize!(global_read_only_var_buff, size)
+end
+
+function global_read_only_var_buff_deserialize_and_set(index::UInt64, serialized_val::Vector{UInt8})::Any
+    buff = IOBuffer(serialized_val)
+    val = deserialize(buff)
+    global_read_only_var_buff[index] = val
+    return val
+end
+
 end
 
 using OrionWorker

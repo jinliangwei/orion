@@ -13,7 +13,7 @@ void
 JuliaEvaluator::Init(const std::string &orion_home,
                      size_t num_servers,
                      size_t num_executors) {
-  jl_init(NULL);
+  jl_init();
   orion_home_ = orion_home;
   lib_path_ = orion_home + "/lib/liborion.so";
   jl_load((orion_home + "/src/julia/orion_worker.jl").c_str());
@@ -171,14 +171,14 @@ JuliaEvaluator::UnboxValue(jl_value_t* value,
       break;
     case type::PrimitiveType::kFloat32:
       {
-        CHECK(jl_is_float32(value));
+        CHECK(jl_typeis(value, jl_float32_type));
         float ret = jl_unbox_float32(value);
         *reinterpret_cast<float*>(value_buff) = ret;
       }
       break;
     case type::PrimitiveType::kFloat64:
       {
-        CHECK(jl_is_float64(value));
+        CHECK(jl_typeis(value, jl_float64_type));
         double ret = jl_unbox_float64(value);
         *reinterpret_cast<double*>(value_buff) = ret;
       }
@@ -207,7 +207,7 @@ JuliaEvaluator::EvalExpr(const std::string &serialized_expr,
   jl_value_t* &buff = jl_values[5];
   jl_value_t* &serialized_result_array = jl_values[6];
 
-  array_type = jl_apply_array_type(jl_uint8_type, 1);
+  array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
   std::vector<uint8_t> temp_serialized_expr(serialized_expr.size());
   memcpy(temp_serialized_expr.data(), serialized_expr.data(),
          serialized_expr.size());
@@ -239,7 +239,7 @@ JuliaEvaluator::EvalExpr(const std::string &serialized_expr,
   jl_call2(serialize_func, buff, ret);
 
   jl_function_t *takebuff_array_func
-      = GetFunction(jl_base_module, "takebuf_array");
+      = GetFunction(jl_base_module, "take!");
   serialized_result_array = jl_call1(takebuff_array_func, buff);
   size_t result_array_length = jl_array_len(serialized_result_array);
   uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
@@ -348,7 +348,7 @@ JuliaEvaluator::ParseStringFlatten(
   ret_array = jl_call1(parser_func, str_jl);
   CHECK(jl_is_array(ret_array));
 
-  value_array_type = jl_apply_array_type(reinterpret_cast<jl_datatype_t*>(value_type), 1);
+  value_array_type = jl_apply_array_type(value_type, 1);
 
   size_t num_output_values = jl_array_len(ret_array);
   value_array = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(
@@ -437,7 +437,7 @@ JuliaEvaluator::ParseStringWithLineNumberFlatten(
   ret_array = jl_call2(parser_func, line_number_jl, str_jl);
   CHECK(jl_is_array(ret_array));
 
-  value_array_type = jl_apply_array_type(reinterpret_cast<jl_datatype_t*>(value_type), 1);
+  value_array_type = jl_apply_array_type(value_type, 1);
 
   size_t num_output_values = jl_array_len(ret_array);
   value_array = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(
@@ -528,7 +528,7 @@ JuliaEvaluator::DefineDistArray(
   jl_value_t* &init_value_jl = jl_values[11];
   jl_value_t* &id_jl = jl_values[12];
 
-  serialized_value_type_array_type = jl_apply_array_type(jl_uint8_type, 1);
+  serialized_value_type_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
   std::vector<uint8_t> temp_serialized_value_type(serialized_value_type.size());
   memcpy(temp_serialized_value_type.data(),
          serialized_value_type.data(),
@@ -548,7 +548,7 @@ JuliaEvaluator::DefineDistArray(
   AbortIfException();
 
   symbol_jl = jl_cstr_to_string(symbol.c_str());
-  dims_vec_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
+  dims_vec_array_type_jl = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
   std::vector<int64_t> tmp_dims = dims;
   dims_vec_jl = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(dims_vec_array_type_jl,
@@ -649,7 +649,7 @@ JuliaEvaluator::Fill(
   num_values_jl = jl_box_uint64(num_values);
   LOG(INFO) << __func__ << " serialized_init_value size = "
             << serialized_init_value.size();
-  serialized_value_array_type = jl_apply_array_type(jl_uint8_type, 1);
+  serialized_value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
   serialized_value_array = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(serialized_value_array_type,
                          serialized_init_value.data(),
@@ -777,7 +777,7 @@ JuliaEvaluator::RunMap(
   auto temp_parent_dims = parent_dims;
   auto temp_child_dims = child_dims;
 
-  key_array_type = jl_apply_array_type(jl_int64_type, 1);
+  key_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
   parent_dim_array_jl = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(key_array_type, temp_parent_dims.data(), temp_parent_dims.size(), 0));
   child_dim_array_jl = reinterpret_cast<jl_value_t*>(
@@ -830,7 +830,7 @@ JuliaEvaluator::RunMapFixedKeys(
               &dim_array_jl,
               &output_tuple_jl);
   auto temp_parent_dims = parent_dims;
-  key_array_type = jl_apply_array_type(jl_int64_type, 1);
+  key_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
   dim_array_jl = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(key_array_type, temp_parent_dims.data(), temp_parent_dims.size(), 0));
   key_array_jl = reinterpret_cast<jl_value_t*>(
@@ -868,7 +868,7 @@ JuliaEvaluator::RunMapValues(
               &output_tuple_jl,
               &dim_array_jl);
   auto temp_child_dims = child_dims;
-  key_array_type = jl_apply_array_type(jl_int64_type, 1);
+  key_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
   dim_array_jl = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(key_array_type, temp_child_dims.data(), temp_child_dims.size(), 0));
   jl_function_t *mapper_func = GetFunction(
@@ -904,7 +904,7 @@ JuliaEvaluator::RunMapValuesNewKeys(
               &output_key_array_jl,
               &output_tuple_jl);
   auto temp_child_dims = child_dims;
-  key_array_type = jl_apply_array_type(jl_int64_type, 1);
+  key_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
 
   dim_array_jl = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(key_array_type, temp_child_dims.data(), temp_child_dims.size(), 0));
@@ -952,12 +952,25 @@ JuliaEvaluator::GetVarValue(
   jl_call2(serialize_func, buff, value_jl);
 
   jl_function_t *takebuff_array_func
-      = GetFunction(jl_base_module, "takebuf_array");
+      = GetFunction(jl_base_module, "take!");
   serialized_result_array = jl_call1(takebuff_array_func, buff);
   size_t result_array_length = jl_array_len(serialized_result_array);
   uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
   result_buff->resize(result_array_length);
   memcpy(result_buff->data(), array_bytes, result_array_length);
+  JL_GC_POP();
+  AbortIfException();
+}
+
+void
+JuliaEvaluator::GetVarJlValue(
+    const std::string &symbol,
+    jl_value_t **value_ptr) {
+  jl_sym_t *symbol_jl = nullptr;
+  JL_GC_PUSH1(reinterpret_cast<jl_value_t**>(&symbol_jl));
+
+  symbol_jl = jl_symbol(symbol.c_str());
+  *value_ptr = jl_get_global(jl_main_module, symbol_jl);
   JL_GC_POP();
   AbortIfException();
 }
@@ -978,7 +991,7 @@ JuliaEvaluator::SetVarValue(
               &serialized_value_buff,
               &serialized_value_array,
               &serialized_value_array_type);
-  serialized_value_array_type = jl_apply_array_type(jl_uint8_type, 1);
+  serialized_value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
 
   serialized_value_array = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(serialized_value_array_type,
@@ -1015,7 +1028,7 @@ JuliaEvaluator::CombineVarValue(
               *&serialized_value_buff = jl_values[4],
                   *&original_value_jl = jl_values[5],
                        *&new_value_jl = jl_values[6];
-  serialized_value_array_type = jl_apply_array_type(jl_uint8_type, 1);
+  serialized_value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
   serialized_value_array = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(serialized_value_array_type,
                          serialized_value_to_combine,
@@ -1055,7 +1068,7 @@ JuliaEvaluator::SetDistArrayDims(
   dist_array_sym_jl = jl_symbol(dist_array_sym.c_str());
   dist_array_jl = jl_get_global(jl_main_module, dist_array_sym_jl);
 
-  dims_vec_array_type_jl = jl_apply_array_type(jl_int64_type, 1);
+  dims_vec_array_type_jl = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
   dims_vec_jl = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(dims_vec_array_type_jl,
                          temp_dims.data(), temp_dims.size(), 0));
@@ -1157,6 +1170,15 @@ JuliaEvaluator::GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *di
     memcpy(write_cursor, buff.data(), buff.size());
     write_cursor += buff.size();
   }
+}
+
+jl_value_t *
+JuliaEvaluator::GetDistArrayAccessor(jl_value_t *dist_array) {
+  jl_module_t *orion_worker_module = GetJlModule(JuliaModule::kOrionWorker);
+  jl_function_t *get_accessor_func
+      = JuliaEvaluator::GetFunction(orion_worker_module,
+                                    "dist_array_get_accessor");
+  return jl_call1(get_accessor_func, dist_array);
 }
 
 }
