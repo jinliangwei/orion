@@ -2028,9 +2028,6 @@ Executor::DefineJuliaDistArray() {
                           static_cast<type::PrimitiveType>(create_dist_array.random_init_type())
                           : type::PrimitiveType::kVoid;
 
-  LOG(INFO) << "init_type = " << static_cast<int>(init_type)
-            << " random_init_type = " << static_cast<int>(random_init_type);
-
   bool flatten_results = create_dist_array.flatten_results();
   bool is_dense = create_dist_array.is_dense();
   auto symbol = create_dist_array.symbol();

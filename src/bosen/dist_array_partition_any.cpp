@@ -15,7 +15,7 @@ DistArrayPartition<void>::DistArrayPartition(
 
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl_);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl_);
   jl_function_t *create_partition_func = JuliaEvaluator::GetOrionWorkerFunction(
       "dist_array_create_and_append_partition");
   partition_jl_ = jl_call1(create_partition_func, dist_array_jl_);
@@ -40,7 +40,7 @@ DistArrayPartition<void>::CreateAccessor() {
   jl_value_t *dist_array_jl = nullptr;
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
   bool is_dense = dist_array_meta.IsDense() && dist_array_meta.IsContiguousPartitions();
   auto *create_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
       "create_dist_array_accessor");
@@ -75,7 +75,7 @@ DistArrayPartition<void>::ClearAccessor() {
   bool is_dense = dist_array_meta.IsDense() && dist_array_meta.IsContiguousPartitions();
   const std::string &symbol = dist_array_meta.GetSymbol();
   jl_value_t *dist_array_jl = nullptr;
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
 
   if (is_dense) {
     auto *get_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
@@ -122,7 +122,7 @@ DistArrayPartition<void>::CreateCacheAccessor() {
   jl_value_t *dist_array_jl = nullptr;
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
 
   keys_array_type_jl = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
   keys_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
@@ -143,7 +143,7 @@ DistArrayPartition<void>::CreateBufferAccessor() {
   jl_value_t *dist_array_jl = nullptr;
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
   auto *create_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
       "create_dist_array_buffer_accessor");
   jl_call1(create_accessor_func, dist_array_jl);
@@ -161,7 +161,7 @@ DistArrayPartition<void>::ClearCacheAccessor() {
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
   jl_value_t *dist_array_jl = nullptr;
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
 
   auto *get_keys_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
       "dist_array_get_accessor_keys_values_vec");
@@ -198,7 +198,7 @@ DistArrayPartition<void>::ClearBufferAccessor() {
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
   jl_value_t *dist_array_jl = nullptr;
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
 
   bool is_dense = dist_array_meta.IsDense();
   CHECK(dist_array_meta.IsContiguousPartitions());

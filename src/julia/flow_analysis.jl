@@ -344,10 +344,7 @@ function compute_use_def_bb(bb::BasicBlock)
 end
 
 function get_symbols_visit(expr::Any,
-                           symbol_set::Set{Symbol},
-                           top_level::Integer,
-                           is_top_level::Bool,
-                           read::Bool)
+                           symbol_set::Set{Symbol})
     if isa(expr, Symbol)
         push!(symbol_set, expr)
         return expr
@@ -775,10 +772,7 @@ function compute_ssa_defs_stmt(stmt,
 end
 
 function remap_symbols_visit(expr::Any,
-                             symbol_map::Dict{Symbol, Symbol},
-                             top_level::Integer,
-                             is_top_level::Bool,
-                             read::Bool)
+                             symbol_map::Dict{Symbol, Symbol})
 
     if isa(expr, Symbol)
         if expr in keys(symbol_map)
@@ -924,10 +918,7 @@ function compute_stmt_ssa_uses(bb_list::Vector{BasicBlock})
 end
 
 function get_stmt_ssa_defuses_visit(expr::Any,
-                                    stmt_ssa_uses::Set{Symbol},
-                                    top_level::Integer,
-                                    is_top_level::Bool,
-                                    read::Bool)
+                                    stmt_ssa_uses::Set{Symbol})
 
     if isa(expr, Symbol)
         push!(stmt_ssa_uses, expr)
@@ -1222,10 +1213,7 @@ end
 
 
 function remap_ssa_vars_visit(expr::Any,
-                              ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
-                              top_level::Integer,
-                              is_top_level::Bool,
-                              read::Bool)
+                              ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
     if isa(expr, Symbol) &&
         expr in keys(ssa_defs)
         return ssa_defs[expr][1]

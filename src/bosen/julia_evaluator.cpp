@@ -1081,19 +1081,6 @@ JuliaEvaluator::SetDistArrayDims(
 }
 
 void
-JuliaEvaluator::GetDistArray(
-    const std::string &dist_array_sym,
-    jl_value_t** dist_array_ptr) {
-  jl_sym_t *dist_array_sym_jl = nullptr;
-  JL_GC_PUSH1(&dist_array_sym_jl);
-
-  dist_array_sym_jl = jl_symbol(dist_array_sym.c_str());
-  *dist_array_ptr = jl_get_global(jl_main_module, dist_array_sym_jl);
-  JL_GC_POP();
-  AbortIfException();
-}
-
-void
 JuliaEvaluator::GetDistArrayValueType(
     const std::string &dist_array_sym,
     jl_datatype_t **value_type_ptr) {

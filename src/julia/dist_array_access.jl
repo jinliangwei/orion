@@ -19,10 +19,8 @@ end
 bb_dist_array_access_dict = Dict{Int64, Dict{Int64, Dict{Symbol, Vector{DistArrayAccess}}}}()
 
 function get_dist_array_access_visit(expr,
-                                     context::GetDistArrayAccessContext,
-                                     top_level::Integer,
-                                     is_top_level::Bool,
-                                     read::Bool)
+                                     context::GetDistArrayAccessContext)
+
     ssa_defs = context.ssa_defs
     if isa(expr, Expr)
         head = expr.head

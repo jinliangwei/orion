@@ -55,18 +55,21 @@ mutable struct ScopeContext
     inherited_var::Dict{Symbol, VarInfo}
     local_var::Dict{Symbol, VarInfo}
     child_scope::Vector{ScopeContext}
+    is_dotted::Bool
 
     ScopeContext() = new(nothing,
                          false,
                          Dict{Symbol, VarInfo}(),
                          Dict{Symbol, VarInfo}(),
-                         Vector{ScopeContext}())
+                         Vector{ScopeContext}(),
+                         false)
 
     ScopeContext(parent_scope::ScopeContext) = new(parent_scope,
                                                    false,
                                                    Dict{Symbol, VarInfo}(),
                                                    Dict{Symbol, VarInfo}(),
-                                                   Vector{ScopeContext}())
+                                                   Vector{ScopeContext}(),
+                                                   false)
 end
 
 function print(scope_context::ScopeContext, indent = 0)

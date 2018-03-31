@@ -111,7 +111,7 @@ AbstractExecForLoop::Init() {
   accessed_dist_arrays_.resize(accessed_dist_array_syms_.size());
   jl_value_t *dist_array = nullptr;
   for (size_t i = 0; i < accessed_dist_array_syms_.size(); i++) {
-    JuliaEvaluator::GetDistArray(accessed_dist_array_syms_[i], &dist_array);
+    JuliaEvaluator::GetVarJlValue(accessed_dist_array_syms_[i], &dist_array);
     accessed_dist_arrays_[i] = dist_array;
   }
 
@@ -462,6 +462,7 @@ void
 AbstractExecForLoop::DeserializePipelinedTimePartitionsBuffVec(
     PeerRecvPipelinedTimePartitionsBuffer** buff_vec,
     size_t num_buffs) {
+  LOG(INFO) << __func__;
   for (size_t i = 0; i < num_buffs; i++) {
     auto *buff = buff_vec[i];
     auto &byte_buff = buff->byte_buff;
@@ -471,6 +472,7 @@ AbstractExecForLoop::DeserializePipelinedTimePartitionsBuffVec(
     delete buff;
   }
   delete[] buff_vec;
+  LOG(INFO) << __func__ << " done";
 }
 
 SendDataBuffer

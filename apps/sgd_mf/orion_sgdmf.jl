@@ -10,7 +10,7 @@ Orion.helloworld()
 const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 1
+const num_executors = 16
 const num_servers = 1
 
 # initialize logging of the runtime library
@@ -20,11 +20,11 @@ Orion.init(master_ip, master_port, comm_buff_capacity,
 
 #const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
 #const data_path = "file:///home/ubuntu/data/ml-10M100K/ratings.csv"
-const data_path = "file:///users/jinlianw/ratings.csv"
-#const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
+#const data_path = "file:///users/jinlianw/ratings.csv"
+const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/ml-20m/ratings_p.csv"
 const K = 1000
-const num_iterations = 64
+const num_iterations = 1
 const step_size = 0.01
 
 Orion.@accumulator err = 0
@@ -66,20 +66,24 @@ Orion.materialize(H)
 error_vec = Vector{Float64}()
 time_vec = Vector{Float64}()
 start_time = now()
+
+W_grad = zeros(K)
+H_grad = zeros(K)
+
 @time for iteration = 1:num_iterations
     Orion.@parallel_for for rating in ratings
         x_idx = rating[1][1]
         y_idx = rating[1][2]
         rv = rating[2]
 
-        W_row = W[:, x_idx]
-        H_row = H[:, y_idx]
+        W_row = @view W[:, x_idx]
+        H_row = @view H[:, y_idx]
         pred = dot(W_row, H_row)
         diff = rv - pred
-        W_grad = -2 * diff .* H_row
-        H_grad = -2 * diff .* W_row
-        W[:, x_idx] = W_row - step_size .* W_grad
-        H[:, y_idx] = H_row - step_size .* H_grad
+        W_grad .= -2 * diff .* H_row
+        H_grad .= -2 * diff .* W_row
+        W[:, x_idx] .= W_row .- step_size .* W_grad
+        H[:, y_idx] .= H_row .- step_size .* H_grad
     end
     @time if iteration % 4 == 1 ||
         iteration == num_iterations
@@ -88,14 +92,14 @@ start_time = now()
             x_idx = rating[1][1]
             y_idx = rating[1][2]
             rv = rating[2]
-            W_row = W[:, x_idx]
-            H_row = H[:, y_idx]
+            W_row = @view W[:, x_idx]
+            H_row = @view H[:, y_idx]
             pred = dot(W_row, H_row)
             err += (rv - pred) ^ 2
         end
         err = Orion.get_aggregated_value(:err, :+)
         curr_time = now()
-        elapsed = Int(curr_time - start_time) / 1000
+        elapsed = Int(Dates.value(curr_time - start_time)) / 1000
         println("iteration = ", iteration, " elapsed = ", elapsed, " err = ", err)
         Orion.reset_accumulator(:err)
         push!(error_vec, err)

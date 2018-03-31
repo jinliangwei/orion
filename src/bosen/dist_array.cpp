@@ -744,7 +744,7 @@ void
 DistArray::GcPartitions() {
   if (gc_partitions_.empty()) return;
   jl_value_t* dist_array = nullptr;
-  JuliaEvaluator::GetDistArray(meta_.GetSymbol(), &dist_array);
+  JuliaEvaluator::GetVarJlValue(meta_.GetSymbol(), &dist_array);
   jl_value_t *array_type = nullptr,
           *partition_vec = nullptr;
   JL_GC_PUSH2(&array_type, &partition_vec);

@@ -47,21 +47,17 @@ are as follows:
 
 function ast_walk(ast::Any, callback::Function, cbdata::Any)
     @dprintln(0, "ast_walk called")
-    from_expr(ast, 1, callback, cbdata, 0, false, true)
+    from_expr(ast, callback, cbdata)
 end
 
 function from_expr(ast::Any,
-                   depth::Integer,
                    callback::Function,
-                   cbdata::Any,
-                   top_level_number,
-                   is_top_level::Bool,
-                   read::Bool)
-    @dprintln(2, "from_expr depth = ", depth, ",  AST: ", ast)
+                   cbdata::Any)
+    @dprintln(2, "AST: ", ast)
     # For each AST node, we first call the user-provided callback to see if they
     # want to do something with the node.
     # this is the only place where callback is called
-    ret = callback(ast, cbdata, top_level_number, is_top_level, read)
+    ret = callback(ast, cbdata)
     @dprintln(2, "callback ret = ", ret)
     if ret != AST_WALK_RECURSE && ret != AST_WALK_RECURSE_DUPLICATE
         return ret
@@ -70,8 +66,7 @@ function from_expr(ast::Any,
     # The user callback didn't replace the AST node so recursively process it.
     # We have a different from_expr_helper that is accurately typed for each
     # possible AST node type.
-    ast = from_expr_helper(ast, depth, callback, cbdata,
-                           top_level_number, is_top_level, read)
+    ast = from_expr_helper(ast, callback, cbdata)
     if ret == AST_WALK_RECURSE_DUPLICATE
         ast = copy(ast)
     end
@@ -81,19 +76,13 @@ function from_expr(ast::Any,
 end
 
 function from_expr_helper(ast::Expr,
-                          depth::Integer,
                           callback::Function,
-                          cbdata::Any,
-                          top_level_number,
-                          is_top_level::Bool,
-                          read::Bool)
+                          cbdata::Any)
     # If you have an assignment with an Expr as its left-hand side
     # then you get here with "read = false"
     # but that doesn't  mean the whole Expr is written.  In fact, none of it
     # is written so we set read
     # back to true and then restore in the incoming read value at the end.
-    read_save = read
-    read = true
     #@dprintln(2, "Expr ")
     head = ast.head
     args = ast.args
@@ -101,61 +90,57 @@ function from_expr_helper(ast::Expr,
     #@dprintln(2, " ", args)
     if head == :macrocall
         for i = 1:length(args)
-            args[i] = from_expr(args[i], depth, callback, cbdata,
-                                top_level_number, false, read)
+            args[i] = from_expr(args[i], callback, cbdata)
         end
     elseif head == :for
         for i = 1:length(args)
-            args[i] = from_expr(args[i], depth, callback, cbdata,
-                                top_level_number, false, read)
+            args[i] = from_expr(args[i], callback, cbdata)
         end
     elseif head == :if
         for i = 1:length(args)
-            args[i] = from_expr(args[i], depth, callback, cbdata,
-                                top_level_number, false, read)
+            args[i] = from_expr(args[i], callback, cbdata)
         end
     elseif head in Set([:(=), :(.=), :(+=), :(/=), :(*=), :(-=)])
-         args[1] = from_expr(args[1], depth, callback, cbdata, top_level_number,
-                            false, false)
-        args[2] = from_expr(args[2], depth, callback, cbdata, top_level_number,
-                            false, read)
+        args[1] = from_expr(args[1], callback, cbdata)
+        args[2] = from_expr(args[2], callback, cbdata)
     elseif head == :block
-        args = from_exprs(args, depth + 1, callback, cbdata, top_level_number, read)
+        args = from_exprs(args, callback, cbdata)
     elseif head == :return
-        args = from_exprs(args, depth, callback, cbdata, top_level_number, read)
+        args = from_exprs(args, callback, cbdata)
     elseif head == :invoke
-        args = from_call(args, depth, callback, cbdata, top_level_number, read)
+        args = from_call(args, callback, cbdata)
     elseif head == :call
-        args = from_call(args, depth, callback, cbdata, top_level_number, read)
+        args = from_call(args, callback, cbdata)
     elseif head == :call1
-        args = from_call(args, depth, callback, cbdata, top_level_number, read)
+        args = from_call(args, callback, cbdata)
     elseif head == :foreigncall
-        args = from_call(args, depth, callback, cbdata, top_level_number, read)
+        args = from_call(args, callback, cbdata)
     elseif head == :line
         # skip
     elseif head == :ref
         for i = 1:length(args)
-            args[i] = from_expr(args[i], depth, callback, cbdata, top_level_number, false, read)
+            args[i] = from_expr(args[i], callback, cbdata)
         end
     elseif head == :(:)
         # args are either Expr or Symbol
         for i = 1:length(args)
-            args[i] = from_expr(args[i], depth, callback, cbdata, top_level_number, false, read)
+            args[i] = from_expr(args[i], callback, cbdata)
         end
+    elseif head == :(.)
+        args = from_exprs(args, callback, cbdata)
     end
     ast.head = head
     ast.args = args
     ast.typ = typ
-    read = read_save
     return ast
 end
 
-function from_exprs(ast, depth, callback, cbdata::Any, top_level_number, read)
+function from_exprs(ast, callback, cbdata::Any)
     len = length(ast)
     top_level = false
     body = Vector{Any}()
     for i = 1:len
-        new_expr = from_expr(ast[i], depth, callback, cbdata, i, top_level, read)
+        new_expr = from_expr(ast[i], callback, cbdata)
         if new_expr != AST_WALK_REMOVE
             push!(body, new_expr)
         end
@@ -163,7 +148,7 @@ function from_exprs(ast, depth, callback, cbdata::Any, top_level_number, read)
     return body
 end
 
-function from_call(ast :: Array{Any,1}, depth, callback, cbdata :: ANY, top_level_number, read)
+function from_call(ast::Array{Any,1}, callback, cbdata)
   assert(length(ast) >= 1)
   # A call is a function followed by its arguments.  Extract these parts below.
   fun  = ast[1]
@@ -175,10 +160,10 @@ function from_call(ast :: Array{Any,1}, depth, callback, cbdata :: ANY, top_leve
   # Symbols don't need to be translated.
   # if typeof(fun) != Symbol
       # I suppose this "if" could be wrong.  If you wanted to replace all "x" functions with "y" then you'd need this wouldn't you?
-  #    fun = from_expr(fun, depth, callback, cbdata, top_level_number, false, read)
+  #    fun = from_expr(fun, callback, cbdata, top_level_number, false, read)
   # end
   # Process the arguments to the function recursively.
-  args = from_exprs(ast, depth+1, callback, cbdata, top_level_number, read)
+  args = from_exprs(ast, callback, cbdata)
 
   return args
 end
@@ -186,51 +171,34 @@ end
 # The following are for non-Expr AST nodes are generally leaf nodes of the AST where no
 # recursive processing is possible.
 function from_expr_helper(ast::Symbol,
-                          depth,
                           callback,
-                          cbdata::Any,
-                          top_level_number,
-                          is_top_level,
-                          read)
+                          cbdata::Any)
     @dprintln(2, typeof(ast), " type")
     # Intentionally do nothing.
     return ast
 end
 
 function from_expr_helper(ast::NewvarNode,
-                          depth,
                           callback,
-                          cbdata::Any,
-                          top_level_number,
-                          is_top_level,
-                          read)
-    return NewvarNode(from_expr(ast.slot, depth, callback, cbdata, top_level_number, false, read))
+                          cbdata::Any)
+    return NewvarNode(from_expr(ast.slot, callback, cbdata))
 end
 
 function from_expr_helper(ast::Union{LineNumberNode,LabelNode,GotoNode,DataType,AbstractString,Void,Function,Module},
-                          depth,
                           callback,
-                          cbdata::Any,
-                          top_level_number,
-                          is_top_level,
-                          read)
+                          cbdata::Any)
     # Intentionally do nothing.
     return ast
 end
 
 function from_expr_helper(ast::Tuple,
-                          depth,
                           callback,
-                          cbdata::Any,
-                          top_level_number,
-                          is_top_level,
-                          read)
-
+                          cbdata::Any)
     # N.B. This also handles the empty tuple correctly.
 
     new_tt = Expr(:tuple)
     for i = 1:length(ast)
-        push!(new_tt.args, from_expr(ast[i], depth, callback, cbdata, top_level_number, false, read))
+        push!(new_tt.args, from_expr(ast[i], callback, cbdata))
     end
     new_tt.typ = typeof(ast)
     ast = eval(new_tt)
@@ -238,12 +206,9 @@ function from_expr_helper(ast::Tuple,
     return ast
 end
 
-function from_expr_helper(ast::QuoteNode, depth,
+function from_expr_helper(ast::QuoteNode,
                           callback,
-                          cbdata::Any,
-                          top_level_number,
-                          is_top_level,
-                          read)
+                          cbdata::Any)
     value = ast.value
     #TODO: fields: value
     @dprintln(2,"QuoteNode type ",typeof(value))
@@ -252,14 +217,10 @@ function from_expr_helper(ast::QuoteNode, depth,
 end
 
 function from_expr_helper(ast::SimpleVector,
-                          depth,
                           callback,
-                          cbdata::Any,
-                          top_level_number,
-                          is_top_level,
-                          read)
+                          cbdata::Any)
 
-    new_values = [from_expr(ast[i], depth, callback, cbdata, top_level_number, false, read) for i = 1:length(ast)]
+    new_values = [from_expr(ast[i], callback, cbdata) for i = 1:length(ast)]
     return Core.svec(new_values...)
 end
 
@@ -267,12 +228,8 @@ end
 The catchall function to process other kinds of AST nodes.
 """
 function from_expr_helper(ast::Any,
-                          depth,
                           callback,
-                          cbdata::Any,
-                          top_level_number,
-                          is_top_level,
-                          read)
+                          cbdata::Any)
     asttyp = typeof(ast)
 
     if isdefined(:GetfieldNode) && asttyp == GetfieldNode  # GetfieldNode = value + name

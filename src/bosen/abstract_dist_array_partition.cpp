@@ -662,6 +662,7 @@ AbstractDistArrayPartition::Execute(
   jl_call(exec_loop_func, jl_values, num_args);
   JuliaEvaluator::AbortIfException();
   JL_GC_POP();
+  LOG(INFO) << __func__ << " done!";
 }
 
 void

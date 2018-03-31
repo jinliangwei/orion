@@ -11,6 +11,7 @@
 function add_var!(scope_context::ScopeContext,
                   var::Symbol,
                   info::VarInfo)
+    println("add_var! ", var, " ", info)
     # if I am sure var is local
     if info.is_marked_local ||
         # if this introduces a new variable that is not defined in the parent scope
@@ -22,8 +23,6 @@ function add_var!(scope_context::ScopeContext,
     elseif info.is_marked_global
         add_global_var!(scope_context, var, info)
     else
-        println("add_var - add_uncertain_var ", var, " ", info,
-                " ", is_var_defined_in_parent(scope_context, var, info))
         add_uncertain_var!(scope_context, var, info)
     end
 end
@@ -153,7 +152,6 @@ function add_child_scope!(parent::ScopeContext,
             (parent.is_hard_scope && info.is_assigned_to)
             add_local_var!(parent, var, info)
         else
-            println("add_child_scope! - add_uncertain_var ", var, " ", info)
             add_uncertain_var!(parent, var, info)
         end
     end

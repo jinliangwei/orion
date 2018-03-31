@@ -76,7 +76,7 @@ function get_scope_context_visit(expr::Any,
             info.is_assigned_to = true
             add_var!(scope_context, var_mutated, info)
         end
-        return AstWalk.AST_WALK_RECURSE
+        return AstWalk.AST_WALK_RECURSEex
     elseif head == :(.)
         return AstWalk.AST_WALK_RECURSE
     elseif head == :ref

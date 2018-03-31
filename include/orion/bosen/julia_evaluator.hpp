@@ -201,10 +201,6 @@ class JuliaEvaluator {
       const std::string &dist_array_sym,
       const std::vector<int64_t> &dims);
 
-  static void GetDistArray(
-      const std::string &dist_array_sym,
-      jl_value_t** dist_array_ptr);
-
   static void GetDistArrayValueType(
       const std::string &dist_array_sym,
       jl_datatype_t **value_type_ptr);

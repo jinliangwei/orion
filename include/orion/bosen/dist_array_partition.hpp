@@ -106,7 +106,7 @@ DistArrayPartition<ValueType>::CreateAccessor() {
   jl_value_t *dist_array_jl = nullptr;
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
   bool is_dense = dist_array_meta.IsDense() && dist_array_meta.IsContiguousPartitions();
   value_type_jl = reinterpret_cast<jl_value_t*>(type::GetJlDataType(kValueType));
   values_array_type_jl = jl_apply_array_type(value_type_jl, 1);
@@ -116,7 +116,6 @@ DistArrayPartition<ValueType>::CreateAccessor() {
   auto *create_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
       "create_dist_array_accessor");
   if (is_dense) {
-    LOG(INFO) << "create dense accessor! " << __func__;
     Sort();
     key_begin_jl = jl_box_int64(keys_.size() > 0 ? keys_[0] : 0);
     jl_call3(create_accessor_func, dist_array_jl, key_begin_jl,
@@ -143,7 +142,7 @@ DistArrayPartition<ValueType>::ClearAccessor() {
   bool is_dense = dist_array_meta.IsDense() && dist_array_meta.IsContiguousPartitions();
   const std::string &symbol = dist_array_meta.GetSymbol();
   jl_value_t *dist_array_jl = nullptr;
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
 
   if (!is_dense) {
     jl_value_t* tuple_jl = nullptr;
@@ -176,7 +175,6 @@ DistArrayPartition<ValueType>::ClearAccessor() {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::CreateCacheAccessor() {
-  LOG(INFO) << __func__;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   jl_value_t **jl_values;
   JL_GC_PUSHARGS(jl_values, 5);
@@ -189,7 +187,7 @@ DistArrayPartition<ValueType>::CreateCacheAccessor() {
   jl_value_t *dist_array_jl = nullptr;
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
 
   value_type_jl = reinterpret_cast<jl_value_t*>(type::GetJlDataType(kValueType));
   values_array_type_jl = jl_apply_array_type(value_type_jl, 1);
@@ -218,7 +216,7 @@ DistArrayPartition<ValueType>::CreateBufferAccessor() {
   jl_value_t *dist_array_jl = nullptr;
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
 
   auto *create_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
       "create_dist_array_buffer_accessor");
@@ -230,7 +228,6 @@ DistArrayPartition<ValueType>::CreateBufferAccessor() {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::ClearCacheAccessor() {
-  LOG(INFO) << __func__;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kAccessor);
   jl_value_t* tuple_jl = nullptr;
   jl_value_t* keys_array_jl = nullptr;
@@ -240,7 +237,7 @@ DistArrayPartition<ValueType>::ClearCacheAccessor() {
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
   jl_value_t *dist_array_jl = nullptr;
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
 
   auto *get_keys_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
       "dist_array_get_accessor_keys_values_vec");
@@ -278,7 +275,7 @@ DistArrayPartition<ValueType>::ClearBufferAccessor() {
   auto &dist_array_meta = dist_array_->GetMeta();
   const std::string &symbol = dist_array_meta.GetSymbol();
   jl_value_t *dist_array_jl = nullptr;
-  JuliaEvaluator::GetDistArray(symbol, &dist_array_jl);
+  JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl);
   bool is_dense = dist_array_meta.IsDense();
   CHECK(dist_array_meta.IsContiguousPartitions());
   if (!is_dense) {
@@ -522,7 +519,6 @@ template<typename ValueType>
 void
 DistArrayPartition<ValueType>::HashSerialize(
     ExecutorDataBufferMap *data_buffer_map) {
-  LOG(INFO) << __func__;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   std::unordered_map<int32_t, size_t> server_accum_size;
   for (size_t i = 0; i < keys_.size(); i++) {
@@ -636,7 +632,6 @@ DistArrayPartition<ValueType>::ApplyBufferedUpdates(
     const AbstractDistArrayPartition* dist_array_buffer,
     const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
     const std::string &apply_buffer_func_name) {
-  LOG(INFO) << __func__;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
   size_t num_args = helper_dist_array_buffers.size() + 3;
   jl_value_t **args_vec;
@@ -708,7 +703,6 @@ DistArrayPartition<ValueType>::AppendJuliaValue(jl_value_t *value) {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::AppendJuliaValueArray(jl_value_t *value) {
-  LOG(INFO) << __func__ << " " << static_cast<int>(kValueType);
   size_t num_elements = jl_array_len(reinterpret_cast<jl_array_t*>(value));
   ValueType* value_array = reinterpret_cast<ValueType*>(jl_array_data(reinterpret_cast<jl_array_t*>(value)));
   for (size_t i = 0; i < num_elements; i++) {
