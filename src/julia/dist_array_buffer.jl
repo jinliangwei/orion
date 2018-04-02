@@ -62,7 +62,7 @@ function materialize{T, N}(dist_array_buffer::DistArrayBuffer{T, N})
     end
     buff = IOBuffer()
     serialize(buff, T)
-    buff_array = takebuf_array(buff)
+    buff_array = take!(buff)
     ccall((:orion_create_dist_array_buffer, lib_path),
           Void, (Int32,
                  Ref{Int64},

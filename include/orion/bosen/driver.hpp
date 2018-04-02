@@ -574,7 +574,7 @@ Driver::CreateDistArrayBuffer(
   CHECK(serialize_func != nullptr);
   jl_call2(serialize_func, buff, init_value);
   jl_function_t *takebuff_array_func
-      = JuliaEvaluator::GetFunction(jl_base_module, "takebuf_array");
+      = JuliaEvaluator::GetFunction(jl_base_module, "take!");
   serialized_result_array = jl_call1(takebuff_array_func, buff);
   size_t result_array_length = jl_array_len(serialized_result_array);
   uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));

@@ -391,6 +391,7 @@ function gen_loop_body_function(func_name::Symbol,
                                 iteration_space::Symbol,
                                 iteration_var::Symbol,
                                 accessed_dist_arrays::Vector{Symbol},
+                                accessed_dist_array_buffers::Vector{Symbol},
                                 global_read_only_vars::Vector{Symbol},
                                 accumulator_vars::Vector{Symbol},
                                 ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
@@ -398,12 +399,14 @@ function gen_loop_body_function(func_name::Symbol,
     @assert loop_body.head == :block
 
     return_stmt = :(return)
-    if length(accumulator_vars) > 0
-        return_args = Vector{Symbol}()
+    if length(accumulator_vars) == 1
+        return_stmt = :(return $(accumulator_vars[1]))
+    elseif length(accumulator_vars) > 1
+        return_args = Expr(:tuple)
         for var_sym in accumulator_vars
-            push!(return_args, var_sym)
+            push!(return_args.args, var_sym)
         end
-        return_stmt.args = return_args
+        return_stmt = :(return $return_args)
     end
 
     loop_body_func = :(
@@ -415,6 +418,9 @@ function gen_loop_body_function(func_name::Symbol,
 
     for da_sym in accessed_dist_arrays
         push!(loop_body_func.args[1].args, da_sym)
+    end
+    for buffer_sym in accessed_dist_array_buffers
+        push!(loop_body_func.args[1].args, buffer_sym)
     end
     for var_sym in global_read_only_vars
         push!(loop_body_func.args[1].args, var_sym)
@@ -429,12 +435,17 @@ function gen_loop_body_batch_function(batch_func_name::Symbol,
                                       func_name::Symbol,
                                       iter_space_value_type::DataType,
                                       accessed_dist_arrays::Vector{Symbol},
+                                      accessed_dist_array_buffers::Vector{Symbol},
                                       global_read_only_vars::Vector{Symbol},
                                       accumulator_vars::Vector{Symbol})
     loop_body_func_call = :(new_accum_vals = $(func_name)(key_value))
 
     for da_sym in accessed_dist_arrays
         push!(loop_body_func_call.args[2].args, da_sym)
+    end
+
+    for buffer_sym in accessed_dist_array_buffers
+        push!(loop_body_func_call.args[2].args, buffer_sym)
     end
 
     for var_sym in global_read_only_vars
@@ -454,14 +465,21 @@ function gen_loop_body_batch_function(batch_func_name::Symbol,
             push!(loop_body_func_call.args[2].args, var_sym)
         end
 
-        for i = 1:length(renamed_accumulator_vars)
-            update_accumulator_vars_stmt = :($(renamed_accumulator_vars[i]) = new_accum_vals[$i])
+        if length(accumulator_vars) == 1
+            update_accumulator_vars_stmt = :($(renamed_accumulator_vars[1]) = new_accum_vals)
             push!(update_accumulator_vars_stmts.args, update_accumulator_vars_stmt)
-        end
-
-        for i = 1:length(accumulator_vars)
-            update_global_accumulator_vars_stmt = :(global $(accumulator_vars[i]) = $(renamed_accumulator_vars[i]))
+            update_global_accumulator_vars_stmt = :(global $(accumulator_vars[1]) = $(renamed_accumulator_vars[1]))
             push!(update_global_accumulator_vars_stmts.args, update_global_accumulator_vars_stmt)
+        else
+            for i = 1:length(renamed_accumulator_vars)
+                update_accumulator_vars_stmt = :($(renamed_accumulator_vars[i]) = new_accum_vals[$i])
+                push!(update_accumulator_vars_stmts.args, update_accumulator_vars_stmt)
+            end
+
+            for i = 1:length(accumulator_vars)
+                update_global_accumulator_vars_stmt = :(global $(accumulator_vars[i]) = $(renamed_accumulator_vars[i]))
+                push!(update_global_accumulator_vars_stmts.args, update_global_accumulator_vars_stmt)
+            end
         end
     end
 
@@ -491,6 +509,10 @@ function gen_loop_body_batch_function(batch_func_name::Symbol,
         push!(batch_func.args[1].args, da_sym)
     end
 
+    for buffer_sym in accessed_dist_array_buffers
+        push!(batch_func.args[1].args, buffer_sym)
+    end
+
     for var_sym in global_read_only_vars
         push!(batch_func.args[1].args, var_sym)
     end
@@ -507,6 +529,7 @@ function gen_loop_body_batch_function_iter_dims(batch_func_name::Symbol,
                                                 iter_space_value_type::DataType,
                                                 iterate_dims_length::Int64,
                                                 accessed_dist_arrays::Vector{Symbol},
+                                                accessed_dist_array_buffers::Vector{Symbol},
                                                 global_read_only_vars::Vector{Symbol},
                                                 accumulator_vars::Vector{Symbol})
 
@@ -514,6 +537,10 @@ function gen_loop_body_batch_function_iter_dims(batch_func_name::Symbol,
 
     for da_sym in accessed_dist_arrays
         push!(loop_body_func_call.args[2].args, da_sym)
+    end
+
+    for buffer_sym in accessed_dist_array_buffers
+        push!(loop_body_func_call.args[2].args, buffer_sym)
     end
 
     for var_sym in global_read_only_vars
@@ -533,14 +560,21 @@ function gen_loop_body_batch_function_iter_dims(batch_func_name::Symbol,
             push!(loop_body_func_call.args[2].args, var_sym)
         end
 
-        for i = 1:length(renamed_accumulator_vars)
-            update_accumulator_vars_stmt = :($(renamed_accumulator_vars[i]) = new_accum_vals[$i])
+        if length(accumulator_vars) == 1
+            update_accumulator_vars_stmt = :($(renamed_accumulator_vars[1]) = new_accum_vals)
             push!(update_accumulator_vars_stmts.args, update_accumulator_vars_stmt)
-        end
-
-        for i = 1:length(accumulator_vars)
-            update_global_accumulator_vars_stmt = :(global $(accumulator_vars[i]) = $(renamed_accumulator_vars[i]))
+            update_global_accumulator_vars_stmt = :(global $(accumulator_vars[1]) = $(renamed_accumulator_vars[1]))
             push!(update_global_accumulator_vars_stmts.args, update_global_accumulator_vars_stmt)
+        else
+            for i = 1:length(renamed_accumulator_vars)
+                update_accumulator_vars_stmt = :($(renamed_accumulator_vars[i]) = new_accum_vals[$i])
+                push!(update_accumulator_vars_stmts.args, update_accumulator_vars_stmt)
+            end
+
+            for i = 1:length(accumulator_vars)
+                update_global_accumulator_vars_stmt = :(global $(accumulator_vars[i]) = $(renamed_accumulator_vars[i]))
+                push!(update_global_accumulator_vars_stmts.args, update_global_accumulator_vars_stmt)
+            end
         end
     end
 
@@ -586,6 +620,10 @@ function gen_loop_body_batch_function_iter_dims(batch_func_name::Symbol,
         push!(batch_func.args[1].args, da_sym)
     end
 
+    for buffer_sym in accessed_dist_array_buffers
+        push!(batch_func.args[1].args, buffer_sym)
+    end
+
     for var_sym in global_read_only_vars
         push!(batch_func.args[1].args, var_sym)
     end
@@ -599,7 +637,6 @@ end
 function gen_prefetch_function(prefetch_func_name::Symbol,
                                iterate_var::Symbol,
                                prefetch_stmts::Expr,
-                               accessed_dist_arrays::Vector{Symbol},
                                global_read_only_vars::Vector{Symbol},
                                accumulator_vars::Vector{Symbol})
     prefetch_func = :(
@@ -609,9 +646,6 @@ function gen_prefetch_function(prefetch_func_name::Symbol,
         end
     )
 
-    for da_sym in accessed_dist_arrays
-        push!(prefetch_func.args[1].args, da_sym)
-    end
     for var_sym in global_read_only_vars
         push!(prefetch_func.args[1].args, var_sym)
     end
@@ -624,14 +658,10 @@ end
 function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
                                      prefetch_func_name::Symbol,
                                      iter_space_value_type::DataType,
-                                     accessed_dist_arrays::Vector{Symbol},
                                      global_read_only_vars::Vector{Symbol},
                                      accumulator_vars::Vector{Symbol})
 
     prefetch_func_call = :($(prefetch_func_name)(key_value, prefetch_point_dict))
-    for da_sym in accessed_dist_arrays
-        push!(prefetch_func_call.args, da_sym)
-    end
     for var_sym in global_read_only_vars
         push!(prefetch_func_call.args, var_sym)
     end
@@ -645,7 +675,6 @@ function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
                                            dims::Vector{Int64},
                                            global_indexed_dist_array_ids::Vector{Int32},
                                            global_indexed_dist_array_dims::Vector{Vector{Int64}})::Vector{Vector{Int64}}
-
             prefetch_point_dict = Dict{Int32, OrionWorker.DistArrayAccessSetRecorder}()
             for idx in eachindex(global_indexed_dist_array_ids)
                 id = global_indexed_dist_array_ids[idx]
@@ -671,14 +700,11 @@ function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
         end
     )
 
-    for da_sym in accessed_dist_arrays
-        push!(prefetch_batch_func.args[1].args, da_sym)
-    end
     for var_sym in global_read_only_vars
-        push!(prefetch_batch_func.args[1].args, var_sym)
+        push!(prefetch_batch_func.args[1].args[1].args, var_sym)
     end
     for var_sym in accumulator_vars
-        push!(prefetch_batch_func.args[1].args, var_sym)
+        push!(prefetch_batch_func.args[1].args[1].args, var_sym)
     end
 
     return prefetch_batch_func
@@ -689,14 +715,10 @@ function gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name::Symbol,
                                                prefetch_func_name::Symbol,
                                                iter_space_value_type::DataType,
                                                iterate_dims_length::Int64,
-                                               accessed_dist_arrays::Vector{Symbol},
                                                global_read_only_vars::Vector{Symbol},
                                                accumulator_vars::Vector{Symbol})
 
     prefetch_func_call = :($(prefetch_func_name)(key_value, prefetch_point_dict))
-    for da_sym in accessed_dist_arrays
-        push!(prefetch_func_call.args, da_sym)
-    end
     for var_sym in global_read_only_vars
         push!(prefetch_func_call.args, var_sym)
     end
@@ -751,14 +773,11 @@ function gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name::Symbol,
         end
     )
 
-    for da_sym in accessed_dist_arrays
-        push!(prefetch_batch_func.args[1].args, da_sym)
-    end
     for var_sym in global_read_only_vars
-        push!(prefetch_batch_func.args[1].args, var_sym)
+        push!(prefetch_batch_func.args[1].args[1].args, var_sym)
     end
     for var_sym in accumulator_vars
-        push!(prefetch_batch_func.args[1].args, var_sym)
+        push!(prefetch_batch_func.args[1].args[1].args, var_sym)
     end
 
     return prefetch_batch_func

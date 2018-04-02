@@ -58,10 +58,12 @@ class AbstractExecForLoop {
   ExecutorSendBufferMap cache_send_buffer_map_;
 
   std::vector<std::string> accessed_dist_array_syms_;
+  std::vector<std::string> accessed_dist_array_buffer_syms_;
   std::vector<std::string> global_read_only_var_vals_;
   std::vector<std::string> accumulator_var_syms_;
 
   std::vector<jl_value_t*> accessed_dist_arrays_;
+  std::vector<jl_value_t*> accessed_dist_array_buffers_;
   std::vector<jl_value_t*> global_read_only_var_jl_vals_;
 
  public:

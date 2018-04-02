@@ -1,26 +1,27 @@
 import Base: linearindexing, size, getindex, setindex!
-type GetDistArrayAccessContext
+
+mutable struct GetDistArrayAccessContext
     iteration_var::Symbol
     ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}}
     access_dict::Dict{Symbol, Vector{DistArrayAccess}}
     buffer_set::Set{Symbol}
+    accessed_buffer::Bool
     stmt_access_dict::Dict{Symbol, Vector{DistArrayAccess}}
-
+    da_access_context::DistArrayAccessContext
     GetDistArrayAccessContext(iteration_var,
                               ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}}) =
                                   new(iteration_var,
                                       ssa_defs,
                                       Dict{Symbol, Vector{DistArrayAccess}}(),
                                       Set{Symbol}(),
-                                      Dict{Symbol, Vector{DistArrayAccess}}())
+                                      false,
+                                      Dict{Symbol, Vector{DistArrayAccess}}(),
+                                      DistArrayAccessContext())
 end
 
-# bb_id -> (stmt_index -> stmt_dist_array_access)
-bb_dist_array_access_dict = Dict{Int64, Dict{Int64, Dict{Symbol, Vector{DistArrayAccess}}}}()
 
 function get_dist_array_access_visit(expr,
                                      context::GetDistArrayAccessContext)
-
     ssa_defs = context.ssa_defs
     if isa(expr, Expr)
         head = expr.head
@@ -60,6 +61,7 @@ function get_dist_array_access_visit(expr,
                     elseif isdefined(current_module(), referenced_var) &&
                         isa(eval(current_module(), referenced_var), DistArrayBuffer)
                         push!(context.buffer_set, referenced_var)
+                        context.accessed_buffer = true
                     end
                     subscripts = ref_get_subscripts(assigned_to)
                     for sub in subscripts
@@ -101,6 +103,7 @@ function get_dist_array_access_visit(expr,
                 elseif isdefined(current_module(), referenced_var) &&
                     isa(eval(current_module(), referenced_var), DistArrayBuffer)
                     push!(context.buffer_set, referenced_var)
+                    context.accessed_buffer = true
                 end
                 subscripts = ref_get_subscripts(expr)
                 for sub in subscripts
@@ -122,12 +125,22 @@ function get_dist_array_access_bb(bb::BasicBlock,
                                   context::GetDistArrayAccessContext)
     #println("access bb ", bb.id)
     stmt_access_dict = Dict{Int64, Dict{Symbol, Vector{DistArrayAccess}}}()
+    bb_dist_array_access_dict = context.da_access_context.bb_dist_array_access_dict
+    bb_dist_array_buffer_access_stmts_dict = context.da_access_context.bb_dist_array_buffer_access_stmts_dict
+
     for idx in eachindex(bb.stmts)
         stmt = bb.stmts[idx]
         AstWalk.ast_walk(stmt, get_dist_array_access_visit, context)
         if !isempty(context.stmt_access_dict)
             stmt_access_dict[idx] = context.stmt_access_dict
             context.stmt_access_dict = Dict{Symbol, Vector{DistArrayAccess}}()
+        end
+        if context.accessed_buffer
+            context.accessed_buffer = false
+            if !(bb.id in keys(bb_dist_array_buffer_access_stmts_dict))
+                bb_dist_array_buffer_access_stmts_dict[bb.id] = Set{Int64}()
+            end
+            push!(bb_dist_array_buffer_access_stmts_dict[bb.id], idx)
         end
     end
     if !isempty(stmt_access_dict)
@@ -138,10 +151,9 @@ end
 function get_dist_array_access(par_for_loop_entry::BasicBlock,
                                iteration_var::Symbol,
                                ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
-    da_access_context = GetDistArrayAccessContext(iteration_var, ssa_defs)
+    get_da_access_context = GetDistArrayAccessContext(iteration_var, ssa_defs)
     traverse_flow_graph(par_for_loop_entry,
                         get_dist_array_access_bb,
-                        da_access_context)
-    println("before return")
-    return da_access_context.access_dict, da_access_context.buffer_set
+                        get_da_access_context)
+    return get_da_access_context.access_dict, get_da_access_context.buffer_set, get_da_access_context.da_access_context
 end

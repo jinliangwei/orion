@@ -6,6 +6,15 @@ mutable struct VarDef
     VarDef(assigned) = new(assigned, nothing)
 end
 
+struct DistArrayAccessContext
+    # bb_id -> (stmt_index -> stmt_dist_array_access)
+    bb_dist_array_access_dict::Dict{Int64, Dict{Int64, Dict{Symbol, Vector{DistArrayAccess}}}}
+    bb_dist_array_buffer_access_stmts_dict::Dict{Int64, Set{Int64}}
+
+    DistArrayAccessContext() = new(Dict{Int64, Dict{Int64, Dict{Symbol, Vector{DistArrayAccess}}}}(),
+                                   Dict{Int64, Set{Int64}}())
+end
+
 mutable struct BasicBlock
     id::Int64
     predecessors::Vector{Any}
@@ -1128,7 +1137,11 @@ end
 # and SSA variables that recursively depend on them.
 
 function get_deleted_syms(bb_list::Vector{BasicBlock},
-                          ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
+                          ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
+                          dist_array_access_context::DistArrayAccessContext)
+    bb_dist_array_access_dict = dist_array_access_context.bb_dist_array_access_dict
+    bb_dist_array_buffer_access_stmts_dict = dist_array_access_context.bb_dist_array_buffer_access_stmts_dict
+
     syms_deleted = Set{Symbol}()
     for bb in bb_list
         if !(bb.id in keys(bb_dist_array_access_dict))
@@ -1136,21 +1149,17 @@ function get_deleted_syms(bb_list::Vector{BasicBlock},
         end
         stmt_access_dict = bb_dist_array_access_dict[bb.id]
         for (stmt_idx, access_dict) in stmt_access_dict
-            read = false
-            for (da_sym, access_vec) in access_dict
-                for access in access_vec
-                    if access.is_read
-                        read = true
-                        break
-                    end
-                end
-            end
-            if !read
-                continue
-            end
             #TODO: more accurate!
             if stmt_idx in keys(bb.stmt_ssa_defs)
                 union!(syms_deleted, bb.stmt_ssa_defs[stmt_idx])
+            end
+        end
+        if bb.id in keys(bb_dist_array_buffer_access_stmts_dict)
+            stmt_buffer_access_set = bb_dist_array_buffer_access_stmts_dict[bb.id]
+            for stmt_idx in stmt_buffer_access_set
+                if stmt_idx in keys(bb.stmt_ssa_defs)
+                    union!(syms_deleted, bb.stmt_ssa_defs[stmt_idx])
+                end
             end
         end
     end
@@ -1436,10 +1445,13 @@ end
 
 function get_prefetch_stmts(flow_graph::BasicBlock,
                             dist_array_syms::Set{Symbol},
-                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
+                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
+                            dist_array_access_context::DistArrayAccessContext)
     bb_list = flow_graph_to_list(flow_graph)
+    bb_dist_array_access_dict = dist_array_access_context.bb_dist_array_access_dict
 
-    syms_deleted = get_deleted_syms(bb_list, ssa_defs)
+    syms_deleted = get_deleted_syms(bb_list, ssa_defs,
+                                    dist_array_access_context)
 
     # The set of symbols to be defined include symbols that are
     # used to define DistArray access subscripts

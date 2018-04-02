@@ -8,19 +8,19 @@ Orion.helloworld()
 const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 1
-const num_servers = 2
+const num_executors = 16
+const num_servers = 8
 
 # initialize logging of the runtime library
 Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity, num_executors,
            num_servers)
 
-const data_path = "file:///proj/BigLearning/jinlianw/data/a1a"
+const data_path = "file:///proj/BigLearning/jinlianw/data/kdda"
 const num_iterations = 8
-const step_size = 0.001
-#const num_features = 20216830
-const num_features = 123
+const step_size = 0.0004
+const num_features = 20216830
+#const num_features = 123
 
 Orion.@accumulator err = 0
 Orion.@accumulator loss = 0
@@ -34,6 +34,9 @@ Orion.@share function parse_line(index::Int64, line::AbstractString)::Tuple{Tupl
     feature_vec = Vector{Tuple{Int64, Float32}}()
     tokens = split(strip(line), ' ')
     label = parse(Int64, tokens[1])
+    if label == -1
+        label = 0
+    end
     for token in tokens[2:end]
         feature = split(token, ":")
         feature_id = parse(Int64, feature[1]) - 1
@@ -77,7 +80,7 @@ Orion.@share function apply_buffered_update(key, weight, update)
 end
 
 Orion.set_write_buffer(weights_buf, weights, apply_buffered_update)
-Orion.dist_array_set_num_partitions_per_dim(samples_mat, 16)
+#Orion.dist_array_set_num_partitions_per_dim(samples_mat, 128)
 
 error_vec = Vector{Float64}()
 loss_vec = Vector{Float64}()
@@ -96,7 +99,7 @@ for iteration = 1:num_iterations
         for feature in features
             fid = feature[1]
             fval = feature[2]
-            weights_buf[fid] -= step_size * fval * diff
+             weights_buf[fid] -= step_size * fval * diff
         end
     end
     if iteration % 1 == 0 ||
@@ -105,7 +108,6 @@ for iteration = 1:num_iterations
             sum = 0.0
             label = sample[2][1]
             features = sample[2][2]
-
             for feature in features
                 fid = feature[1]
                 fval = feature[2]
@@ -117,17 +119,16 @@ for iteration = 1:num_iterations
             else
                 loss += -safe_log(1 - sigmoid(sum))
             end
-
-            diff = label - sigmoid(sum)
+            diff = sigmoid(sum) - label
             err += diff ^ 2
         end
         err = Orion.get_aggregated_value(:err, :+)
         loss = Orion.get_aggregated_value(:loss, :+)
-        Orion.reset_accumulator(:err)
-        Orion.reset_accumulator(:loss)
         println("iteration = ", iteration, " err = ", err, " loss = ", loss)
         push!(error_vec, err)
         push!(loss_vec, loss)
+        Orion.reset_accumulator(:err)
+        Orion.reset_accumulator(:loss)
     end
 end
 

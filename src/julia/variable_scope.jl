@@ -11,7 +11,6 @@
 function add_var!(scope_context::ScopeContext,
                   var::Symbol,
                   info::VarInfo)
-    println("add_var! ", var, " ", info)
     # if I am sure var is local
     if info.is_marked_local ||
         # if this introduces a new variable that is not defined in the parent scope

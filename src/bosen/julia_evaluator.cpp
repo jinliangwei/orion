@@ -1161,11 +1161,14 @@ JuliaEvaluator::GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *di
 
 jl_value_t *
 JuliaEvaluator::GetDistArrayAccessor(jl_value_t *dist_array) {
+  LOG(INFO) << __func__ << (void*) dist_array;
   jl_module_t *orion_worker_module = GetJlModule(JuliaModule::kOrionWorker);
   jl_function_t *get_accessor_func
       = JuliaEvaluator::GetFunction(orion_worker_module,
                                     "dist_array_get_accessor");
-  return jl_call1(get_accessor_func, dist_array);
+  auto* accessor = jl_call1(get_accessor_func, dist_array);
+  AbortIfException();
+  return accessor;
 }
 
 }

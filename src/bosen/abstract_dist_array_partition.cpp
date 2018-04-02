@@ -506,13 +506,12 @@ AbstractDistArrayPartition::ComputePrefetchIndinces(
     const std::string &prefetch_batch_func_name,
     const std::vector<int32_t> &dist_array_ids_vec,
     const std::unordered_map<int32_t, DistArray*> &global_indexed_dist_arrays,
-    const std::vector<jl_value_t*> &accessed_dist_arrays,
     const std::vector<jl_value_t*> &global_read_only_var_vals,
     const std::vector<std::string> &accumulator_var_syms,
     PointQueryKeyDistArrayMap *point_key_vec_map) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
 
-  size_t num_args = accessed_dist_arrays.size() + global_read_only_var_vals.size()
+  size_t num_args = global_read_only_var_vals.size()
                     + accumulator_var_syms.size() + 5;
 
   jl_value_t **jl_values;
@@ -522,20 +521,16 @@ AbstractDistArrayPartition::ComputePrefetchIndinces(
   jl_value_t* &values_vec_jl = jl_values[1];
   jl_value_t* &dims_vec_jl = jl_values[2];
   jl_value_t* &ids_array_jl = jl_values[3];
-  jl_value_t* &global_indexed_dist_array_dims_jl = jl_values[4];
+  jl_value_t* &global_indexed_dist_array_dims_vec_jl = jl_values[4];
 
-  jl_value_t* &global_indexed_dist_array_dims_vec_jl = jl_values[num_args];
+  jl_value_t* &global_indexed_dist_array_dims_jl = jl_values[num_args];
   jl_value_t* &keys_array_type_jl = jl_values[num_args + 1];
   jl_value_t* &ids_array_type_jl = jl_values[num_args + 2];
   jl_value_t* &dims_array_type_jl = jl_values[num_args + 3];
   jl_value_t* &ret_jl = jl_values[num_args + 4];
-  jl_value_t *&accumulator_val_jl = jl_values[num_args + 5];
+  jl_value_t* &accumulator_val_jl = jl_values[num_args + 5];
 
   size_t args_index = 5;
-  for (size_t i = 0; i < accessed_dist_arrays.size(); i++, args_index++) {
-    jl_values[args_index] = accessed_dist_arrays[i];
-  }
-
   for (size_t i = 0; i < global_read_only_var_vals.size(); i++, args_index++) {
     jl_values[args_index] = global_read_only_var_vals[i];
   }
@@ -609,13 +604,15 @@ void
 AbstractDistArrayPartition::Execute(
     const std::string &loop_batch_func_name,
     const std::vector<jl_value_t*> &accessed_dist_arrays,
+    const std::vector<jl_value_t*> &accessed_dist_array_buffers,
     const std::vector<jl_value_t*> &global_read_only_var_vals,
     const std::vector<std::string> &accumulator_var_syms) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   LOG(INFO) << __func__ << " partition_size = "
             << keys_.size();
 
-  size_t num_args = accessed_dist_arrays.size() + global_read_only_var_vals.size()
+  size_t num_args = accessed_dist_arrays.size() + accessed_dist_array_buffers.size()
+                    + global_read_only_var_vals.size()
                     + accumulator_var_syms.size() + 3;
   LOG(INFO) << "num_args = " << num_args;
   jl_value_t **jl_values;
@@ -630,7 +627,13 @@ AbstractDistArrayPartition::Execute(
   size_t args_index = 3;
 
   for (size_t i = 0; i < accessed_dist_arrays.size(); i++, args_index++) {
+    LOG(INFO) << __func__ << " dist_array i = " << i;
     jl_values[args_index] = JuliaEvaluator::GetDistArrayAccessor(accessed_dist_arrays[i]);
+  }
+
+  for (size_t i = 0; i < accessed_dist_array_buffers.size(); i++, args_index++) {
+    LOG(INFO) << __func__ << " dist_array_buffer i = " << i;
+    jl_values[args_index] = JuliaEvaluator::GetDistArrayAccessor(accessed_dist_array_buffers[i]);
   }
 
   for (size_t i = 0; i < global_read_only_var_vals.size(); i++, args_index++) {

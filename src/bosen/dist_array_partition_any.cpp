@@ -281,7 +281,7 @@ DistArrayPartition<void>::GetAndSerializeValue(
   jl_function_t *serialize_func
       = JuliaEvaluator::GetFunction(jl_base_module, "serialize");
   jl_function_t *takebuff_array_func
-      = JuliaEvaluator::GetFunction(jl_base_module, "takebuf_array");
+      = JuliaEvaluator::GetFunction(jl_base_module, "take!");
 
   auto iter = sparse_index_.find(key);
   CHECK(iter != sparse_index_.end());
@@ -317,7 +317,7 @@ DistArrayPartition<void>::GetAndSerializeValues(
   jl_function_t *serialize_func
       = JuliaEvaluator::GetFunction(jl_base_module, "serialize");
   jl_function_t *takebuff_array_func
-      = JuliaEvaluator::GetFunction(jl_base_module, "takebuf_array");
+      = JuliaEvaluator::GetFunction(jl_base_module, "take!");
   buff = jl_call0(io_buffer_func);
 
   for (size_t i = 0; i < num_keys; i++) {
@@ -475,7 +475,7 @@ DistArrayPartition<void>::Serialize() {
     value_jl = jl_arrayref(reinterpret_cast<jl_array_t*>(values_array_jl_), i);
     jl_call2(serialize_func, buff_jl, value_jl);
     jl_function_t *takebuff_array_func
-        = JuliaEvaluator::GetFunction(jl_base_module, "takebuf_array");
+        = JuliaEvaluator::GetFunction(jl_base_module, "take!");
     serialized_value_array = jl_call1(takebuff_array_func, buff_jl);
     size_t result_array_length = jl_array_len(serialized_value_array);
     num_bytes += result_array_length + sizeof(size_t);
@@ -522,7 +522,7 @@ DistArrayPartition<void>::HashSerialize(
     value_jl = jl_arrayref(reinterpret_cast<jl_array_t*>(values_array_jl_), i);
     jl_call2(serialize_func, buff_jl, value_jl);
     jl_function_t *takebuff_array_func
-        = JuliaEvaluator::GetFunction(jl_base_module, "takebuf_array");
+        = JuliaEvaluator::GetFunction(jl_base_module, "take!");
     serialized_value_array = jl_call1(takebuff_array_func, buff_jl);
     size_t result_array_length = jl_array_len(serialized_value_array);
     uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_value_array));

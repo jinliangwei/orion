@@ -24,7 +24,7 @@ Orion.init(master_ip, master_port, comm_buff_capacity,
 const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/ml-20m/ratings_p.csv"
 const K = 1000
-const num_iterations = 1
+const num_iterations = 16
 const step_size = 0.01
 
 Orion.@accumulator err = 0

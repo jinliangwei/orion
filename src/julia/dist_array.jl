@@ -990,7 +990,6 @@ function create_dist_array_cache_accessor{T, N}(
     dist_array::DistArray{T, N},
     keys::Vector{Int64},
     values::Vector{T})
-    println("create_dist_array_cache_accessor")
     dist_array.accessor = Nullable{DistArrayCacheAccessor{T, N}}(
         DistArrayCacheAccessor{T, N}(dist_array.id,
                                      keys, values,
@@ -1030,7 +1029,7 @@ function Base.setindex!(dist_array::DistArray,
     setindex!(accessor, v, I...)
 end
 
-function dist_array_get_accessor(dist_array::DistArray)
+function dist_array_get_accessor(dist_array::AbstractDistArray)
     return get(dist_array.accessor)
 end
 

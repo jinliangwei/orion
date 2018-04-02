@@ -67,10 +67,12 @@ AbstractExecForLoop::AbstractExecForLoop(
 
   for (size_t i = 0; i < num_dist_array_buffers; i++) {
     int32_t dist_array_buffer_id = dist_array_buffer_ids[i];
+    LOG(INFO) << "accessed_dist_array_buffer = " << dist_array_buffer_id;
     auto iter = dist_array_buffers->find(dist_array_buffer_id);
     CHECK(iter != dist_array_buffers->end());
     auto *dist_array_buffer = &(iter->second);
     dist_array_buffers_.emplace(dist_array_buffer_id, dist_array_buffer);
+    accessed_dist_array_buffer_syms_.emplace_back(dist_array_buffer->GetMeta().GetSymbol());
   }
 
   for (size_t i = 0; i < num_written_dist_array_ids; i++) {
@@ -79,6 +81,8 @@ AbstractExecForLoop::AbstractExecForLoop(
 
   for (size_t i = 0; i < num_accessed_dist_arrays; i++) {
     int32_t dist_array_id = accessed_dist_array_ids[i];
+    LOG(INFO) << "accessed_dist_array_id = " << dist_array_id;
+
     auto iter = dist_arrays->find(dist_array_id);
     CHECK(iter != dist_arrays->end());
     auto *dist_array_ptr = &(iter->second);
@@ -111,8 +115,17 @@ AbstractExecForLoop::Init() {
   accessed_dist_arrays_.resize(accessed_dist_array_syms_.size());
   jl_value_t *dist_array = nullptr;
   for (size_t i = 0; i < accessed_dist_array_syms_.size(); i++) {
+    LOG(INFO) << __func__ << " i = " << i << " " << accessed_dist_array_syms_[i];
     JuliaEvaluator::GetVarJlValue(accessed_dist_array_syms_[i], &dist_array);
     accessed_dist_arrays_[i] = dist_array;
+  }
+
+  accessed_dist_array_buffers_.resize(accessed_dist_array_buffer_syms_.size());
+  jl_value_t *dist_array_buffer = nullptr;
+  for (size_t i = 0; i < accessed_dist_array_buffer_syms_.size(); i++) {
+    LOG(INFO) << __func__ << " i = " << i << " " << accessed_dist_array_buffer_syms_[i];
+    JuliaEvaluator::GetVarJlValue(accessed_dist_array_buffer_syms_[i], &dist_array_buffer);
+    accessed_dist_array_buffers_[i] = dist_array_buffer;
   }
 
   size_t num_global_read_only_var_vals = global_read_only_var_vals_.size();
@@ -197,7 +210,6 @@ AbstractExecForLoop::ComputePrefetchIndinces() {
       kPrefetchBatchFuncName,
       dist_array_ids_vec,
       global_indexed_dist_arrays_,
-      accessed_dist_arrays_,
       global_read_only_var_jl_vals_,
       accumulator_var_syms_,
       &point_prefetch_dist_array_map_);
@@ -209,6 +221,7 @@ AbstractExecForLoop::ExecuteForLoopPartition() {
   PrepareDistArrayCachePartitions();
   curr_partition_->Execute(kLoopBatchFuncName,
                            accessed_dist_arrays_,
+                           accessed_dist_array_buffers_,
                            global_read_only_var_jl_vals_,
                            accumulator_var_syms_);
   ClearCurrPartition();
