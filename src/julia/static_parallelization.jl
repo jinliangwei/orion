@@ -820,7 +820,7 @@ function static_parallelize(iteration_space::Symbol,
     num_dims = length(get(iteration_space_dist_array.iterate_dims))
     println("get_dist_array_access")
     dist_array_access_dict, buffer_set, dist_array_access_context = get_dist_array_access(flow_graph, iteration_var, ssa_defs)
-
+    println(dist_array_access_dict)
     dep_vecs = compute_dependence_vectors(dist_array_access_dict, is_ordered)
     par_scheme = determine_parallelization_scheme(dep_vecs, num_dims)
 

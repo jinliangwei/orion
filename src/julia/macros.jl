@@ -31,15 +31,27 @@ function parallelize_for_loop(loop_stmt::Expr, is_ordered::Bool)
     iteration_var = for_get_iteration_var(loop_stmt)
     iteration_space = for_get_iteration_space(loop_stmt)
 
+    if isa(iteration_var, Expr)
+        @assert iteration_var.head == :tuple
+        new_iteration_var = gen_unique_symbol()
+        loop_stmt.args[1].args[1] = new_iteration_var
+        iteration_var_key = iteration_var.args[1]
+        iteration_var_val = iteration_var.args[2]
+        insert!(loop_stmt.args[2].args, 1, :($iteration_var_key = $(new_iteration_var)[1]))
+        insert!(loop_stmt.args[2].args, 2, :($iteration_var_val = $(new_iteration_var)[2]))
+        iteration_var = new_iteration_var
+    end
+
+    println(loop_stmt)
     @assert isa(iteration_space, Symbol)
     @assert isdefined(current_module(), iteration_space)
     @assert isa(eval(current_module(), iteration_space), DistArray)
 
     # find variables that need to be broadcast and marked global
     @time scope_context = get_scope_context!(nothing, loop_stmt)
+    println(scope_context)
     global_read_only_vars = get_global_read_only_vars(scope_context)
     accumulator_vars = get_accumulator_vars(scope_context)
-
 
     loop_body = for_get_loop_body(loop_stmt)
     @time (flow_graph, _, ssa_context) = flow_analysis(loop_body)

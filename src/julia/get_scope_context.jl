@@ -58,23 +58,21 @@ function get_scope_context_visit(expr::Any,
         return AstWalk.AST_WALK_RECURSE
     elseif head in Set([:(=), :(.=), :(+=), :(/=), :(*=), :(-=)])
         assigned_to = assignment_get_assigned_to(expr)
-        if isa(assigned_to, Symbol)
-            var_mutated = assigned_to
-        else
-            @assert isa(assigned_to, Expr)
-            @assert is_ref(assigned_to) || is_dot(assigned_to)
-            var_mutated = ref_dot_get_mutated_var(assigned_to)
-        end
-
+        var_mutated_vec = Vector{Tuple{Symbol, DataType, Any}}()
+        assigned_to_get_mutated_var_vec(assigned_to, var_mutated_vec)
         if head == :(.=) || scope_context.is_dotted
-            info = VarInfo()
-            info.is_mutated = true
-            add_var!(scope_context, var_mutated, info)
+            for (var_mutated, mutated_type, _) in var_mutated_vec
+                info = VarInfo()
+                info.is_mutated = true
+                add_var!(scope_context, var_mutated, info)
+            end
         else
-            info = VarInfo()
-            info.is_mutated = true
-            info.is_assigned_to = true
-            add_var!(scope_context, var_mutated, info)
+            for (var_mutated, mutated_type, _) in var_mutated_vec
+                info = VarInfo()
+                info.is_mutated = true
+                info.is_assigned_to = true
+                add_var!(scope_context, var_mutated, info)
+            end
         end
         return AstWalk.AST_WALK_RECURSE
     elseif head == :(.)

@@ -115,7 +115,7 @@ struct DistArrayPartition{T}
     DistArrayPartition{T}() where {T} = new(Vector{T}())
 end
 
-function dist_array_partition_get_values(partition::DistArrayPartition)::Vector
+function dist_array_partition_get_values{T}(partition::DistArrayPartition{T})::Vector{T}
     return partition.values
 end
 
@@ -847,7 +847,7 @@ end
 
 function check_and_repartition(dist_array::DistArray,
                                partition_info::DistArrayPartitionInfo)
-    println("check_and_repartition ", dist_array.id,
+    println("check_and_repartition ", dist_array.id, " ", get(dist_array.symbol),
             " ", partition_info.partition_type,
             " ", partition_info.partition_dims)
     curr_partition_info = dist_array.partition_info
@@ -1034,6 +1034,7 @@ function dist_array_get_accessor(dist_array::AbstractDistArray)
 end
 
 function dist_array_create_and_append_partition{T, N}(dist_array::AbstractDistArray{T, N})::DistArrayPartition{T}
+    println("dist_array_create_and_append_partition")
     partition = DistArrayPartition{T}()
     push!(dist_array.partitions, partition)
     return partition

@@ -282,18 +282,19 @@ function compute_use_def_expr(stmt, bb::BasicBlock)
                 assigned_expr = Expr(:call, :(./), assigned_to, assigned_expr)
             end
             compute_use_def_expr(assigned_expr, bb)
-            if isa(assigned_to, Symbol)
-                defsout[assigned_to] = VarDef(assigned_expr)
-                push!(killed, assigned_to)
-                if stmt.head != :(=) &&
-                    !(assigned_to in keys(defsout))
-                    push!(uses, assigned_to)
-                end
-            else
-                @assert isa(assigned_to, Expr)
-                @assert is_ref(assigned_to) || is_dot(assigned_to)
-                var_mutated = ref_dot_get_mutated_var(assigned_to)
-                if var_mutated != nothing
+            var_mutated_vec = Vector{Tuple{Symbol, DataType, Any}}()
+            assigned_to_get_mutated_var_vec(assigned_to, var_mutated_vec)
+            for (var_mutated, mutated_type, _) in var_mutated_vec
+                if mutated_type == Symbol
+                    defsout[var_mutated] = VarDef(assigned_expr)
+                    push!(killed, var_mutated)
+                    if stmt.head != :(=) &&
+                        !(assigned_to in keys(defsout))
+                        push!(uses, var_mutated)
+                    end
+                else
+                    @assert mutated_type == Expr
+                    @assert var_mutated != nothing
                     if var_mutated in keys(defsout)
                         defsout[var_mutated] = VarDef(defsout[var_mutated])
                         defsout[var_mutated].mutation = stmt
@@ -700,19 +701,16 @@ function compute_ssa_defs_stmt(stmt,
             assigned_expr = compute_ssa_defs_stmt(assigned_expr,
                                                   context, sym_to_ssa_var_map, bb_ssa_defs,
                                                   stmt_ssa_defs)
-            if isa(assigned_to, Symbol)
-                ssa_var = gen_unique_sp_symbol()
-                context.ssa_defs[ssa_var] = (assigned_to, VarDef(assigned_expr))
-                push!(bb_ssa_defs, ssa_var)
-                push!(stmt_ssa_defs, ssa_var)
-                sym_to_ssa_var_map[assigned_to] = ssa_var
-                return :($ssa_var = $assigned_expr)
-            else
-                @assert isa(assigned_to, Expr)
-                @assert is_ref(assigned_to) || is_dot(assigned_to)
-                var_mutated = ref_dot_get_mutated_var(assigned_to)
-
-                if var_mutated != nothing
+            var_mutated_vec = Vector{Tuple{Symbol, DataType, Any}}()
+            assigned_to_get_mutated_var_vec(assigned_to, var_mutated_vec)
+            for (var_mutated, mutated_type, _) in var_mutated_vec
+                if mutated_type == Symbol
+                    ssa_var = gen_unique_sp_symbol()
+                    context.ssa_defs[ssa_var] = (var_mutated, VarDef(assigned_expr))
+                    push!(bb_ssa_defs, ssa_var)
+                    push!(stmt_ssa_defs, ssa_var)
+                    sym_to_ssa_var_map[var_mutated] = ssa_var
+                else
                     new_ssa_var = gen_unique_sp_symbol()
                     if var_mutated in keys(sym_to_ssa_var_map)
                         mutated_ssa_var = sym_to_ssa_var_map[var_mutated]
@@ -729,11 +727,11 @@ function compute_ssa_defs_stmt(stmt,
                     push!(stmt_ssa_defs, new_ssa_var)
                     sym_to_ssa_var_map[var_mutated] = new_ssa_var
                 end
-                assigned_to = compute_ssa_defs_stmt(assigned_to, context, sym_to_ssa_var_map,
-                                                    bb_ssa_defs, stmt_ssa_defs)
-
-                return :($assigned_to = $assigned_expr)
             end
+            assigned_to = compute_ssa_defs_stmt(assigned_to, context, sym_to_ssa_var_map,
+                                                bb_ssa_defs, stmt_ssa_defs)
+
+            return :($assigned_to = $assigned_expr)
         elseif stmt.head in Set([:call, :invoke, :call1, :foreigncall])
             arguments = call_get_arguments(stmt)
             for idx in eachindex(arguments)
@@ -811,13 +809,13 @@ function compute_ssa_defs_basic_block(bb::BasicBlock,
         end
     end
     for (sym, def) in bb.defsout
-        @assert sym in keys(sym_to_ssa_var_map)
+        @assert sym in keys(sym_to_ssa_var_map) string(sym)
         push!(bb.ssa_defsout, sym_to_ssa_var_map[sym])
     end
     for stmt in bb.stmts
         if isa(stmt, Tuple)
             sym = stmt[1]
-            @assert sym in keys(sym_to_ssa_var_map)
+            @assert sym in keys(sym_to_ssa_var_map) string(sym)
             push!(bb.ssa_defsout, sym_to_ssa_var_map[sym])
             push!(bb.killed, sym)
         end
@@ -958,15 +956,16 @@ function compute_stmt_ssa_uses_stmt(stmt,
             compute_stmt_ssa_uses_stmt(assignment_get_assigned_from(stmt),
                                        stmt_ssa_uses)
             assigned_to = assignment_get_assigned_to(stmt)
-            if isa(assigned_to, Expr)
-                @assert isa(assigned_to, Expr)
-                @assert is_ref(assigned_to) || is_dot(assigned_to)
-                var_mutated = ref_dot_get_mutated_var(assigned_to)
-                if var_mutated != nothing
-                    @assert isa(var_mutated, Symbol)
-                    push!(stmt_ssa_uses, var_mutated)
+            var_mutated_vec = Vector{Tuple{Symbol, DataType, Any}}()
+            assigned_to_get_mutated_var_vec(assigned_to, var_mutated_vec)
+            for (var_mutated, mutated_type, assigned_to_expr) in var_mutated_vec
+                if mutated_type == Expr
+                    if var_mutated != nothing
+                        @assert isa(var_mutated, Symbol)
+                        push!(stmt_ssa_uses, var_mutated)
+                    end
+                    compute_stmt_ssa_uses_stmt(assigned_to_expr, stmt_ssa_uses)
                 end
-                compute_stmt_ssa_uses_stmt(assigned_to, stmt_ssa_uses)
             end
         elseif stmt.head in Set([:call, :invoke, :call1, :foreigncall])
             arguments = call_get_arguments(stmt)
@@ -1367,9 +1366,10 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
         if !isempty(false_branch_stmt_vec)
             append!(if_stmt.args[3].args, false_branch_stmt_vec)
         end
+
         if !isempty(true_branch_stmt_vec) ||
             !isempty(false_branch_stmt_vec)
-            append!(stmt_vec, if_stmt)
+            push!(stmt_vec, if_stmt)
         end
     elseif bb.control_flow == :while ||
         bb.control_flow == :for
@@ -1483,7 +1483,7 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                                                    sub_stmt_uses)
                     end
                     if stmt_idx in keys(stmt_dict)
-                        append!(stmt_dict[stmt_idx], (da_sym, subscripts_vec))
+                        push!(stmt_dict[stmt_idx], (da_sym, subscripts_vec))
                     else
                         stmt_dict[stmt_idx] = [(da_sym, subscripts_vec)]
                     end

@@ -18,7 +18,12 @@ DistArrayPartition<void>::DistArrayPartition(
   JuliaEvaluator::GetVarJlValue(symbol, &dist_array_jl_);
   jl_function_t *create_partition_func = JuliaEvaluator::GetOrionWorkerFunction(
       "dist_array_create_and_append_partition");
+  LOG(INFO) << "before calling create partition "
+            << " symbol = " << symbol << " "
+            << (void*) dist_array_jl_
+            << " func = " << (void*) create_partition_func;
   partition_jl_ = jl_call1(create_partition_func, dist_array_jl_);
+  JuliaEvaluator::AbortIfException();
   LOG(INFO) << "partition created";
   auto *partition_get_values_func = JuliaEvaluator::GetOrionWorkerFunction(
       "dist_array_partition_get_values");

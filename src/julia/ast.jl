@@ -40,17 +40,21 @@ end
     return ref_expr.args[2:length(ref_expr.args)]
 end
 
+@inline function ref_dot_get_mutated_var_base(ref_expr::Expr)
+    return ref_expr.args[1]
+end
+
 @inline function ref_dot_get_mutated_var(ref_expr::Expr)
-    referenced_var = ref_get_referenced_var(ref_expr)
+    referenced_var = ref_dot_get_mutated_var_base(ref_expr)
     if isa(referenced_var, Symbol)
         return referenced_var
     else
         @assert isa(referenced_var, Expr)
         if referenced_var.head == :(.)
-            return dot_get_mutated_var(referenced_var)
+            return ref_dot_get_mutated_var(referenced_var)
         else
             @assert referenced_var.head == :ref
-            return nothing
+            return ref_dot_get_mutated_var(referenced_var)
         end
     end
 end
@@ -71,7 +75,25 @@ end
     return expr.args[2]
 end
 
-@inline function for_get_iteration_var(loop_stmt::Expr)::Symbol
+@inline function assigned_to_get_mutated_var_vec(assigned_to, var_mutated_vec::Vector{Tuple{Symbol, DataType, Any}})
+    if isa(assigned_to, Symbol)
+        var_mutated = assigned_to
+        push!(var_mutated_vec, (var_mutated, Symbol, var_mutated))
+    else
+        @assert isa(assigned_to, Expr)
+        if assigned_to.head == :tuple
+            for var in assigned_to.args
+                assigned_to_get_mutated_var_vec(var, var_mutated_vec)
+            end
+        else
+            @assert is_ref(assigned_to) || is_dot(assigned_to)
+            var_mutated = ref_dot_get_mutated_var(assigned_to)
+            push!(var_mutated_vec, (var_mutated, Expr, assigned_to))
+        end
+    end
+end
+
+@inline function for_get_iteration_var(loop_stmt::Expr)
     return loop_stmt.args[1].args[1]
 end
 
