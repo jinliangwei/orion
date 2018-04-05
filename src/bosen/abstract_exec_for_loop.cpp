@@ -1,6 +1,7 @@
 #include <orion/bosen/abstract_exec_for_loop.hpp>
 #include <orion/bosen/julia_evaluator.hpp>
 #include <orion/bosen/julia_module.hpp>
+#include <string.h>
 #include <vector>
 #include <memory>
 namespace orion {
@@ -31,12 +32,13 @@ AbstractExecForLoop::AbstractExecForLoop(
     const char *prefetch_batch_func_name,
     std::unordered_map<int32_t, DistArray> *dist_arrays,
     std::unordered_map<int32_t, DistArray> *dist_array_buffers):
+    prefetch_status_(strlen(prefetch_batch_func_name) == 0 ? PrefetchStatus::kSkipPrefetch : PrefetchStatus::kNotPrefetched),
     kExecutorId(executor_id),
     kNumExecutors(num_executors),
     kNumServers(num_servers),
     kLoopBatchFuncName(loop_batch_func_name),
     kPrefetchBatchFuncName(prefetch_batch_func_name) {
-
+  LOG(INFO) << "strlen(prefetch_batch_func_name) = " << strlen(prefetch_batch_func_name);
   auto iter = dist_arrays->find(iteration_space_id);
   CHECK(iter != dist_arrays->end());
   iteration_space_ = &(iter->second);
@@ -61,8 +63,6 @@ AbstractExecForLoop::AbstractExecForLoop(
     CHECK(iter != dist_arrays->end());
     auto *dist_array_ptr = &(iter->second);
     global_indexed_dist_arrays_.emplace(std::make_pair(id, dist_array_ptr));
-    dist_array_cache_.emplace(id,
-                              std::unique_ptr<AbstractDistArrayPartition>(dist_array_ptr->CreatePartition()));
   }
 
   for (size_t i = 0; i < num_dist_array_buffers; i++) {
@@ -111,6 +111,13 @@ AbstractExecForLoop::Init() {
               &index_jl,
               &serialized_value_array,
               &serialized_value_array_type);
+
+  for (auto global_indexed_dist_array_pair : global_indexed_dist_arrays_) {
+    int32_t id = global_indexed_dist_array_pair.first;
+    auto* dist_array_ptr = global_indexed_dist_array_pair.second;
+    dist_array_cache_.emplace(id,
+                              std::unique_ptr<AbstractDistArrayPartition>(dist_array_ptr->CreatePartition()));
+  }
 
   accessed_dist_arrays_.resize(accessed_dist_array_syms_.size());
   jl_value_t *dist_array = nullptr;
@@ -174,6 +181,11 @@ AbstractExecForLoop::Clear() {
 void
 AbstractExecForLoop::SentAllPrefetchRequests() {
   prefetch_status_ = PrefetchStatus::kPrefetchSent;
+}
+
+bool
+AbstractExecForLoop::SkipPrefetch() const {
+  return (prefetch_status_ == PrefetchStatus::kSkipPrefetch);
 }
 
 bool

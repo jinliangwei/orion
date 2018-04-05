@@ -95,8 +95,10 @@ ExecForLoopSpaceTimeUnordered::GetCurrPartitionRunnableStatus() {
             (clock_ <= pred_clock_) ||
             ((clock_ == pred_clock_ + 1) && (time_sub_clock_ <= pred_time_sub_clock_))
           )) return AbstractExecForLoop::RunnableStatus::kAwaitPredecessor;
-    if (!HasSentAllPrefetchRequests()) return AbstractExecForLoop::RunnableStatus::kPrefetchGlobalIndexedDistArrays;
-    if (!HasRecvedAllPrefetches()) return AbstractExecForLoop::RunnableStatus::kAwaitGlobalIndexedDistArrays;
+    if (!SkipPrefetch()) {
+      if (!HasSentAllPrefetchRequests()) return AbstractExecForLoop::RunnableStatus::kPrefetchGlobalIndexedDistArrays;
+      if (!HasRecvedAllPrefetches()) return AbstractExecForLoop::RunnableStatus::kAwaitGlobalIndexedDistArrays;
+    }
   }
 
   if (!HasRecvedAllTimePartitionedDistArrays(curr_time_partition_id_))
@@ -198,7 +200,7 @@ ExecForLoopSpaceTimeUnordered::ClearCurrPartition() {
   }
   curr_partition_prepared_ = false;
   dist_array_cache_prepared_ = false;
-  prefetch_status_ = PrefetchStatus::kNotPrefetched;
+  prefetch_status_ = SkipPrefetch() ? PrefetchStatus::kSkipPrefetch : PrefetchStatus::kNotPrefetched;
 }
 
 }

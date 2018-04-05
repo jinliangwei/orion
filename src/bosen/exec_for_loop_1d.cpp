@@ -67,7 +67,7 @@ AbstractExecForLoop::RunnableStatus
 ExecForLoop1D::GetCurrPartitionRunnableStatus() {
   if (clock_ == kNumClocks) return AbstractExecForLoop::RunnableStatus::kCompleted;
   if (curr_partition_ == nullptr) return AbstractExecForLoop::RunnableStatus::kSkip;
-  if (!global_indexed_dist_arrays_.empty()) {
+  if (!global_indexed_dist_arrays_.empty() && !SkipPrefetch()) {
     if (!HasSentAllPrefetchRequests()) return AbstractExecForLoop::RunnableStatus::kPrefetchGlobalIndexedDistArrays;
     if (!HasRecvedAllPrefetches()) return AbstractExecForLoop::RunnableStatus::kAwaitGlobalIndexedDistArrays;
   }
@@ -135,7 +135,7 @@ ExecForLoop1D::ClearCurrPartition() {
   }
   curr_partition_prepared_ = false;
   dist_array_cache_prepared_ = false;
-  prefetch_status_ = PrefetchStatus::kNotPrefetched;
+  prefetch_status_ = SkipPrefetch() ? PrefetchStatus::kSkipPrefetch : PrefetchStatus::kNotPrefetched;
 }
 
 }

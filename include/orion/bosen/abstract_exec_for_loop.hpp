@@ -27,13 +27,14 @@ class AbstractExecForLoop {
   enum class PrefetchStatus {
     kNotPrefetched = 0,
       kPrefetchSent = 1,
-      kPrefetchRecved = 2
+      kPrefetchRecved = 2,
+      kSkipPrefetch = 3
                      };
 
  protected:
   PointQueryKeyDistArrayMap point_prefetch_dist_array_map_;
   size_t num_pending_prefetch_requests_ {0};
-  PrefetchStatus prefetch_status_ {PrefetchStatus::kNotPrefetched};
+  PrefetchStatus prefetch_status_;
 
   std::unordered_map<int32_t, DistArray*> space_partitioned_dist_arrays_;
   std::unordered_map<int32_t, DistArray*> time_partitioned_dist_arrays_;
@@ -111,6 +112,7 @@ class AbstractExecForLoop {
 
   bool SendGlobalIndexedDistArrays() const { return !global_indexed_dist_arrays_.empty(); }
   void SentAllPrefetchRequests();
+  bool SkipPrefetch() const;
   bool HasSentAllPrefetchRequests() const;
   bool HasRecvedAllPrefetches() const;
   bool HasRecvedAllTimePartitionedDistArrays(int32_t time_partition_id) const;
