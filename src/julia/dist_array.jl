@@ -930,7 +930,7 @@ function set_iterate_dims(dist_array::DistArray,
 end
 
 function from_int64_to_keys(key::Int64, dims::Vector{Int64})::Vector{Int64}
-    dim_keys = []
+    dim_keys = Vector{Int64}()
     for dim in dims
         key_this_dim = key % dim + 1
         push!(dim_keys, key_this_dim)
@@ -1030,11 +1030,11 @@ function Base.setindex!(dist_array::DistArray,
 end
 
 function dist_array_get_accessor(dist_array::AbstractDistArray)
+    accessor = get(dist_array.accessor)
     return get(dist_array.accessor)
 end
 
 function dist_array_create_and_append_partition{T, N}(dist_array::AbstractDistArray{T, N})::DistArrayPartition{T}
-    println("dist_array_create_and_append_partition")
     partition = DistArrayPartition{T}()
     push!(dist_array.partitions, partition)
     return partition
@@ -1060,10 +1060,10 @@ struct DistArrayAccessSetRecorder{N} <: AbstractArray{Int32, N}
     keys_set::Set{Int64}
     dims::NTuple{N, Int64}
     DistArrayAccessSetRecorder{N}(dims::Vector{Int64}) where {N} = new(Set{Int64}(),
-                                                          tuple(dims...))
+                                                                       tuple(dims...))
 
     DistArrayAccessSetRecorder{N}(dims::NTuple{N, Int64}) where {N} = new(Set{Int64}(),
-                                                             dims)
+                                                                          dims)
 end
 
 Base.IndexStyle{T<:DistArrayAccessSetRecorder}(::Type{T}) = IndexLinear()
@@ -1074,7 +1074,7 @@ end
 
 function Base.getindex(access_recorder::DistArrayAccessSetRecorder,
                        i::Int)
-    push!(access_recorder.keys_set, i)
+    push!(access_recorder.keys_set, i - 1)
     return 0
 end
 

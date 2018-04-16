@@ -7,11 +7,10 @@ Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 # test library path
 Orion.helloworld()
 
-#const master_ip = "10.117.1.3"
 const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 1
+const num_executors = 16
 const num_servers = 1
 
 # initialize logging of the runtime library
@@ -21,12 +20,12 @@ Orion.init(master_ip, master_port, comm_buff_capacity,
 
 #const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
 #const data_path = "file:///home/ubuntu/data/ml-10M100K/ratings.csv"
-const data_path = "file:///users/jinlianw/ratings.csv"
-#const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
+#const data_path = "file:///users/jinlianw/ratings.csv"
+const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/ml-20m/ratings_p.csv"
 const K = 1000
-const num_iterations = 2
-const step_size = Float32(0.02)
+const num_iterations = 32
+const alpha = Float32(0.08)
 
 Orion.@accumulator err = 0
 Orion.@accumulator line_cnt = 0
@@ -62,17 +61,27 @@ Orion.@dist_array H = Orion.randn(K, dim_y)
 Orion.@dist_array H = Orion.map(H, map_init_param, map_values = true)
 Orion.materialize(H)
 
+Orion.@dist_array W_z = Orion.fill(Float32(1.0), K, dim_x)
+Orion.materialize(W_z)
+
+Orion.@dist_array H_z = Orion.fill(Float32(1.0), K, dim_y)
+Orion.materialize(H_z)
+
 #Orion.dist_array_set_num_partitions_per_dim(ratings, num_executors * 4)
 
 error_vec = Vector{Float64}()
 time_vec = Vector{Float64}()
-start_time = now()
 
 W_grad = zeros(K)
 H_grad = zeros(K)
+W_lr = zeros(K)
+H_lr = zeros(K)
+W_lr_old = zeros(K)
+H_lr_old = zeros(K)
 
+start_time = now()
 @time for iteration = 1:num_iterations
-    Orion.@parallel_for for rating in ratings
+    @time Orion.@parallel_for for rating in ratings
         x_idx = rating[1][1]
         y_idx = rating[1][2]
         rv = rating[2]
@@ -81,20 +90,38 @@ H_grad = zeros(K)
         H_row = @view H[:, y_idx]
         pred = dot(W_row, H_row)
         diff = rv - pred
-        W_grad .= -2 * diff .* H_row
-        H_grad .= -2 * diff .* W_row
-        W[:, x_idx] .= W_row .- step_size .* W_grad
-        H[:, y_idx] .= H_row .- step_size .* H_grad
+        W_grad .= (-Float32(2) * diff) .* H_row
+        H_grad .= (-Float32(2) * diff) .* W_row
+
+        #W_z_row = @view W_z[:, x_idx]
+        #H_z_row = @view H_z[:, y_idx]
+
+        #W_lr_old .= alpha ./ sqrt.(W_z_row)
+        #H_lr_old .= alpha ./ sqrt.(H_z_row)
+
+        W_z[:, x_idx] .+= abs2.(W_grad)
+        H_z[:, y_idx] .+= abs2.(H_grad)
+
+        W_z_row_new = @view W_z[:, x_idx]
+        H_z_row_new = @view H_z[:, y_idx]
+
+        W_lr .= alpha ./ sqrt.(W_z_row_new)
+        H_lr .= alpha ./ sqrt.(H_z_row_new)
+
+        W[:, x_idx] .= W_row .- (W_lr .* W_grad)
+        H[:, y_idx] .= H_row .- (H_lr .* H_grad)
+        #W[:, x_idx] .= W_row .- (W_lr .* W_grad) .+ ((W_lr_old .- W_lr) .* W_grad)
+        #H[:, y_idx] .= H_row .- (H_lr .* H_grad) .+ ((H_lr_old .- H_lr) .* H_grad)
     end
-    @time if iteration % 4 == 1 ||
+    @time if iteration % 1 == 0 ||
         iteration == num_iterations
         println("evaluate model")
         Orion.@parallel_for for rating in ratings
             x_idx = rating[1][1]
             y_idx = rating[1][2]
             rv = rating[2]
-            W_row = @view W[:, x_idx]
-            H_row = @view H[:, y_idx]
+            W_row = W[:, x_idx]
+            H_row = H[:, y_idx]
             pred = dot(W_row, H_row)
             err += (rv - pred) ^ 2
         end

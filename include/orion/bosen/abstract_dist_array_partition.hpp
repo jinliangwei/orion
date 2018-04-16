@@ -49,8 +49,6 @@ class AbstractDistArrayPartition {
   bool sorted_ { false };
   DistArrayPartitionStorageType storage_type_ { DistArrayPartitionStorageType::kKeyValueBuffer };
 
-  mutable size_t d_i_ { 0 };
-
  public:
   AbstractDistArrayPartition(DistArray* dist_array,
                              const Config &config,
@@ -75,12 +73,12 @@ class AbstractDistArrayPartition {
                const std::vector<jl_value_t*> &accessed_dist_array_buffers,
                const std::vector<jl_value_t*> &global_read_only_var_vals,
                const std::vector<std::string> &accumulator_var_syms);
-  void ComputePrefetchIndinces(const std::string &prefetch_batch_func_name,
-                               const std::vector<int32_t> &dist_array_ids_vec,
-                               const std::unordered_map<int32_t, DistArray*> &global_indexed_dist_arrays,
-                               const std::vector<jl_value_t*> &global_read_only_var_vals,
-                               const std::vector<std::string> &accumulator_var_syms,
-                               PointQueryKeyDistArrayMap *point_key_vec_map);
+  void ComputePrefetchIndices(const std::string &prefetch_batch_func_name,
+                              const std::vector<int32_t> &dist_array_ids_vec,
+                              const std::unordered_map<int32_t, DistArray*> &global_indexed_dist_arrays,
+                              const std::vector<jl_value_t*> &global_read_only_var_vals,
+                              const std::vector<std::string> &accumulator_var_syms,
+                              PointQueryKeyDistArrayMap *point_key_vec_map);
 
   // repartition
   void ComputeHashRepartitionIdsAndRepartition(size_t num_partitions);
@@ -90,7 +88,11 @@ class AbstractDistArrayPartition {
   // storage type state transition
   void BuildIndex();
   void CheckAndBuildIndex();
-  void BeginIterate() const { d_i_ = 0; }
+  void ApplyBufferedUpdates(
+      AbstractDistArrayPartition* dist_array_buffer,
+      const std::vector<AbstractDistArrayPartition*> &helper_dist_arrays,
+      const std::vector<AbstractDistArrayPartition*> &helper_dist_array_buffers,
+      const std::string &apply_buffer_func_name);
 
   // storage type state transition
   virtual void CreateAccessor() = 0;
@@ -111,21 +113,18 @@ class AbstractDistArrayPartition {
 
   // apply updates
   virtual const uint8_t* DeserializeAndOverwrite(const uint8_t *buffer) = 0;
-  virtual void ApplyBufferedUpdates(
-      const AbstractDistArrayPartition* dist_array_buffer,
-      const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
-      const std::string &apply_buffer_func_name) = 0;
-  virtual bool GetNext(int64_t *key, jl_value_t **value) const = 0;
   virtual jl_value_t *GetGcPartition() = 0;
   virtual void Clear() = 0;
+  virtual void Sort() = 0;
  protected:
   DISALLOW_COPY(AbstractDistArrayPartition);
 
   void AppendKeyValue(int64_t key, jl_value_t* value);
+  std::vector<int64_t>& GetKeys();
   virtual void Repartition(const int32_t *repartition_ids) = 0;
 
   virtual void GetJuliaValueArray(jl_value_t **value) = 0;
-
+  virtual void RestoreJuliaValueArray(jl_value_t *value) = 0;
   virtual void AppendJuliaValue(jl_value_t *value) = 0;
   virtual void AppendJuliaValueArray(jl_value_t *value) = 0;
 

@@ -357,7 +357,6 @@ Executor::Executor(const Config& config,
     prt_send_mem_(kCommBuffCapacity),
     prt_recv_mem_(kCommBuffCapacity) {
   set_julia_thread_requester(julia_requester_);
-  LOG(INFO) << __func__ << " id = " << kId;
 }
 
 Executor::~Executor() { }
@@ -1212,7 +1211,6 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
               break;
             case TaskLabel::kComputePrefetchIndices:
               {
-                LOG(INFO) << "ComputePrefetchIndices done!";
                 SerializeAndSendExecForLoopPrefetchRequests();
                 CheckAndExecuteForLoop(false);
               }
@@ -1314,7 +1312,6 @@ Executor::HandleExecuteMsg() {
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgPartitionNumLines>(recv_buff);
         size_t num_partitions = msg->num_partitions;
-        LOG(INFO) << "num_partitions = " << num_partitions;
         if (num_partitions > 0) {
           size_t expected_size = num_partitions * sizeof(size_t);
           bool received_next_msg =
@@ -1377,7 +1374,6 @@ Executor::HandleExecuteMsg() {
       break;
     case message::ExecuteMsgType::kRepartitionDistArrayMaxPartitionIds:
       {
-        LOG(INFO) << "RepartitionDistArrayMaxPartitionIds";
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgRepartitionDistArrayMaxPartitionIds>(recv_buff);
         size_t num_dims = msg->num_dims;
@@ -1759,7 +1755,6 @@ Executor::CreateDistArray() {
             init_type == DistArrayInitType::kFill) {
           dist_array_meta.SetContiguousPartitions(true);
         }
-        dist_array.SetDims(create_dist_array.dims().data(), create_dist_array.num_dims());
         auto cpp_func = std::bind(&DistArray::Init, &dist_array);
         exec_cpp_func_task_.func = cpp_func;
         exec_cpp_func_task_.label = TaskLabel::kInitDistArray;

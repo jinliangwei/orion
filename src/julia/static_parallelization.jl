@@ -195,6 +195,7 @@ function parallelize_naive(iteration_space::Symbol,
                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                            flow_graph::BasicBlock,
                            dist_array_access_context::DistArrayAccessContext)
+    println("parallelize_naive")
     iteration_space_dist_array = eval(current_module(), iteration_space)
     iteration_space_partition_info = isnull(iteration_space_dist_array.target_partition_info) ?
         iteration_space_dist_array.partition_info :
@@ -307,7 +308,6 @@ function parallelize_1d(iteration_space::Symbol,
     loop_partition_func = gen_1d_partition_function(loop_partition_func_name,
                                                     space_partition_dim + iteration_space_dims_diff,
                                                     tile_size)
-    println("tile_size = ", tile_size, " partition_dim = ", space_partition_dim + iteration_space_dims_diff)
     dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
                                                        string(loop_partition_func_name),
                                                        (space_partition_dim + iteration_space_dims_diff,),
@@ -345,7 +345,8 @@ function parallelize_1d(iteration_space::Symbol,
     else
         global_indexed_dist_array_id_vec = Vector{Int32}()
     end
-
+    println("global indexed dist array id vec = ",
+            global_indexed_dist_array_id_vec)
     println(dist_array_buffer_id_vec)
     written_dist_array_id_vec = Vector{Int32}()
     accessed_dist_array_sym_vec = Vector{Symbol}()
@@ -367,14 +368,16 @@ function parallelize_1d(iteration_space::Symbol,
                                                            iteration_space_dims)
         partition_dim = 0
         if !(da_sym in buffer_global_indexed_dist_array_sym_set) &&
+            !(da_sym in global_indexed_dist_array_sym_set) &&
             space_partition_dim in keys(partition_dims)
-            partition_dim = partition_dims[space_partition_dim]
+                   partition_dim = partition_dims[space_partition_dim]
             push!(space_partitioned_dist_array_id_vec, eval(current_module(), da_sym).id)
-        else
+        elseif !(da_sym in global_indexed_dist_array_sym_set)
             push!(global_indexed_dist_array_id_vec, eval(current_module(), da_sym).id)
             push!(global_indexed_dist_array_sym_set, da_sym)
         end
 
+        println(da_sym, " ", partition_dim, " id = ", eval(current_module(), da_sym).id)
 
         if partition_dim > 0
             partition_func_name = gen_unique_symbol()
@@ -389,20 +392,23 @@ function parallelize_1d(iteration_space::Symbol,
                                                                DistArrayIndexType_none)
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
-        else
-            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
-                                                               DistArrayIndexType_range)
-            repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
-            push!(parallelized_loop.args, repartition_stmt)
         end
     end
+
+    for da_sym in global_indexed_dist_array_sym_set
+        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
+                                                           DistArrayIndexType_range)
+        repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
+        push!(parallelized_loop.args, repartition_stmt)
+    end
+
     for da_sym in buffer_global_indexed_dist_array_sym_set
         if da_sym in global_indexed_dist_array_sym_set
             continue
         end
         dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
                                                            DistArrayIndexType_none)
-        repartition_stmt = :(Orion.check_and_repartition($(esc(helper_da_sym)), $dist_array_partition_info))
+        repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
     end
 
@@ -418,6 +424,7 @@ function parallelize_1d(iteration_space::Symbol,
                                             global_read_only_vars,
                                             accumulator_vars,
                                             ssa_defs)
+    println(loop_body_func)
     iter_space_value_type = dist_array_get_value_type(iteration_space_dist_array)
     if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
         loop_batch_func = gen_loop_body_batch_function(loop_batch_func_name,
@@ -437,6 +444,7 @@ function parallelize_1d(iteration_space::Symbol,
                                                                  global_read_only_vars,
                                                                  accumulator_vars)
     end
+    println(loop_batch_func)
     println("generate prefetch_function")
     prefetch_func = nothing
     prefetch_batch_func = nothing
@@ -596,6 +604,7 @@ function parallelize_2d(iteration_space::Symbol,
                                                            iteration_space_dims)
         partition_dim = 0
         if !(da_sym in buffer_global_indexed_dist_array_sym_set) &&
+            !(da_sym in global_indexed_dist_array_sym_set) &&
             (space_partition_dim in keys(partition_dims) ||
              time_partition_dim in keys(partition_dims))
             if space_partition_dim in keys(partition_dims)
@@ -608,7 +617,7 @@ function parallelize_2d(iteration_space::Symbol,
                 push!(time_partitioned_dist_array_id_vec, eval(current_module(), da_sym).id)
                 tile_size = tile_sizes[2]
             end
-        else
+        elseif !(da_sym in global_indexed_dist_array_sym_set)
             push!(global_indexed_dist_array_id_vec, eval(current_module(), da_sym).id)
             push!(global_indexed_dist_array_sym_set, da_sym)
         end
@@ -626,12 +635,14 @@ function parallelize_2d(iteration_space::Symbol,
                                                                DistArrayIndexType_none)
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
-        else
-            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_server_hash,
-                                                               DistArrayIndexType_range)
-            repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
-            push!(parallelized_loop.args, repartition_stmt)
         end
+    end
+
+    for da_sym in global_indexed_dist_array_sym_set
+        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_server_hash,
+                                                           DistArrayIndexType_range)
+        repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
+        push!(parallelized_loop.args, repartition_stmt)
     end
 
     for da_sym in buffer_global_indexed_dist_array_sym_set
@@ -640,7 +651,7 @@ function parallelize_2d(iteration_space::Symbol,
         end
         dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
                                                            DistArrayIndexType_none)
-        repartition_stmt = :(Orion.check_and_repartition($(esc(helper_da_sym)), $dist_array_partition_info))
+        repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
     end
 

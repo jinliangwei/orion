@@ -57,6 +57,7 @@ ServerExecForLoop::ServerExecForLoop(
       helper_dist_arrays_.emplace(helper_dist_array_id, &dist_array);
     }
   }
+  PrepareHelperDistArrays();
 }
 
 ServerExecForLoop::~ServerExecForLoop() { }
@@ -64,18 +65,11 @@ ServerExecForLoop::~ServerExecForLoop() { }
 void
 ServerExecForLoop::PrepareHelperDistArrays() {
   for (auto &dist_array_pair : helper_dist_arrays_) {
+    LOG(INFO) << __func__ << " dist_array_id = " << dist_array_pair.first;
     auto *dist_array_ptr = dist_array_pair.second;
-    auto *dist_array_partition = dist_array_ptr->GetLocalPartition(kServerId);
-    dist_array_partition->CreateAccessor();
-  }
-}
-
-void
-ServerExecForLoop::RetrieveHelperDistArrays() {
-  for (auto &dist_array_pair : helper_dist_arrays_) {
-    auto *dist_array_ptr = dist_array_pair.second;
-    auto *dist_array_partition = dist_array_ptr->GetLocalPartition(kServerId);
-    dist_array_partition->ClearAccessor();
+    auto *helper_partition = dist_array_ptr->GetLocalPartition(kServerId);
+    helper_partition->BuildKeyValueBuffersFromSparseIndex();
+    helper_partition->Sort();
   }
 }
 
@@ -84,24 +78,17 @@ ServerExecForLoop::DeserializeAndApplyDistArrayCaches(
     uint8_t* bytes) {
   const auto *cursor = bytes;
   size_t num_dist_arrays = *reinterpret_cast<const size_t*>(cursor);
-  LOG(INFO) << __func__ << " num_dist_arrays = " << num_dist_arrays;
   cursor += sizeof(size_t);
   for (size_t i = 0; i < num_dist_arrays; i++) {
     auto dist_array_id = *reinterpret_cast<const int32_t*>(cursor);
     cursor += sizeof(int32_t);
-    LOG(INFO) << "deserialize and apply dist array cache "
-              << dist_array_id;
-    LOG(INFO) << "dist_arrays = " << (void*) dist_arrays_;
     auto iter = dist_arrays_->find(dist_array_id);
     CHECK(iter != dist_arrays_->end());
-    LOG(INFO) << "found dist array";
     auto &dist_array = iter->second;
     auto *dist_array_partition = dist_array.GetLocalPartition(kServerId);
-    LOG(INFO) << "local partition  = " << (void*) dist_array_partition;
 
     cursor = dist_array_partition->DeserializeAndOverwrite(cursor);
   }
-  LOG(INFO) << __func__ << " done!";
   delete[] bytes;
 }
 
@@ -140,13 +127,21 @@ ServerExecForLoop::DeserializeAndApplyDistArrayBuffers(
     auto *partition_to_update = dist_array_to_update.GetLocalPartition(kServerId);
 
     std::vector<AbstractDistArrayPartition*> my_helper_dist_arrays;
-    std::vector<const AbstractDistArrayPartition*> helper_dist_array_buffers;
+    std::vector<AbstractDistArrayPartition*> dist_array_partitions_to_restore_index;
+    std::vector<AbstractDistArrayPartition*> helper_dist_array_buffers;
     for (auto helper_dist_array_id : helper_dist_array_ids) {
-      if (helper_dist_arrays_.count(helper_dist_array_id) > 0) continue;
-      auto helper_dist_array_iter = dist_arrays_->find(helper_dist_array_id);
-      auto &helper_dist_array = helper_dist_array_iter->second;
-      auto *helper_partition = helper_dist_array.GetLocalPartition(kServerId);
-      helper_partition->BuildKeyValueBuffersFromSparseIndex();
+      auto helper_dist_array_iter = helper_dist_arrays_.find(helper_dist_array_id);
+      AbstractDistArrayPartition* helper_partition = nullptr;
+      if (helper_dist_array_iter == helper_dist_arrays_.end()) {
+        auto dist_array_iter = dist_arrays_->find(helper_dist_array_id);
+        auto &helper_dist_array = dist_array_iter->second;
+        helper_partition = helper_dist_array.GetLocalPartition(kServerId);
+        helper_partition->BuildKeyValueBuffersFromSparseIndex();
+        helper_partition->Sort();
+        dist_array_partitions_to_restore_index.push_back(helper_partition);
+      } else {
+        helper_partition = helper_dist_array_iter->second->GetLocalPartition(kServerId);
+      }
       my_helper_dist_arrays.push_back(helper_partition);
     }
 
@@ -156,12 +151,15 @@ ServerExecForLoop::DeserializeAndApplyDistArrayBuffers(
       helper_dist_array_buffers.push_back(buffer_partition);
     }
 
+    partition_to_update->BuildKeyValueBuffersFromSparseIndex();
+    partition_to_update->Sort();
     partition_to_update->ApplyBufferedUpdates(updates_buffer_partition,
+                                              my_helper_dist_arrays,
                                               helper_dist_array_buffers,
                                               apply_buffer_func_name);
+    partition_to_update->CheckAndBuildIndex();
 
-    for (auto *helper_dist_array_partition : my_helper_dist_arrays) {
-      helper_dist_array_partition->ClearAccessor();
+    for (auto *helper_dist_array_partition : dist_array_partitions_to_restore_index) {
       helper_dist_array_partition->CheckAndBuildIndex();
     }
   }

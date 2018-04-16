@@ -166,8 +166,10 @@ function set_write_buffer(dist_array_buffer::DistArrayBuffer,
                           apply_func::Function,
                           helpers...)
     apply_func_name = Base.function_name(apply_func)
+    apply_updates_batch_func_name = gen_unique_symbol()
+
     buffer_info = DistArrayBufferInfo(dist_array.id,
-                                      apply_func_name)
+                                      apply_updates_batch_func_name)
     for helper in helpers
         if isa(helper, DistArrayBuffer)
             push!(buffer_info.helper_dist_array_buffer_ids, helper.id)
@@ -187,6 +189,16 @@ function set_write_buffer(dist_array_buffer::DistArrayBuffer,
           length(buffer_info.helper_dist_array_buffer_ids),
           buffer_info.helper_dist_array_ids,
           length(buffer_info.helper_dist_array_ids))
+    num_helper_dist_arrays = length(buffer_info.helper_dist_array_ids)
+    num_helper_dist_array_buffers = length(buffer_info.helper_dist_array_buffer_ids)
+
+    apply_updates_batch_func = gen_apply_batch_buffered_updates_func(
+        apply_updates_batch_func_name,
+        apply_func_name,
+        num_helper_dist_arrays,
+        num_helper_dist_array_buffers)
+    println(apply_updates_batch_func)
+    eval_expr_on_all(apply_updates_batch_func, :Main)
 end
 
 function reset_write_buffer(dist_array_buffer::DistArrayBuffer)

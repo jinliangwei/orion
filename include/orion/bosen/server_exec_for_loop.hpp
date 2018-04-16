@@ -30,7 +30,6 @@ class ServerExecForLoop {
   ~ServerExecForLoop();
 
   void PrepareHelperDistArrays();
-  void RetrieveHelperDistArrays();
   void DeserializeAndApplyDistArrayCaches(uint8_t* bytes);
   void DeserializeAndApplyDistArrayBuffers(uint8_t* bytes);
   bool NotifyExecForLoopDone();

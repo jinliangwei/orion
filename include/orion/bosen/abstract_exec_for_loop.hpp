@@ -112,12 +112,13 @@ class AbstractExecForLoop {
 
   bool SendGlobalIndexedDistArrays() const { return !global_indexed_dist_arrays_.empty(); }
   void SentAllPrefetchRequests();
+  void ToSkipPrefetch();
   bool SkipPrefetch() const;
   bool HasSentAllPrefetchRequests() const;
   bool HasRecvedAllPrefetches() const;
   bool HasRecvedAllTimePartitionedDistArrays(int32_t time_partition_id) const;
 
-  void ComputePrefetchIndinces();
+  void ComputePrefetchIndices();
   void ExecuteForLoopPartition();
   void ClearSendBuffer();
   void SerializeAndClearPrefetchIds(ExecutorSendBufferMap *send_buffer_map);

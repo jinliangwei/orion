@@ -1,8 +1,8 @@
 const data_path = "/proj/BigLearning/jinlianw/data/a1a"
-const num_iterations = 16
-step_size = 0.0001
+const num_iterations = 8
+step_size = 0.01
 const num_features = 123
-const step_size_decay = 0.9
+const step_size_decay = 1
 
 err = 0
 loss = 0
@@ -16,6 +16,9 @@ function parse_line(index::Int64, line::AbstractString)::Tuple{Tuple{Int64},
     feature_vec = Vector{Tuple{Int64, Float32}}()
     tokens = split(strip(line), ' ')
     label = parse(Int64, tokens[1])
+    if label == -1
+        label = 0
+    end
     for token in tokens[2:end]
         feature = split(token, ":")
         feature_id = parse(Int64, feature[1])
@@ -33,14 +36,11 @@ function load_data(path::AbstractString)
         for line::String in eachline(dataf)
             token_tuple = parse_line(num_lines, line)
             push!(samples, token_tuple)
+            num_liens += 1
         end
     end
     return samples
 end
-
-samples = load_data(data_path)
-
-weights = rand(num_features)
 
 function sigmoid(z)
     return 1.0 / (1.0 + exp(-z))
@@ -55,6 +55,17 @@ end
 
 error_vec = Vector{Float64}()
 loss_vec = Vector{Float64}()
+
+samples = load_data(data_path)
+srand(1)
+#weights = rand(num_features)
+weights = ones(num_features) .* 0.1
+println(weights)
+update_buff = zeros(num_features)
+
+err = 0
+loss = 0
+
 for iteration = 1:num_iterations
     for sample in samples
         sum = 0.0
@@ -69,11 +80,12 @@ for iteration = 1:num_iterations
         for feature in features
             fid = feature[1]
             fval = feature[2]
-            weights[fid] -= step_size * fval * diff
+            update_buff[fid] -= step_size * fval * diff
         end
     end
     step_size *= step_size_decay
-    println(weights)
+    weights += update_buff
+    update_buff = zeros(num_features)
     if iteration % 1 == 0 ||
         iteration == num_iterations
         for sample in samples

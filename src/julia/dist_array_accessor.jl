@@ -23,7 +23,7 @@ struct SparseDistArrayAccessor{T, N} <: DistArrayAccessor{T, N}
     dims::NTuple{N, Int64}
     SparseDistArrayAccessor{T, N}(keys::Vector{Int64},
                                   values::Vector{T},
-                                  dims::Vector{Int64}) where {T, N} = new(Dict(zip(keys, values)),
+                                  dims::Vector{Int64}) where {T, N} = new(Dict(zip(Base.map(x -> x + 1, keys), values)),
                                                                           tuple(dims...))
 
     SparseDistArrayAccessor{T, N}(dims::Vector{Int64}) where {T, N} = new(Dict{Int64, T}(),
@@ -38,7 +38,7 @@ struct SparseInitDistArrayAccessor{T, N} <: DistArrayAccessor{T, N}
                                       keys::Vector{Int64},
                                       values::Vector{T},
                                       dims::Vector{Int64}) where {T, N} = new(init_value,
-                                                                              Dict(zip(keys, values)),
+                                                                              Dict(zip(Base.map(x -> x + 1, keys), values)),
                                                                               tuple(dims...))
 
     SparseInitDistArrayAccessor{T, N}(init_value::T,
@@ -55,7 +55,7 @@ struct DistArrayCacheAccessor{T, N} <: DistArrayAccessor{T, N}
                                  keys::Vector{Int64},
                                  values::Vector{T},
                                  dims::Vector{Int64}) where {T, N} = new(dist_array_id,
-                                                                         Dict(zip(keys, values)),
+                                                                         Dict(zip(Base.map(x -> x + 1, keys), values)),
                                                                          tuple(dims...))
 
     DistArrayCacheAccessor{T, N}(dist_array_id::Int32,
@@ -67,7 +67,7 @@ end
 function dist_array_cache_fetch(dist_array_id::Int32,
                                 key::Int64,
                                 ValueType::DataType)
-    local value
+    value = Vector{ValueType}(1)
     ccall((:orion_request_dist_array_data, lib_path),
           Void, (Int32,
                  Int64,
@@ -77,6 +77,7 @@ function dist_array_cache_fetch(dist_array_id::Int32,
           key,
           data_type_to_int32(ValueType),
           value)
+    return value[1]
 end
 
 Base.IndexStyle{T<:DistArrayAccessor}(::Type{T}) = IndexLinear()
@@ -121,15 +122,15 @@ function setindex!(accessor::SparseInitDistArrayAccessor,
 end
 
 function getindex{T, N}(accessor::DistArrayCacheAccessor{T, N},
-                  i::Int64)
+                        i::Int64)
     if haskey(accessor.key_value, i)
         return accessor.key_value[i]
     else
         value = dist_array_cache_fetch(accessor.dist_array_id,
-                                       i,
+                                       i - 1,
                                        T)
         @assert value != nothing
-        key_value[i] = value
+        accessor.key_value[i] = value
         return value
     end
 end
@@ -144,11 +145,11 @@ function dist_array_accessor_get_values_vec{T, N}(dist_array_accessor::DenseDist
 end
 
 function dist_array_accessor_get_keys_values_vec{T, N}(dist_array_accessor::DistArrayAccessor{T, N})::Tuple{Vector{Int64},
-                                                                                                     Vector{T}}
-    accessor_keys = sort(collect(keys(dist_array_accessor.key_value)))
+                                                                                                            Vector{T}}
+    accessor_keys = sort(Base.map(x -> x - 1, collect(keys(dist_array_accessor.key_value))))
     accessor_values = Vector{T}()
     for k in accessor_keys
-        push!(accessor_values, dist_array_accessor.key_value[k])
+        push!(accessor_values, dist_array_accessor.key_value[k + 1])
     end
     return (accessor_keys, accessor_values)
 end

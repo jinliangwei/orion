@@ -58,8 +58,6 @@ class DistArrayPartition : public AbstractDistArrayPartition {
       const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
       const std::string &apply_buffer_func_name);
 
-  bool GetNext(int64_t *key, jl_value_t **value) const;
-
   jl_value_t *GetGcPartition() { return nullptr; }
   void Clear();
 
@@ -67,6 +65,7 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   void AppendValue(ValueType value);
  private:
   void GetJuliaValueArray(jl_value_t **value);
+  void RestoreJuliaValueArray(jl_value_t *value);
   void AppendJuliaValue(jl_value_t *value);
   void AppendJuliaValueArray(jl_value_t *value);
 
@@ -228,6 +227,7 @@ DistArrayPartition<ValueType>::CreateBufferAccessor() {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::ClearCacheAccessor() {
+  LOG(INFO) << __func__;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kAccessor);
   jl_value_t* tuple_jl = nullptr;
   jl_value_t* keys_array_jl = nullptr;
@@ -319,6 +319,7 @@ DistArrayPartition<ValueType>::ClearBufferAccessor() {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::BuildKeyValueBuffersFromSparseIndex() {
+  LOG(INFO) << __func__;
   if (storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer) return;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
   if (!keys_.empty()) return;
@@ -326,12 +327,13 @@ DistArrayPartition<ValueType>::BuildKeyValueBuffersFromSparseIndex() {
   values_.resize(sparse_index_.size());
   auto iter = sparse_index_.begin();
   size_t i = 0;
-  for (; iter != sparse_index_.end(); iter++) {
+  for (; iter != sparse_index_.end(); iter++, i++) {
     int64_t key = iter->first;
     auto value = iter->second;
     keys_[i] = key;
     values_[i] = value;
   }
+  sorted_ = true;
   sparse_index_.clear();
   storage_type_ = DistArrayPartitionStorageType::kKeyValueBuffer;
 }
@@ -346,6 +348,7 @@ DistArrayPartition<ValueType>::BuildDenseIndex() {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::BuildSparseIndex() {
+  LOG(INFO) << __func__;
   for (size_t i = 0; i < keys_.size(); i++) {
     int64_t key = keys_[i];
     auto value = values_[i];
@@ -362,7 +365,7 @@ DistArrayPartition<ValueType>::GetAndSerializeValue(int64_t key,
                                                     Blob *bytes_buff) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
   auto iter = sparse_index_.find(key);
-  CHECK (iter != sparse_index_.end());
+  CHECK (iter != sparse_index_.end()) << __func__ << " key = " << key;
   auto value = iter->second;
   bytes_buff->resize(sizeof(ValueType));
   *(reinterpret_cast<ValueType*>(bytes_buff->data())) = value;
@@ -418,9 +421,15 @@ DistArrayPartition<ValueType>::Sort() {
   std::transform(perm.begin(), perm.end(), values_.begin(),
                  [&](size_t i) { return values_temp[i]; });
 
-  for (size_t i = 0; i < keys_.size(); i++) {
-    keys_[i] = min_key + i;
+  auto &meta = dist_array_->GetMeta();
+  if (meta.IsContiguousPartitions()) {
+    for (size_t i = 0; i < keys_.size(); i++) {
+      keys_[i] = min_key + i;
+    }
+  } else {
+    std::sort(keys_.begin(), keys_.end());
   }
+
   sorted_ = true;
 }
 
@@ -628,58 +637,6 @@ DistArrayPartition<ValueType>::DeserializeAndOverwrite(
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::ApplyBufferedUpdates(
-    const AbstractDistArrayPartition* dist_array_buffer,
-    const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
-    const std::string &apply_buffer_func_name) {
-  CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
-  size_t num_args = helper_dist_array_buffers.size() + 3;
-  jl_value_t **args_vec;
-  JL_GC_PUSHARGS(args_vec, num_args);
-  jl_function_t *apply_buffer_func = JuliaEvaluator::GetFunction(
-      jl_main_module, apply_buffer_func_name.c_str());
-
-  dist_array_buffer->BeginIterate();
-  for (const auto *dist_array_buffer : helper_dist_array_buffers) {
-    dist_array_buffer->BeginIterate();
-  }
-
-  int64_t key = 0, key_tmp = 0;
-  while (dist_array_buffer->GetNext(&key, &(args_vec[2]))) {
-    args_vec[0] = jl_box_int64(key);
-    auto old_value_iter = sparse_index_.find(key);
-    CHECK(old_value_iter != sparse_index_.end()) << " key = " << key;
-    auto old_value = old_value_iter->second;
-    JuliaEvaluator::BoxValue(kValueType, reinterpret_cast<uint8_t*>(&old_value), &(args_vec[1]));
-
-    for (size_t i = 0; i < helper_dist_array_buffers.size(); i++) {
-      CHECK(helper_dist_array_buffers[i]->GetNext(&key_tmp, &(args_vec[i + 3])));
-      CHECK_EQ(key, key_tmp);
-    }
-
-    jl_value_t *new_value_jl = jl_call(apply_buffer_func, args_vec, num_args);
-    JuliaEvaluator::AbortIfException();
-    ValueType new_value;
-    JuliaEvaluator::UnboxValue(new_value_jl, kValueType,
-                               reinterpret_cast<uint8_t*>(&new_value));
-    sparse_index_[key] = new_value;
-  }
-  JL_GC_POP();
-}
-
-template<typename ValueType>
-bool
-DistArrayPartition<ValueType>::GetNext(int64_t *key, jl_value_t **value) const {
-  if (d_i_ >= keys_.size()) return false;
-
-  *key = keys_[d_i_];
-  JuliaEvaluator::BoxValue(kValueType, reinterpret_cast<const uint8_t*>(&values_[d_i_]), value);
-  d_i_++;
-  return true;
-}
-
-template<typename ValueType>
-void
 DistArrayPartition<ValueType>::GetJuliaValueArray(jl_value_t **value) {
   jl_value_t* value_array_type = nullptr;
   JL_GC_PUSH1(&value_array_type);
@@ -690,6 +647,10 @@ DistArrayPartition<ValueType>::GetJuliaValueArray(jl_value_t **value) {
       jl_ptr_to_array_1d(value_array_type, values_.data(), values_.size(), 0));
   JL_GC_POP();
 }
+
+template<typename ValueType>
+void
+DistArrayPartition<ValueType>::RestoreJuliaValueArray(jl_value_t *value) { }
 
 template<typename ValueType>
 void
@@ -748,8 +709,6 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
       const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
       const std::string &apply_buffer_func_name);
 
-  bool GetNext(int64_t *key, jl_value_t **value) const;
-
   jl_value_t *GetGcPartition() { return nullptr; }
   void Clear();
 
@@ -757,6 +716,7 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
   void AppendValue(const std::string &value);
  private:
   void GetJuliaValueArray(jl_value_t **value);
+  void RestoreJuliaValueArray(jl_value_t *value);
   void AppendJuliaValue(jl_value_t *value);
   void AppendJuliaValueArray(jl_value_t *value);
 
@@ -807,13 +767,12 @@ class DistArrayPartition<void> : public AbstractDistArrayPartition {
       const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
       const std::string &apply_buffer_func_name);
 
-  bool GetNext(int64_t *key, jl_value_t **value) const;
-
   jl_value_t *GetGcPartition() { return partition_jl_; }
   void Clear();
 
  private:
   void GetJuliaValueArray(jl_value_t **value);
+  void RestoreJuliaValueArray(jl_value_t *value);
   void AppendJuliaValue(jl_value_t *value);
   void AppendJuliaValueArray(jl_value_t *value);
 

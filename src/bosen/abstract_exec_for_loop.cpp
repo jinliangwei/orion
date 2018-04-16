@@ -183,6 +183,11 @@ AbstractExecForLoop::SentAllPrefetchRequests() {
   prefetch_status_ = PrefetchStatus::kPrefetchSent;
 }
 
+void
+AbstractExecForLoop::ToSkipPrefetch() {
+  prefetch_status_ = PrefetchStatus::kSkipPrefetch;
+}
+
 bool
 AbstractExecForLoop::SkipPrefetch() const {
   return (prefetch_status_ == PrefetchStatus::kSkipPrefetch);
@@ -210,7 +215,7 @@ AbstractExecForLoop::HasRecvedAllTimePartitionedDistArrays(
 }
 
 void
-AbstractExecForLoop::ComputePrefetchIndinces() {
+AbstractExecForLoop::ComputePrefetchIndices() {
   PrepareToExecCurrPartition();
   std::vector<int32_t> dist_array_ids_vec;
 
@@ -218,7 +223,7 @@ AbstractExecForLoop::ComputePrefetchIndinces() {
     dist_array_ids_vec.push_back(dist_array_pair.first);
   }
 
-  curr_partition_->ComputePrefetchIndinces(
+  curr_partition_->ComputePrefetchIndices(
       kPrefetchBatchFuncName,
       dist_array_ids_vec,
       global_indexed_dist_arrays_,
@@ -513,6 +518,8 @@ void
 AbstractExecForLoop::CachePrefetchDistArrayValues(
     PeerRecvGlobalIndexedDistArrayDataBuffer **buff_vec,
     size_t num_buffs) {
+  LOG(INFO) << __func__
+            << " num_buffs = " << num_buffs;
   CHECK(num_pending_prefetch_requests_ > 0);
   for (size_t i = 0; i < num_buffs; i++) {
     auto *buff = buff_vec[i];

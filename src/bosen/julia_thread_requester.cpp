@@ -12,6 +12,8 @@ JuliaThreadRequester::RequestDistArrayData(
     int64_t key,
     type::PrimitiveType value_type,
     jl_value_t **value) {
+  request_replied_ = false;
+
   message::ExecuteMsgHelper::CreateMsg<
     message::ExecuteMsgRequestDistArrayValue>(&send_buff_, dist_array_id, key,
                                               kMyExecutorOrServerId,
@@ -34,7 +36,6 @@ JuliaThreadRequester::RequestDistArrayData(
 
   std::unique_lock<std::mutex> lock(request_mtx_);
   request_cv_.wait(lock, [this]{ return this->request_replied_; });
-
   if (requested_value_.size() == 0) {
     *value = jl_nothing;
     return;

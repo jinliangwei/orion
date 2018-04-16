@@ -86,8 +86,8 @@ void
 ExecForLoop1D::ComputePartitionIdsAndFindPartitionToExecute() {
   curr_partition_id_ = clock_ * kNumExecutors + kExecutorId;
   curr_partition_ = iteration_space_->GetLocalPartition(curr_partition_id_);
-  LOG(INFO) << __func__ << " curr_partition_id = " << curr_partition_id_
-            << " curr_partition_ = " << (void*) curr_partition_;
+  //LOG(INFO) << __func__ << " curr_partition_id = " << curr_partition_id_
+  //<< " curr_partition_ = " << (void*) curr_partition_;
 }
 
 void

@@ -167,5 +167,6 @@ end
 end
 
 @inline function is_keyword(sym::Symbol)::Bool
-    return sym in Set([:end, :(:)])
+    return sym in Set([:end,
+                       :(:)])
 end

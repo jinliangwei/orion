@@ -64,3 +64,16 @@ end
 function orionres_get_dist_array_value_type{T, N}(dist_array::OrionWorker.AbstractDistArray{T, N})::DataType
     return T
 end
+
+function orionres_get_index(keys::Vector{Int64}, key::Int64, start::Int64)::Int64
+    index = start
+    while index <= length(keys) &&
+        keys[index] != key
+        index += 1
+    end
+    if index <= length(keys)
+        return index
+    else
+        return -1
+    end
+end

@@ -4,8 +4,14 @@ function get_scope_context_visit(expr::Any,
         if is_keyword(expr)
             return expr
         end
+
         if isdefined(expr) &&
-            isa(eval(which(expr), expr), Function)
+            isa(eval(current_module(), expr), Function)
+            return expr
+        end
+
+        if isdefined(expr) &&
+            isa(eval(current_module(), expr), DataType)
             return expr
         end
 

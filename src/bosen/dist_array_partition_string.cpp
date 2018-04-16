@@ -278,7 +278,7 @@ DistArrayPartition<std::string>::BuildKeyValueBuffersFromSparseIndex() {
   values_.resize(sparse_index_.size());
   auto iter = sparse_index_.begin();
   size_t i = 0;
-  for (; iter != sparse_index_.end(); iter++) {
+  for (; iter != sparse_index_.end(); iter++, i++) {
     int64_t key = iter->first;
     auto value = iter->second;
     keys_[i] = key;
@@ -371,8 +371,13 @@ DistArrayPartition<std::string>::Sort(){
   std::transform(perm.begin(), perm.end(), values_.begin(),
                  [&](size_t i) { return values_temp[i]; });
 
-  for (size_t i = 0; i < keys_.size(); i++) {
-    keys_[i] = min_key + i;
+  auto &meta = dist_array_->GetMeta();
+  if (meta.IsContiguousPartitions()) {
+    for (size_t i = 0; i < keys_.size(); i++) {
+      keys_[i] = min_key + i;
+    }
+  } else {
+    std::sort(keys_.begin(), keys_.end());
   }
   sorted_ = true;
 }
@@ -578,52 +583,6 @@ DistArrayPartition<std::string>::DeserializeAndOverwrite(const uint8_t *buffer) 
 }
 
 void
-DistArrayPartition<std::string>::ApplyBufferedUpdates(
-    const AbstractDistArrayPartition* dist_array_buffer,
-    const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
-    const std::string &apply_buffer_func_name) {
-  CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
-  size_t num_args = helper_dist_array_buffers.size() + 3;
-  jl_value_t **args_vec;
-  JL_GC_PUSHARGS(args_vec, num_args);
-  jl_function_t *apply_buffer_func = JuliaEvaluator::GetFunction(
-      jl_main_module, apply_buffer_func_name.c_str());
-
-  dist_array_buffer->BeginIterate();
-  for (const auto *dist_array_buffer : helper_dist_array_buffers) {
-    dist_array_buffer->BeginIterate();
-  }
-
-  int64_t key = 0, key_tmp = 0;
-  while (dist_array_buffer->GetNext(&key, &(args_vec[2]))) {
-    args_vec[0] = jl_box_int64(key);
-    auto old_value_iter = sparse_index_.find(key);
-    CHECK(old_value_iter != sparse_index_.end());
-    auto old_value = old_value_iter->second;
-    args_vec[1] = jl_cstr_to_string(old_value.c_str());
-    for (size_t i = 0; i < helper_dist_array_buffers.size(); i++) {
-      CHECK(helper_dist_array_buffers[i]->GetNext(&key_tmp, &(args_vec[i + 3])));
-      CHECK_EQ(key, key_tmp);
-    }
-    jl_value_t *string_jl = jl_call(apply_buffer_func, args_vec,
-                                    num_args);
-    const char* c_str = jl_string_ptr(string_jl);
-    sparse_index_[key] = std::string(c_str);
-  }
-  JL_GC_POP();
-}
-
-bool
-DistArrayPartition<std::string>::GetNext(int64_t *key,
-                                         jl_value_t **value) const {
-  if (d_i_ >= keys_.size()) return false;
-  *key = keys_[d_i_];
-  *value = jl_cstr_to_string(values_[d_i_].c_str());
-  d_i_++;
-  return true;
-}
-
-void
 DistArrayPartition<std::string>::GetJuliaValueArray(jl_value_t **value) {
   jl_value_t* value_array_type = nullptr;
   jl_value_t* string_jl = nullptr;
@@ -634,6 +593,20 @@ DistArrayPartition<std::string>::GetJuliaValueArray(jl_value_t **value) {
   for (size_t i = 0; i < values_.size(); i++) {
     string_jl = jl_cstr_to_string(values_[i].c_str());
     jl_arrayset(reinterpret_cast<jl_array_t*>(value), string_jl, i);
+  }
+  JL_GC_POP();
+}
+
+void
+DistArrayPartition<std::string>::RestoreJuliaValueArray(jl_value_t *value) {
+  jl_value_t* string_jl = nullptr;
+  JL_GC_PUSH1(&string_jl);
+  size_t num_elements = jl_array_len(reinterpret_cast<jl_array_t*>(value));
+  CHECK_EQ(num_elements, values_.size());
+  for (size_t i = 0; i < num_elements; i++) {
+    string_jl = jl_arrayref(reinterpret_cast<jl_array_t*>(value), i);
+    const char* c_str = jl_string_ptr(string_jl);
+    values_[i] = std::string(c_str);
   }
   JL_GC_POP();
 }

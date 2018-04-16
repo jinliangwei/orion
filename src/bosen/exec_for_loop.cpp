@@ -217,7 +217,7 @@ Executor::CheckAndExecuteForLoop(bool next_partition) {
           stop_search = true;
           auto* exec_for_loop_ptr = exec_for_loop_.get();
           auto cpp_func = std::bind(
-              &AbstractExecForLoop::ComputePrefetchIndinces,
+              &AbstractExecForLoop::ComputePrefetchIndices,
               exec_for_loop_ptr);
           exec_cpp_func_task_.func = cpp_func;
           exec_cpp_func_task_.label = TaskLabel::kComputePrefetchIndices;
@@ -458,7 +458,12 @@ Executor::SerializeAndSendExecForLoopPrefetchRequests() {
     send_buff_.clear_to_send();
     send_buff_.reset_sent_sizes();
   }
-  exec_for_loop_->SentAllPrefetchRequests();
+
+  if (send_buffer_map.size() > 0) {
+    exec_for_loop_->SentAllPrefetchRequests();
+  } else {
+    exec_for_loop_->ToSkipPrefetch();
+  }
 }
 
 void
@@ -499,13 +504,13 @@ Executor::CacheGlobalIndexedDistArrayValues(
     julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
   } else {
     CHECK(runnable_status == AbstractExecForLoop::RunnableStatus::kRunnable);
-    CHECK(num_buffs = 1);
+    CHECK_EQ(num_buffs, 1);
     auto *buff = buff_vec[0];
     const auto *bytes = buff->byte_buff.data();
     size_t num_bytes = buff->byte_buff.size();
     julia_requester_->ReplyDistArrayData(bytes, num_bytes);
     delete buff;
-    delete buff_vec;
+    delete[] buff_vec;
   }
 }
 

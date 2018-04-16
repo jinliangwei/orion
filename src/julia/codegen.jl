@@ -677,15 +677,15 @@ function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
                                            global_indexed_dist_array_dims::Vector{Vector{Int64}})::Vector{Vector{Int64}}
             prefetch_point_dict = Dict{Int32, OrionWorker.DistArrayAccessSetRecorder}()
             for idx in eachindex(global_indexed_dist_array_ids)
-                id = global_indexed_dist_array_ids[idx]
-                dims = global_indexed_dist_array_dims[idx]
-                prefetch_point_dict[id] = OrionWorker.DistArrayAccessSetRecorder{length(dims)}(dims)
+                dist_array_id = global_indexed_dist_array_ids[idx]
+                dist_array_dims = global_indexed_dist_array_dims[idx]
+                prefetch_point_dict[dist_array_id] = OrionWorker.DistArrayAccessSetRecorder{length(dist_array_dims)}(dist_array_dims)
             end
-
+            dim_keys = Vector{Int64}(length(dims))
             for i in 1:length(keys)
                 key = keys[i]
                 value = values[i]
-                dim_keys = OrionWorker.from_int64_to_keys(key, dims)
+                OrionWorker.from_int64_to_keys(key, dims, dim_keys)
 
                 key_value = (dim_keys, value)
                 $(prefetch_func_call)
@@ -894,4 +894,184 @@ function gen_access_count_batch_function_iter_dims(access_count_batch_func_name:
     )
 
     return access_count_batch_func
+end
+
+function apply_buffered_updates_gen_get_value_stmts(value_var_sym::Symbol,
+                                                    key_sym::Symbol,
+                                                    start_index_sym::Symbol,
+                                                    index_sym::Symbol,
+                                                    key_vec_sym::Symbol,
+                                                    value_vec_sym::Symbol)
+    stmts = quote
+        $index_sym = orionres_get_index($key_vec_sym, $key_sym, $start_index_sym)
+        @assert $index_sym >= 1 #string($key_vec_sym) * " " * string($key_sym) * " " * string($start_index_sym)
+        $value_var_sym = $value_vec_sym[$index_sym]
+        $start_index_sym = $index_sym
+    end
+    return stmts.args
+end
+
+function gen_apply_batch_buffered_updates_func(batch_func_name::Symbol,
+                                               apply_buffered_updates_func_name::Symbol,
+                                               num_helper_dist_arrays::Int64,
+                                               num_helper_dist_array_buffers::Int64)
+    dist_array_val_sym = :dist_array_value
+    apply_buffered_updates_func_call = :(ret = $apply_buffered_updates_func_name(update_key, $dist_array_val_sym, update_val))
+
+    dist_array_index_sym = gen_unique_symbol()
+    dist_array_start_index_sym = gen_unique_symbol()
+
+    helper_dist_array_val_base_sym = gen_unique_symbol()
+    helper_dist_array_val_base_sym_str = string(helper_dist_array_val_base_sym)
+    helper_dist_array_val_sym_vec = Vector{Symbol}()
+
+    helper_dist_array_index_base_sym = gen_unique_symbol()
+    helper_dist_array_index_base_sym_str = string(helper_dist_array_index_base_sym)
+    helper_dist_array_index_sym_vec = Vector{Symbol}()
+
+    helper_dist_array_start_index_base_sym = gen_unique_symbol()
+    helper_dist_array_start_index_base_sym_str = string(helper_dist_array_start_index_base_sym)
+    helper_dist_array_start_index_sym_vec = Vector{Symbol}()
+
+    for i = 1:num_helper_dist_arrays
+        var_sym = Symbol(helper_dist_array_val_base_sym_str * "_" * string(i))
+        index_sym = Symbol(helper_dist_array_index_base_sym_str * "_" * string(i))
+        start_index_sym = Symbol(helper_dist_array_start_index_base_sym_str * "_" * string(i))
+        push!(apply_buffered_updates_func_call.args[2].args, var_sym)
+        push!(helper_dist_array_val_sym_vec, var_sym)
+        push!(helper_dist_array_index_sym_vec, index_sym)
+        push!(helper_dist_array_start_index_sym_vec, start_index_sym)
+    end
+
+    helper_dist_array_buffer_val_base_sym = gen_unique_symbol()
+    helper_dist_array_buffer_val_base_sym_str = string(helper_dist_array_buffer_val_base_sym)
+    helper_dist_array_buffer_val_sym_vec = Vector{Symbol}()
+
+    helper_dist_array_buffer_index_base_sym = gen_unique_symbol()
+    helper_dist_array_buffer_index_base_sym_str = string(helper_dist_array_buffer_index_base_sym)
+    helper_dist_array_buffer_index_sym_vec = Vector{Symbol}()
+
+    helper_dist_array_buffer_start_index_base_sym = gen_unique_symbol()
+    helper_dist_array_buffer_start_index_base_sym_str = string(helper_dist_array_buffer_start_index_base_sym)
+    helper_dist_array_buffer_start_index_sym_vec = Vector{Symbol}()
+
+    for i = 1:num_helper_dist_array_buffers
+        var_sym = Symbol(helper_dist_array_buffer_val_base_sym_str * "_" * string(i))
+        index_sym = Symbol(helper_dist_array_buffer_index_base_sym_str * "_" * string(i))
+        start_index_sym = Symbol(helper_dist_array_buffer_start_index_base_sym_str * "_" * string(i))
+        push!(apply_buffered_updates_func_call.args[2].args, var_sym)
+        push!(helper_dist_array_buffer_val_sym_vec, var_sym)
+        push!(helper_dist_array_buffer_index_sym_vec, index_sym)
+        push!(helper_dist_array_buffer_start_index_sym_vec, start_index_sym)
+    end
+
+    init_start_index_stmts = Vector{Expr}()
+    push!(init_start_index_stmts, :($(dist_array_start_index_sym) = 1))
+    for i = 1:num_helper_dist_arrays
+        push!(init_start_index_stmts, :($(helper_dist_array_start_index_sym_vec[i]) = 1))
+    end
+
+    for i = 1:num_helper_dist_array_buffers
+        push!(init_start_index_stmts, :($(helper_dist_array_buffer_start_index_sym_vec[i]) = 1))
+    end
+
+    helper_dist_array_base_sym = gen_unique_symbol()
+    helper_dist_array_base_sym_str = string(helper_dist_array_base_sym)
+    helper_dist_array_base_key_sym_str = helper_dist_array_base_sym_str * "_keys_"
+    helper_dist_array_base_val_sym_str = helper_dist_array_base_sym_str * "_vals_"
+    helper_dist_array_keys_sym_vec = Vector{Symbol}()
+    helper_dist_array_vals_sym_vec = Vector{Symbol}()
+
+    for i = 1:num_helper_dist_arrays
+        key_sym = Symbol(helper_dist_array_base_key_sym_str * string(i))
+        push!(helper_dist_array_keys_sym_vec, key_sym)
+        value_sym = Symbol(helper_dist_array_base_val_sym_str * string(i))
+        push!(helper_dist_array_vals_sym_vec, value_sym)
+    end
+
+    helper_dist_array_buffer_base_sym = gen_unique_symbol()
+    helper_dist_array_buffer_base_sym_str = string(helper_dist_array_buffer_base_sym)
+    helper_dist_array_buffer_base_key_sym_str = helper_dist_array_buffer_base_sym_str * "_keys_"
+    helper_dist_array_buffer_base_val_sym_str = helper_dist_array_buffer_base_sym_str * "_vals_"
+    helper_dist_array_buffer_keys_sym_vec = Vector{Symbol}()
+    helper_dist_array_buffer_vals_sym_vec = Vector{Symbol}()
+
+    for i = 1:num_helper_dist_array_buffers
+        key_sym = Symbol(helper_dist_array_buffer_base_key_sym_str * string(i))
+        push!(helper_dist_array_buffer_keys_sym_vec, key_sym)
+        value_sym = Symbol(helper_dist_array_buffer_base_val_sym_str * string(i))
+        push!(helper_dist_array_buffer_vals_sym_vec, value_sym)
+    end
+
+    apply_buffered_updates_loop = :(
+        for update_index in eachindex(buffered_updates_keys)
+            update_key = buffered_updates_keys[update_index]
+            update_val = buffered_updates_values[update_index]
+        end
+    )
+
+    get_value_stmts = apply_buffered_updates_gen_get_value_stmts(dist_array_val_sym,
+                                                                 :update_key,
+                                                                 dist_array_start_index_sym,
+                                                                 dist_array_index_sym,
+                                                                 :dist_array_keys,
+                                                                 :dist_array_values)
+
+    append!(apply_buffered_updates_loop.args[2].args, get_value_stmts)
+    for i = 1:num_helper_dist_arrays
+        var_sym = helper_dist_array_val_sym_vec[i]
+        index_sym = helper_dist_array_index_sym_vec[i]
+        start_index_sym = helper_dist_array_start_index_sym_vec[i]
+
+        get_value_stmts = apply_buffered_updates_gen_get_value_stmts(var_sym,
+                                                                     :update_key,
+                                                                     start_index_sym,
+                                                                     index_sym,
+                                                                     helper_dist_array_keys_sym_vec[i],
+                                                                     helper_dist_array_vals_sym_vec[i])
+        append!(apply_buffered_updates_loop.args[2].args, get_value_stmts)
+    end
+
+    for i = 1:num_helper_dist_array_buffers
+        var_sym = helper_dist_array_buffer_val_sym_vec[i]
+        index_sym = helper_dist_array_buffer_index_sym_vec[i]
+        start_index_sym = helper_dist_array_buffer_start_index_sym_vec[i]
+
+        get_value_stmts = apply_buffered_updates_gen_get_value_stmts(var_sym,
+                                                                     :update_key,
+                                                                     start_index_sym,
+                                                                     index_sym,
+                                                                     helper_dist_array_buffer_keys_sym_vec[i],
+                                                                     helper_dist_array_buffer_vals_sym_vec[i])
+        append!(apply_buffered_updates_loop.args[2].args, get_value_stmts)
+    end
+
+    push!(apply_buffered_updates_loop.args[2].args, apply_buffered_updates_func_call)
+    if num_helper_dist_arrays == 0
+        push!(apply_buffered_updates_loop.args[2].args, :(dist_array_values[$dist_array_index_sym] = ret))
+     else
+        push!(apply_buffered_updates_loop.args[2].args, :(dist_array_values[$dist_array_index_sym] = ret[1]))
+        for i = 1:num_helper_dist_arrays
+            index_sym = helper_dist_array_index_sym_vec[i]
+            push!(apply_buffered_updates_loop.args[2].args, :($(helper_dist_array_vals_sym_vec[i])[$index_sym] = ret[$(i + 1)]))
+        end
+    end
+    apply_batch_buffered_updates_func = :(
+      function $batch_func_name(buffered_updates_keys::Vector{Int64},
+                                buffered_updates_values::Vector,
+                                dist_array_keys::Vector{Int64},
+                                dist_array_values::Vector)
+        end
+    )
+    for i = 1:num_helper_dist_arrays
+        push!(apply_batch_buffered_updates_func.args[1].args, helper_dist_array_keys_sym_vec[i])
+        push!(apply_batch_buffered_updates_func.args[1].args, helper_dist_array_vals_sym_vec[i])
+    end
+    for i = 1:num_helper_dist_array_buffers
+        push!(apply_batch_buffered_updates_func.args[1].args, helper_dist_array_buffer_keys_sym_vec[i])
+        push!(apply_batch_buffered_updates_func.args[1].args, helper_dist_array_buffer_vals_sym_vec[i])
+    end
+    append!(apply_batch_buffered_updates_func.args[2].args, init_start_index_stmts)
+    push!(apply_batch_buffered_updates_func.args[2].args, apply_buffered_updates_loop)
+    return apply_batch_buffered_updates_func
 end
