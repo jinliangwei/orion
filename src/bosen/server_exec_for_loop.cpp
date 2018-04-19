@@ -21,57 +21,9 @@ ServerExecForLoop::ServerExecForLoop(
     dist_array_buffers_(dist_array_buffers),
     dist_array_buffer_info_map_(dist_array_buffer_info_map) {
   LOG(INFO) << __func__ << " NumExecutors = " << kNumExecutors;
-  std::set<int32_t> global_indexed_dist_array_id_set;
-  for (size_t i = 0; i < num_global_indexed_dist_arrays; i++) {
-    int32_t dist_array_id = global_indexed_dist_array_ids[i];
-    global_indexed_dist_array_id_set.emplace(dist_array_id);
-  }
-
-  std::set<int32_t> buffer_updated_dist_array_ids;
-
-  for (size_t i = 0; i < num_dist_array_buffers; i++) {
-    int32_t dist_array_buffer_id = dist_array_buffer_ids[i];
-    auto dist_array_buffer_info_iter = dist_array_buffer_info_map_.find(dist_array_buffer_id);
-    if (dist_array_buffer_info_iter == dist_array_buffer_info_map_.end()) continue;
-
-    const auto &dist_array_buffer_info = dist_array_buffer_info_iter->second;
-    auto dist_array_id = dist_array_buffer_info.kDistArrayId;
-    buffer_updated_dist_array_ids.emplace(dist_array_id);
-  }
-
-  for (size_t i = 0; i < num_dist_array_buffers; i++) {
-    int32_t dist_array_buffer_id = dist_array_buffer_ids[i];
-    auto dist_array_buffer_info_iter = dist_array_buffer_info_map_.find(dist_array_buffer_id);
-    if (dist_array_buffer_info_iter == dist_array_buffer_info_map_.end()) continue;
-
-    auto &dist_array_buffer_info = dist_array_buffer_info_iter->second;
-    const auto &helper_dist_array_ids = dist_array_buffer_info.kHelperDistArrayIds;
-
-    for (auto helper_dist_array_id : helper_dist_array_ids) {
-      if (helper_dist_arrays_.count(helper_dist_array_id) > 0) continue;
-      if (global_indexed_dist_array_id_set.count(helper_dist_array_id) > 0) continue;
-      if (buffer_updated_dist_array_ids.count(helper_dist_array_id) > 0) continue;
-      auto dist_array_iter = dist_arrays->find(helper_dist_array_id);
-      CHECK(dist_array_iter != dist_arrays->end());
-      auto &dist_array = dist_array_iter->second;
-      helper_dist_arrays_.emplace(helper_dist_array_id, &dist_array);
-    }
-  }
-  PrepareHelperDistArrays();
 }
 
 ServerExecForLoop::~ServerExecForLoop() { }
-
-void
-ServerExecForLoop::PrepareHelperDistArrays() {
-  for (auto &dist_array_pair : helper_dist_arrays_) {
-    LOG(INFO) << __func__ << " dist_array_id = " << dist_array_pair.first;
-    auto *dist_array_ptr = dist_array_pair.second;
-    auto *helper_partition = dist_array_ptr->GetLocalPartition(kServerId);
-    helper_partition->BuildKeyValueBuffersFromSparseIndex();
-    helper_partition->Sort();
-  }
-}
 
 void
 ServerExecForLoop::DeserializeAndApplyDistArrayCaches(
@@ -126,23 +78,14 @@ ServerExecForLoop::DeserializeAndApplyDistArrayBuffers(
     auto &dist_array_to_update = dist_array_iter->second;
     auto *partition_to_update = dist_array_to_update.GetLocalPartition(kServerId);
 
-    std::vector<AbstractDistArrayPartition*> my_helper_dist_arrays;
+    std::vector<AbstractDistArrayPartition*> helper_dist_arrays;
     std::vector<AbstractDistArrayPartition*> dist_array_partitions_to_restore_index;
     std::vector<AbstractDistArrayPartition*> helper_dist_array_buffers;
     for (auto helper_dist_array_id : helper_dist_array_ids) {
-      auto helper_dist_array_iter = helper_dist_arrays_.find(helper_dist_array_id);
-      AbstractDistArrayPartition* helper_partition = nullptr;
-      if (helper_dist_array_iter == helper_dist_arrays_.end()) {
-        auto dist_array_iter = dist_arrays_->find(helper_dist_array_id);
-        auto &helper_dist_array = dist_array_iter->second;
-        helper_partition = helper_dist_array.GetLocalPartition(kServerId);
-        helper_partition->BuildKeyValueBuffersFromSparseIndex();
-        helper_partition->Sort();
-        dist_array_partitions_to_restore_index.push_back(helper_partition);
-      } else {
-        helper_partition = helper_dist_array_iter->second->GetLocalPartition(kServerId);
-      }
-      my_helper_dist_arrays.push_back(helper_partition);
+      auto dist_array_iter = dist_arrays_->find(helper_dist_array_id);
+      auto &helper_dist_array = dist_array_iter->second;
+      auto *helper_partition = helper_dist_array.GetLocalPartition(kServerId);
+      helper_dist_arrays.push_back(helper_partition);
     }
 
     for (auto buffer_id : helper_dist_array_buffer_ids) {
@@ -151,17 +94,10 @@ ServerExecForLoop::DeserializeAndApplyDistArrayBuffers(
       helper_dist_array_buffers.push_back(buffer_partition);
     }
 
-    partition_to_update->BuildKeyValueBuffersFromSparseIndex();
-    partition_to_update->Sort();
     partition_to_update->ApplyBufferedUpdates(updates_buffer_partition,
-                                              my_helper_dist_arrays,
+                                              helper_dist_arrays,
                                               helper_dist_array_buffers,
                                               apply_buffer_func_name);
-    partition_to_update->CheckAndBuildIndex();
-
-    for (auto *helper_dist_array_partition : dist_array_partitions_to_restore_index) {
-      helper_dist_array_partition->CheckAndBuildIndex();
-    }
   }
 
   for (auto &buffer_partition_pair : buffer_partition_map) {

@@ -407,7 +407,7 @@ function parallelize_1d(iteration_space::Symbol,
             continue
         end
         dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
-                                                           DistArrayIndexType_none)
+                                                           DistArrayIndexType_range)
         repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
     end
@@ -650,7 +650,7 @@ function parallelize_2d(iteration_space::Symbol,
             continue
         end
         dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
-                                                           DistArrayIndexType_none)
+                                                           DistArrayIndexType_range)
         repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
     end

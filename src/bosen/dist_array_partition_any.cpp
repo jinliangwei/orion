@@ -745,7 +745,45 @@ DistArrayPartition<void>::GetJuliaValueArray(jl_value_t **value) {
 }
 
 void
-DistArrayPartition<void>::RestoreJuliaValueArray(jl_value_t *value) { }
+DistArrayPartition<void>::GetJuliaValueArray(const std::vector<int64_t> &keys,
+                                             jl_value_t **value_array) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
+  jl_value_t* value_type = nullptr;
+  jl_value_t* value_array_type = nullptr;
+  JL_GC_PUSH2(&value_type, &value_array_type);
+  JuliaEvaluator::GetDistArrayValueType(dist_array_jl_,
+                                        reinterpret_cast<jl_datatype_t**>(&value_type));
+  value_array_type = jl_apply_array_type(value_type, 1);
+  *value_array = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(
+      value_array_type,
+      keys.size()));
+
+  for (size_t i = 0; i < keys.size(); i++) {
+    auto key = keys[i];
+    auto iter = sparse_index_.find(key);
+    CHECK(iter != sparse_index_.end());
+    size_t offset = iter->second;
+    jl_value_t *value = jl_arrayref(reinterpret_cast<jl_array_t*>(values_array_jl_),
+                                    offset);
+    jl_arrayset(reinterpret_cast<jl_array_t*>(value_array), value, i);
+  }
+  JL_GC_POP();
+}
+
+void
+DistArrayPartition<void>::SetJuliaValues(const std::vector<int64_t> &keys,
+                                         jl_value_t *values) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
+  for (size_t i = 0; i < keys.size(); i++) {
+    auto key = keys[i];
+    auto iter = sparse_index_.find(key);
+    CHECK(iter != sparse_index_.end());
+    size_t offset = iter->second;
+    jl_value_t *value = jl_arrayref(reinterpret_cast<jl_array_t*>(values),
+                                    i);
+    jl_arrayset(reinterpret_cast<jl_array_t*>(values_array_jl_), value, offset);
+  }
+}
 
 void
 DistArrayPartition<void>::AppendJuliaValue(jl_value_t *value) {

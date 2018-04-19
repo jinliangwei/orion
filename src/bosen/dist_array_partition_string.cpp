@@ -598,16 +598,46 @@ DistArrayPartition<std::string>::GetJuliaValueArray(jl_value_t **value) {
 }
 
 void
-DistArrayPartition<std::string>::RestoreJuliaValueArray(jl_value_t *value) {
+DistArrayPartition<std::string>::GetJuliaValueArray(const std::vector<int64_t> &keys,
+                                                  jl_value_t **value_array) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
+  jl_value_t* value_array_type = nullptr;
+  jl_value_t* string_jl = nullptr;
+  JL_GC_PUSH2(&value_array_type, &string_jl);
+
+  value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_string_type), 1);
+
+  *value_array = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(
+      value_array_type,
+      keys.size()));
+
+  for (size_t i = 0; i < keys.size(); i++) {
+    auto key = keys[i];
+    auto iter = sparse_index_.find(key);
+    CHECK (iter != sparse_index_.end()) << " i = " << i
+                                        << " key = " << key
+                                        << " size = " << sparse_index_.size();
+    auto value = iter->second;
+    string_jl = jl_cstr_to_string(value.c_str());
+    jl_arrayset(reinterpret_cast<jl_array_t*>(value_array), string_jl, i);
+  }
+  JL_GC_POP();
+}
+
+void
+DistArrayPartition<std::string>::SetJuliaValues(const std::vector<int64_t> &keys,
+                                                jl_value_t *values) {
+
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
   jl_value_t* string_jl = nullptr;
   JL_GC_PUSH1(&string_jl);
-  size_t num_elements = jl_array_len(reinterpret_cast<jl_array_t*>(value));
-  CHECK_EQ(num_elements, values_.size());
-  for (size_t i = 0; i < num_elements; i++) {
-    string_jl = jl_arrayref(reinterpret_cast<jl_array_t*>(value), i);
+  for (size_t i = 0; i < keys.size(); i++) {
+    auto key = keys[i];
+    string_jl = jl_arrayref(reinterpret_cast<jl_array_t*>(values), i);
     const char* c_str = jl_string_ptr(string_jl);
-    values_[i] = std::string(c_str);
+    sparse_index_[key] = std::string(c_str);
   }
+
   JL_GC_POP();
 }
 

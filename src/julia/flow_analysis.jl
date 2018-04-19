@@ -1219,7 +1219,6 @@ function get_deleted_syms(bb_list::Vector{BasicBlock},
     return syms_deleted
 end
 
-
 function remap_ssa_vars_visit(expr::Any,
                               ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
     if isa(expr, Symbol) &&
@@ -1237,7 +1236,6 @@ end
 function remap_ssa_vars(expr, ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
     return AstWalk.ast_walk(isa(expr, Expr) ? copy(expr) : expr, remap_ssa_vars_visit, ssa_defs)
 end
-
 
 function transform_dist_array_read_set(dist_array_read::Tuple,
                                        ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
@@ -1451,6 +1449,24 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
     return nothing
 end
 
+struct SymUseContext
+    sym_used::Bool
+    sym_set::Set{Symbol}
+    SymUseContext(sym_set::Set{Symbol}) = new(false,
+                                              sym_set)
+end
+
+function sym_use_visit(expr, context::SymUseContext)
+    if isa(expr, Symbol)
+        if expr in context.sym_set
+            context.sym_used = true
+        end
+        return expr
+    else
+        return AstWalk::AST_WALK_RECURSE
+    end
+end
+
 function get_prefetch_stmts(flow_graph::BasicBlock,
                             dist_array_syms::Set{Symbol},
                             ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
@@ -1467,6 +1483,7 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
     # used to define DistArray access subscripts
     bb_stmt_dict = Dict{Int64, Dict{Int64, Any}}()
     syms_to_be_defined = Set{Symbol}()
+    sym_use_context = SymUseContext(syms_deleted)
     for bb in bb_list
         if !(bb.id in keys(bb_dist_array_access_dict))
             continue
@@ -1488,9 +1505,17 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                     sub_stmt_defs = Set{Symbol}()
                     sub_stmt_uses = Set{Symbol}()
                     for sub in access.subscripts
+                        sym_use_context.sym_used = false
+                        ast_walk(sub, sym_use_visit, sym_use_context)
+                        if sym_use_context.sym_used
+                            break
+                        end
                         push!(subscripts_vec, sub.expr)
                         compute_stmt_ssa_uses_stmt(sub.expr,
                                                    sub_stmt_uses)
+                    end
+                    if sym_use_context.sym_used
+                        continue
                     end
                     if stmt_idx in keys(stmt_dict)
                         push!(stmt_dict[stmt_idx], (da_sym, subscripts_vec))

@@ -36,13 +36,10 @@ The third argument is an object that is opaque to AstWalk but that is passed to 
 You can use this object to collect data about the AST as it is walked or to hold information on
 how to change the AST as you are walking over it.
 The second argument is a callback function.  For each AST node, AstWalk will invoke this callback.
-The signature of the callback must be (Any, Any, Int64, Bool, Bool).  The arguments to the callback
+The signature of the callback must be (Any, Any).  The arguments to the callback
 are as follows:
     1) The current node of the AST being walked.
     2) The callback data object that you originally passed as the first argument to AstWalk.
-    3) Specifies the index of the body's statement that is currently being processed.
-    4) True if the current AST node being walked is the root of a top-level statement, false if the AST node is a sub-tree of a top-level statement.
-    5) True if the AST node is being read, false if it is being written.
 """
 
 function ast_walk(ast::Any, callback::Function, cbdata::Any)

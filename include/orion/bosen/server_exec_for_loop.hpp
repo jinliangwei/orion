@@ -13,7 +13,6 @@ class ServerExecForLoop {
   const int32_t kNumExecutors;
   std::unordered_map<int32_t, DistArray> *dist_arrays_;
   std::unordered_map<int32_t, DistArray> *dist_array_buffers_;
-  std::unordered_map<int32_t, DistArray*> helper_dist_arrays_;
   const std::unordered_map<int32_t, DistArrayBufferInfo> &dist_array_buffer_info_map_;
   size_t completed_executors_ { 0 };
  public:
@@ -29,7 +28,6 @@ class ServerExecForLoop {
       size_t num_dist_array_buffers);
   ~ServerExecForLoop();
 
-  void PrepareHelperDistArrays();
   void DeserializeAndApplyDistArrayCaches(uint8_t* bytes);
   void DeserializeAndApplyDistArrayBuffers(uint8_t* bytes);
   bool NotifyExecForLoopDone();
