@@ -529,7 +529,6 @@ AbstractExecForLoop::CachePrefetchDistArrayValues(
     cursor += sizeof(size_t);
     for (size_t j = 0; j < num_dist_arrays; j++) {
       int32_t dist_array_id = *reinterpret_cast<const int32_t*>(cursor);
-      LOG(INFO) << __func__ << " dist_array_id = " << dist_array_id;
       cursor += sizeof(int32_t);
       auto iter = dist_array_cache_.find(dist_array_id);
       CHECK(iter != dist_array_cache_.end()) << " dist_array_id = " << dist_array_id;

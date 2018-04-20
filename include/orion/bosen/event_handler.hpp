@@ -229,7 +229,6 @@ void
 EventHandler<PollConn>::HandleWriteEvent(PollConn* poll_conn_ptr) {
   bool sent = poll_conn_ptr->Send();
   if (sent) {
-    LOG(INFO) << __func__ << " sent!";
     auto &send_buff = poll_conn_ptr->get_send_buff();
     send_buff.clear_to_send();
     SetToReadOnly(poll_conn_ptr);

@@ -514,6 +514,7 @@ AbstractDistArrayPartition::ComputePrefetchIndices(
     const std::vector<jl_value_t*> &global_read_only_var_vals,
     const std::vector<std::string> &accumulator_var_syms,
     PointQueryKeyDistArrayMap *point_key_vec_map) {
+  LOG(INFO) << __func__;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   size_t num_args = global_read_only_var_vals.size()
                     + accumulator_var_syms.size() + 5;
@@ -739,7 +740,6 @@ AbstractDistArrayPartition::ApplyBufferedUpdates(
 
   args_index = 3;
   for (auto *helper_dist_array_partition : helper_dist_arrays) {
-    LOG(INFO) << " partition = " << (void*) helper_dist_array_partition;
     helper_dist_array_partition->SetJuliaValues(dist_array_buffer_keys,
                                                 args_vec[args_index]);
     args_index++;

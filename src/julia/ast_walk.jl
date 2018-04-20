@@ -235,7 +235,7 @@ function from_expr_helper(ast::Any,
         @dprintln(2,"GlobalRef type ",typeof(ast.mod), " ", ast)  # GlobalRef = mod + name
     elseif isbits(asttyp)
         #skip
-    elseif is(asttyp, LambdaInfo)
+    elseif isa(asttyp, CodeInfo)
         #skip
     else
         println(ast, "ast = ", ast, " type = ", typeof(ast))

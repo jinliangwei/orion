@@ -1449,7 +1449,7 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
     return nothing
 end
 
-struct SymUseContext
+mutable struct SymUseContext
     sym_used::Bool
     sym_set::Set{Symbol}
     SymUseContext(sym_set::Set{Symbol}) = new(false,
@@ -1463,7 +1463,7 @@ function sym_use_visit(expr, context::SymUseContext)
         end
         return expr
     else
-        return AstWalk::AST_WALK_RECURSE
+        return AstWalk.AST_WALK_RECURSE
     end
 end
 
@@ -1479,6 +1479,7 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
 
     syms_deleted = get_deleted_syms(bb_list, ssa_defs,
                                     dist_array_access_context)
+    println("syms_deleted = ", syms_deleted)
     # The set of symbols to be defined include symbols that are
     # used to define DistArray access subscripts
     bb_stmt_dict = Dict{Int64, Dict{Int64, Any}}()
@@ -1506,7 +1507,7 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                     sub_stmt_uses = Set{Symbol}()
                     for sub in access.subscripts
                         sym_use_context.sym_used = false
-                        ast_walk(sub, sym_use_visit, sym_use_context)
+                        AstWalk.ast_walk(sub.expr, sym_use_visit, sym_use_context)
                         if sym_use_context.sym_used
                             break
                         end
@@ -1540,6 +1541,7 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
     end
 
     if isempty(syms_to_be_defined)
+        println("no syms to be defined")
         return nothing
     end
 

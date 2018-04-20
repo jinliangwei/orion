@@ -1132,7 +1132,6 @@ JuliaEvaluator::GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *di
   size_t accum_size = 0;
   for (size_t i = 0; i < num_dist_arrays; i++) {
     int32_t dist_array_id = *reinterpret_cast<const int32_t*>(cursor);
-    LOG(INFO) << __func__ << " dist_array_id = " << dist_array_id;
     cursor += sizeof(int32_t);
     size_t num_keys = *reinterpret_cast<const size_t*>(cursor);
     cursor += sizeof(size_t);
@@ -1162,7 +1161,6 @@ JuliaEvaluator::GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *di
 
 jl_value_t *
 JuliaEvaluator::GetDistArrayAccessor(jl_value_t *dist_array) {
-  LOG(INFO) << __func__ << (void*) dist_array;
   jl_module_t *orion_worker_module = GetJlModule(JuliaModule::kOrionWorker);
   jl_function_t *get_accessor_func
       = JuliaEvaluator::GetFunction(orion_worker_module,
