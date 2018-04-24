@@ -38,6 +38,6 @@ sudo make
 sudo cp *.a /usr/lib
 popd
 
-wget https://github.com/JuliaLang/julia/releases/download/v0.5.1/julia-0.5.1.tar.gz
-tar xvzf julia-0.5.1.tar.gz
-cd julia-0.5.1; make -j4; cd
+wget https://github.com/JuliaLang/julia/releases/download/v0.6.2/julia-0.6.2.tar.gz
+tar xvzf julia-0.6.2.tar.gz
+cd julia-0.6.2; make -j4; cd
