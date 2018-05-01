@@ -110,20 +110,6 @@ struct DistArrayInitInfo
     random_init_type::DataType
 end
 
-struct DistArrayPartition{T}
-    values::Vector{T}
-    DistArrayPartition{T}() where {T} = new(Vector{T}())
-end
-
-function dist_array_partition_get_values{T}(partition::DistArrayPartition{T})::Vector{T}
-    return partition.values
-end
-
-function dist_array_partition_set_values(partition::DistArrayPartition,
-                                         values::Vector)
-    partition.values = values
-end
-
 abstract type AbstractDistArray{T, N} <: AbstractArray{T, N}
 end
 
@@ -133,7 +119,7 @@ end
 mutable struct ValueOnlyDistArray{T} <: DistArray{T, 0}
     id::Int32
     symbol::Nullable{Symbol}
-    partitions::Vector{DistArrayPartition{T}}
+    partitions::Dict{String, Vector{T}}
     is_materialized::Bool
     parent_type::DistArrayParentType
     file_path::Nullable{String}
@@ -148,7 +134,7 @@ mutable struct ValueOnlyDistArray{T} <: DistArray{T, 0}
                           map_type::DistArrayMapType) where {T} = new(
                               id,
                               Nullable{Symbol}(),
-                              Vector{Vector{T}}(),
+                              Dict{String, Vector{T}}(),
                               false,
                               parent_type,
                               Nullable{String}(),
@@ -181,7 +167,7 @@ mutable struct DenseDistArray{T, N} <: DistArray{T, N}
     id::Int32
     dims::Vector{Int64}
     symbol::Nullable{Symbol}
-    partitions::Vector{DistArrayPartition{T}}
+    partitions::Dict{String, Vector{T}}
     is_materialized::Bool
     parent_type::DistArrayParentType
     file_path::Nullable{String}
@@ -201,7 +187,7 @@ mutable struct DenseDistArray{T, N} <: DistArray{T, N}
                              id,
                              Vector{Int64}(N),
                              Nullable{Symbol}(),
-                             Vector{DistArrayPartition{T}}(),
+                             Dict{String, Vector{T}}(),
                              false,
                              parent_type,
                              Nullable{String}(),
@@ -223,7 +209,7 @@ mutable struct DenseDistArray{T, N} <: DistArray{T, N}
                              id,
                              copy(dims),
                              Nullable{Symbol}(),
-                             Vector{DistArrayPartition{T}}(),
+                             Dict{String, Vector{T}}(),
                              false,
                              parent_type,
                              Nullable{String}(),
@@ -266,7 +252,7 @@ type SparseDistArray{T, N} <: DistArray{T, N}
     id::Int32
     dims::Vector{Int64}
     symbol::Nullable{Symbol}
-    partitions::Vector{DistArrayPartition{T}}
+    partitions::Dict{String, Vector{T}}
     is_materialized::Bool
     parent_type::DistArrayParentType
     file_path::Nullable{String}
@@ -285,7 +271,7 @@ type SparseDistArray{T, N} <: DistArray{T, N}
                              id,
                              Vector{Int64}(N),
                              Nullable{Symbol}(),
-                             Vector{DistArrayPartition{T}}(),
+                             Dict{String, Vector{T}}(),
                              false,
                              parent_type,
                              Nullable{String}(),
@@ -306,7 +292,7 @@ type SparseDistArray{T, N} <: DistArray{T, N}
                               id,
                               copy(dims),
                               Nullable{Symbol}(),
-                              Vector{DistArrayPartition{T}}(),
+                              Dict{String, Vector{T}}(),
                               false,
                               parent_type,
                               Nullable{String}(),
@@ -462,7 +448,7 @@ function text_file(file_path::AbstractString;
     return dist_array
 end
 
-function fill(x, dims...)::DenseDistArray
+function fill(x, dims::Tuple)::DenseDistArray
     ValueType = typeof(x)
     global dist_array_id_counter
     id = dist_array_id_counter
@@ -483,6 +469,10 @@ function fill(x, dims...)::DenseDistArray
     dist_array.init_value = Nullable{ValueType}(x)
     dist_arrays[id] = dist_array
     return dist_array
+end
+
+function fill(x, dims...)::DenseDistArray
+    return fill(x, dims)
 end
 
 function rand(ValueType::DataType, dims...)::DenseDistArray
@@ -673,28 +663,26 @@ function process_dist_array_map{T, N}(dist_array::DistArray{T, N})::DistArray{T,
         (new_keys ? DistArrayMapType_map_values_new_keys : DistArrayMapType_map_values) :
         (new_keys ? DistArrayMapType_map : DistArrayMapType_map_fixed_keys)
 
-
-    if origin_dist_array.parent_type == DistArrayParentType_init
-        processed_dist_array.parent_type = DistArrayParentType_init
-        processed_dist_array.init_info = origin_dist_array.init_info
-        processed_dist_array.map_info = Nullable{DistArrayMapInfo}(
-            DistArrayMapInfo(flatten_results,
-                             Module(:Main),
-                             string(map_func_name_sym)))
-    elseif origin_dist_array.parent_type == DistArrayParentType_dist_array
+    if origin_dist_array.is_materialized
         processed_dist_array.parent_type = DistArrayParentType_dist_array
         processed_dist_array.map_info = Nullable{DistArrayMapInfo}(
-        DistArrayMapInfo(origin_dist_array.id,
-                         flatten_results,
-                         Module(:Main),
-                         string(map_func_name_sym)))
+            DistArrayMapInfo(origin_dist_array.id,
+                             flatten_results,
+                             Module(:Main),
+                             string(map_func_name_sym)))
         if origin_dist_array.partition_info.partition_type == DistArrayPartitionType_hash_server
             check_and_repartition(origin_dist_array,
                                   PartitionInfo(DistArrayPartitionType_hash_executor,
                                                 DistArrayIndexType_none))
         end
     else
-        @assert false "not supported"
+        @assert origin_dist_array.parent_type == DistArrayParentType_init
+        processed_dist_array.parent_type = DistArrayParentType_init
+        processed_dist_array.init_info = origin_dist_array.init_info
+        processed_dist_array.map_info = Nullable{DistArrayMapInfo}(
+            DistArrayMapInfo(flatten_results,
+                             Module(:Main),
+                             string(map_func_name_sym)))
     end
 
     if map_values_only
@@ -981,7 +969,7 @@ function create_dist_array_accessor{T, N}(
     dist_array::SparseDistArray{T, N},
     keys::Vector{Int64},
     values::Vector)
-    dist_array.accessor = Nullable{SparseDistArrayAccesor{T, N}}(
+    dist_array.accessor = Nullable{SparseDistArrayAccessor{T, N}}(
         SparseDistArrayAccessor{T, N}(keys, values,
                                       dist_array.dims))
 end
@@ -1004,7 +992,7 @@ end
 function dist_array_get_accessor_keys_values_vec{T, N}(dist_array::DistArray{T, N})::Tuple{Vector{Int64},
                                                                                            Vector{T}}
     accessor = get(dist_array.accessor)
-    dist_array_accessor_get_keys_values_vec(accessor)
+    return dist_array_accessor_get_keys_values_vec(accessor)
 end
 
 function dist_array_get_accessor_values_vec{T, N}(dist_array::DenseDistArray{T, N})::Vector{T}
@@ -1034,26 +1022,35 @@ function dist_array_get_accessor(dist_array::AbstractDistArray)
     return get(dist_array.accessor)
 end
 
-function dist_array_create_and_append_partition{T, N}(dist_array::AbstractDistArray{T, N})::DistArrayPartition{T}
-    partition = DistArrayPartition{T}()
-    push!(dist_array.partitions, partition)
-    return partition
+function dist_array_create_and_add_partition{T, N}(
+    dist_array::AbstractDistArray{T, N},
+    ptr_str::String)
+    partition = Vector{T}()
+    dist_array.partitions[ptr_str] = partition
 end
 
-function dist_array_delete_partitions(dist_array::DistArray,
-                                      partitions::Vector{Any})
-    index_vec = Vector{Int64}()
-    for partition_idx in eachindex(dist_array.partitions)
-        partition = dist_array.partitions[partition_idx]
-        if partition in partitions
-            push!(index_vec, partition_idx)
-        end
-    end
-    deleteat!(dist_array.partitions, index_vec)
+function dist_array_get_partition(dist_array::AbstractDistArray,
+                                  ptr_str::String)
+    @assert ptr_str in keys(dist_array.partitions)
+    return dist_array.partitions[ptr_str]
 end
 
-function dist_array_clear_partition(partition::DistArrayPartition)
-    resize!(partition.values, 0)
+function dist_array_delete_partition(dist_array::AbstractDistArray,
+                                     ptr_str::String)
+    @assert ptr_str in keys(dist_array.partitions)
+    delete!(dist_array.partitions, ptr_str)
+end
+
+function dist_array_clear_partition(dist_array::AbstractDistArray,
+                                    ptr_str::String)
+    @assert ptr_str in keys(dist_array.partitions)
+    resize!(dist_array.partitions[ptr_str], 0)
+end
+
+function dist_array_set_partition{T, N}(dist_array::AbstractDistArray{T, N},
+                                        ptr_str::String,
+                                        partition::Vector{T})
+    dist_array.partitions[ptr_str] = partition
 end
 
 struct DistArrayAccessSetRecorder{N} <: AbstractArray{Int32, N}

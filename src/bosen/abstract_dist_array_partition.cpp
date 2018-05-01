@@ -56,13 +56,13 @@ AbstractDistArrayPartition::ParseText(Blob *max_key,
           if (flatten_results) {
             key.clear();
             JuliaEvaluator::ParseStringWithLineNumberFlatten(line_number,
-                                                          line,
-                                                          map_func_module,
-                                                          map_func_name.c_str(),
-                                                          &key,
-                                                          num_dims,
-                                                          dist_array_value_type,
-                                                          &value);
+                                                             line,
+                                                             map_func_module,
+                                                             map_func_name.c_str(),
+                                                             &key,
+                                                             num_dims,
+                                                             dist_array_value_type,
+                                                             &value);
 
             AppendJuliaValueArray(value);
           } else {
@@ -421,13 +421,14 @@ AbstractDistArrayPartition::Init(int64_t key_begin,
 void
 AbstractDistArrayPartition::Map(AbstractDistArrayPartition *child_partition) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
-  jl_value_t *init_values = nullptr,
-   *dist_array_value_type = nullptr,
-            *input_values = nullptr,
-           *output_values = nullptr;
-  JL_GC_PUSH4(&init_values, &dist_array_value_type, &input_values, &output_values);
+  jl_value_t *dist_array_value_type = nullptr,
+                      *input_values = nullptr,
+                     *output_values = nullptr;
+  JL_GC_PUSH3(&dist_array_value_type, &input_values, &output_values);
 
   GetJuliaValueArray(&input_values);
+  LOG(INFO) << __func__ << " input_values = "
+            << (void*) input_values;
   auto *child_dist_array = child_partition->dist_array_;
   auto &dist_array_meta = child_dist_array->GetMeta();
   const auto &child_dims = dist_array_meta.GetDims();
@@ -444,7 +445,7 @@ AbstractDistArrayPartition::Map(AbstractDistArrayPartition *child_partition) {
                                 child_dims,
                                 keys_.size(),
                                 keys_.data(),
-                                init_values,
+                                input_values,
                                 map_func_module,
                                 map_func_name,
                                 &output_keys,
@@ -612,7 +613,9 @@ AbstractDistArrayPartition::Execute(
     const std::vector<jl_value_t*> &global_read_only_var_vals,
     const std::vector<std::string> &accumulator_var_syms) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
-  LOG(INFO) << __func__ << " partition_size = "
+  LOG(INFO) << __func__
+            << " dist_array_id = " << dist_array_->kId
+            << " partition_size = "
             << keys_.size();
 
   size_t num_args = accessed_dist_arrays.size() + accessed_dist_array_buffers.size()
@@ -657,8 +660,15 @@ AbstractDistArrayPartition::Execute(
       dims_array_type_jl, temp_dims.data(), temp_dims.size(), 0));
   keys_vec_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       keys_array_type_jl, keys_.data(), keys_.size(), 0));
-
+  LOG(INFO) << __func__ << " value type = " << static_cast<int>(kValueType);
   GetJuliaValueArray(&values_vec_jl);
+  JuliaEvaluator::AbortIfException();
+  LOG(INFO) << __func__ << " value_array_size = "
+            << jl_array_len(values_vec_jl);
+  //auto *print_func
+  //    = JuliaEvaluator::GetFunction(jl_main_module, "orionres_print_value_type");
+  //jl_call1(print_func, values_vec_jl);
+
   JuliaEvaluator::AbortIfException();
   jl_function_t *exec_loop_func
       = JuliaEvaluator::GetFunction(jl_main_module,

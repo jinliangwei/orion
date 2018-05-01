@@ -21,12 +21,11 @@ function get_2d_tile_sizes(iteration_space_partition_dims::Tuple{Int64, Int64},
 end
 
 function compute_dependence_vectors(dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
-                                    is_ordered::Bool)
+                                    is_ordered::Bool,
+                                    iteration_space_dist_array::DistArray)
     dep_vecs = Set{Tuple}()
     for (dist_array_sym, da_access_vec) in dist_array_access_dict
-        dist_array = eval(current_module(), dist_array_sym)
-        num_dims = dist_array_get_num_dims(dist_array)
-
+        num_dims = dist_array_get_num_dims(iteration_space_dist_array)
         for index_a in eachindex(da_access_vec)
             for index_b = index_a:length(da_access_vec)
                 da_access_a = da_access_vec[index_a]
@@ -68,6 +67,7 @@ function compute_dependence_vectors(dist_array_access_dict::Dict{Symbol, Vector{
                         continue
                     else
                         dep_val = sub_a.offset - sub_b.offset
+                        println(sub_a.offset - sub_b.offset)
                         if dep_vec[sub_a.loop_index_dim] == dep_val ||
                             dep_vec[sub_a.loop_index_dim] == DepVecValue_any
                             dep_vec[sub_a.loop_index_dim] = dep_val
@@ -80,6 +80,7 @@ function compute_dependence_vectors(dist_array_access_dict::Dict{Symbol, Vector{
                 if no_dep
                     continue
                 end
+                println(dist_array_sym, " ", subscripts_a, " ", subscripts_b)
                 for i in eachindex(dep_vec)
                     dep_val = dep_vec[i]
                     if isa(dep_val, Number)
@@ -347,13 +348,13 @@ function parallelize_1d(iteration_space::Symbol,
     end
     println("global indexed dist array id vec = ",
             global_indexed_dist_array_id_vec)
-    println(dist_array_buffer_id_vec)
     written_dist_array_id_vec = Vector{Int32}()
     accessed_dist_array_sym_vec = Vector{Symbol}()
     accessed_dist_array_id_vec = Vector{Int32}()
 
     for (da_sym, da_access_vec) in dist_array_access_dict
         println(da_sym)
+        println(da_access_vec)
         push!(accessed_dist_array_sym_vec, da_sym)
         push!(accessed_dist_array_id_vec, eval(current_module(), da_sym).id)
 
@@ -639,7 +640,7 @@ function parallelize_2d(iteration_space::Symbol,
     end
 
     for da_sym in global_indexed_dist_array_sym_set
-        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_server_hash,
+        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
                                                            DistArrayIndexType_range)
         repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
@@ -832,8 +833,10 @@ function static_parallelize(iteration_space::Symbol,
     println("get_dist_array_access")
     dist_array_access_dict, buffer_set, dist_array_access_context = get_dist_array_access(flow_graph, iteration_var, ssa_defs)
     println(dist_array_access_dict)
-    dep_vecs = compute_dependence_vectors(dist_array_access_dict, is_ordered)
+    dep_vecs = compute_dependence_vectors(dist_array_access_dict, is_ordered, iteration_space_dist_array)
+    println(dep_vecs)
     par_scheme = determine_parallelization_scheme(dep_vecs, num_dims)
+    println(par_scheme)
 
     if par_scheme[1] == ForLoopParallelScheme_naive
         println("parallel naive")

@@ -7,7 +7,7 @@ mutable struct DenseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
     dims::Vector{Int64}
     init_value::T
     symbol::Nullable{Symbol}
-    partitions::Vector{DistArrayPartition{T}}
+    partitions::Dict{String, Vector{T}}
     accessor::Nullable{DenseDistArrayAccessor{T, N}}
     is_materialized::Bool
     DenseDistArrayBuffer{T, N}(id::Integer,
@@ -17,7 +17,7 @@ mutable struct DenseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
                                    copy(dims),
                                    init_value,
                                    Nullable{Symbol}(),
-                                   Vector{DistArrayPartition{T}}(),
+                                   Dict{String, Vector{T}}(),
                                    Nullable{DenseDistArrayAccessor{T, N}}(),
                                    false)
 end
@@ -27,7 +27,7 @@ type SparseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
     dims::Vector{Int64}
     init_value::T
     symbol::Nullable{Symbol}
-    partitions::Vector{DistArrayPartition{T}}
+    partitions::Dict{String, Vector{T}}
     accessor::Nullable{SparseInitDistArrayAccessor{T, N}}
     is_materialized::Bool
     SparseDistArrayBuffer{T, N}(id::Integer,
@@ -37,7 +37,7 @@ type SparseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
                                     copy(dims),
                                     init_value,
                                     Nullable{Symbol}(),
-                                    Vector{DistArrayPartition{T}}(),
+                                    Dict{String, Vector{T}}(),
                                     Nullable{SparseInitDistArrayAccessor{T, N}}(),
                                     false)
 end

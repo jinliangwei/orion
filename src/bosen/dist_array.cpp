@@ -247,7 +247,7 @@ DistArray::ComputeHashRepartition(size_t num_partitions) {
   for (auto dist_array_partition : partition_buff) {
     dist_array_partition->BuildKeyValueBuffersFromSparseIndex();
     dist_array_partition->ComputeHashRepartitionIdsAndRepartition(num_partitions);
-    DeletePartition(dist_array_partition);
+    delete dist_array_partition;
   }
 }
 
@@ -259,7 +259,7 @@ DistArray::ComputeRepartition(const std::string &repartition_func_name) {
   for (auto dist_array_partition : partition_buff) {
     dist_array_partition->BuildKeyValueBuffersFromSparseIndex();
     dist_array_partition->ComputeRepartitionIdsAndRepartition(repartition_func_name);
-    DeletePartition(dist_array_partition);
+    delete dist_array_partition;
   }
 
   bool from_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHashServer;
@@ -394,7 +394,6 @@ DistArray::RepartitionSerializeAndClear(
   } else {
     RepartitionSerializeAndClear1D(send_buff_ptr);
   }
-  GcPartitions();
 }
 
 void
@@ -428,7 +427,7 @@ DistArray::RepartitionSerializeAndClearSpaceTime(
       SendDataBuffer partition_buff = partition->Serialize();
       send_partition_buffs[space_id].emplace_back(time_id, partition_buff);
       send_buff_sizes[recv_id] += sizeof(int32_t) + partition_buff.second;
-      DeletePartition(partition);
+      delete partition;
     }
     time_partition_map.clear();
     space_time_partitions_.erase(iter++);
@@ -496,7 +495,7 @@ DistArray::RepartitionSerializeAndClear1D(
     auto partition_buff = partition->Serialize();
     send_partition_buffs.emplace_back(partition_id, partition_buff);
     send_buff_sizes[recv_id] += sizeof(int32_t) + partition_buff.second;
-    DeletePartition(partition);
+    delete partition;
     partitions_.erase(iter++);
   }
 
@@ -710,7 +709,8 @@ DistArray::CreateDistArrayBuffer(const std::string &serialized_value_type) {
   bool is_dense = meta_.IsDense();
   const auto &init_value = meta_.GetInitValue();
   JuliaEvaluator::DefineDistArray(kId, symbol, serialized_value_type,
-                                  dims, is_dense, true, init_value);
+                                  dims, is_dense, true, init_value,
+                                  this);
   buffer_partition_.reset(CreatePartition());
 }
 
@@ -723,41 +723,7 @@ void
 DistArray::DeletePartition(int32_t partition_id) {
   auto partition_iter = partitions_.find(partition_id);
   CHECK(partition_iter != partitions_.end());
-  auto *gc_partition = partition_iter->second->GetGcPartition();
   delete partition_iter->second;
-  partitions_.erase(partition_iter);
-  if (gc_partition != nullptr) {
-    gc_partitions_.push_back(gc_partition);
-  }
-}
-
-void
-DistArray::DeletePartition(AbstractDistArrayPartition* partition) {
-  auto *gc_partition = partition->GetGcPartition();
-  delete partition;
-  if (gc_partition != nullptr) {
-    gc_partitions_.push_back(gc_partition);
-  }
-}
-
-void
-DistArray::GcPartitions() {
-  if (gc_partitions_.empty()) return;
-  jl_value_t* dist_array = nullptr;
-  JuliaEvaluator::GetVarJlValue(meta_.GetSymbol(), &dist_array);
-  jl_value_t *array_type = nullptr,
-          *partition_vec = nullptr;
-  JL_GC_PUSH2(&array_type, &partition_vec);
-  array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_any_type), 1);
-  partition_vec = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(array_type, gc_partitions_.size()));
-  for (size_t i = 0; i < gc_partitions_.size(); i++) {
-    auto* gc_partition = gc_partitions_[i];
-    jl_arrayset(reinterpret_cast<jl_array_t*>(partition_vec), gc_partition, i);
-  }
-  jl_function_t* delete_partitions_func = JuliaEvaluator::GetOrionWorkerFunction(
-      "dist_array_delete_partitions");
-  jl_call2(delete_partitions_func, dist_array, partition_vec);
-  JL_GC_POP();
 }
 
 void

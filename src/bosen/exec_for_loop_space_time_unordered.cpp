@@ -153,18 +153,21 @@ ExecForLoopSpaceTimeUnordered::PrepareToExecCurrPartition() {
   LOG(INFO) << __func__ << " space = " << curr_space_partition_id_
             << " time = " << curr_time_partition_id_;
   for (auto& dist_array_pair : space_partitioned_dist_arrays_) {
+    LOG(INFO) << __func__ << " CreateAccessor for sp " << dist_array_pair.first;
     auto* dist_array = dist_array_pair.second;
     auto *access_partition = dist_array->GetLocalPartition(curr_space_partition_id_);
     access_partition->CreateAccessor();
   }
 
   for (auto& dist_array_pair : time_partitioned_dist_arrays_) {
+    LOG(INFO) << __func__ << " CreateAccessor for tp " << dist_array_pair.first;
     auto* dist_array = dist_array_pair.second;
     auto *access_partition = dist_array->GetLocalPartition(curr_time_partition_id_);
     access_partition->CreateAccessor();
   }
 
   for (auto& buffer_pair : dist_array_buffers_) {
+    LOG(INFO) << __func__ << " CreateBufferAccessor for " << buffer_pair.first;
     auto* dist_array_buffer = buffer_pair.second;
     auto *buffer_partition = dist_array_buffer->GetBufferPartition();
     buffer_partition->CreateBufferAccessor();

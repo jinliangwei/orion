@@ -53,6 +53,7 @@ function orionres_define_dist_array(id::Int32,
                                                          init_value)
     dist_array_symbol = Symbol(symbol)
     eval(:(global $dist_array_symbol = $dist_array))
+    return eval(dist_array_symbol)
 end
 
 
@@ -76,4 +77,8 @@ function orionres_get_index(keys::Vector{Int64}, key::Int64, start::Int64)::Int6
     else
         return -1
     end
+end
+
+function orionres_print_value_type(value)
+    println(typeof(value))
 end

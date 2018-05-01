@@ -441,7 +441,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
       {
         LOG(INFO) << "Driver commands stop!";
         message::Helper::CreateMsg<message::ExecutorStop>(&send_buff_);
-        BroadcastToAllExecutors();
+        BroadcastToAllExecutorsAndServers();
         stopped_all_ = true;
       }
       break;

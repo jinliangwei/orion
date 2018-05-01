@@ -107,7 +107,8 @@ class JuliaEvaluator {
                               const std::vector<int64_t> &dims,
                               bool is_dense,
                               bool is_buffer,
-                              const std::vector<uint8_t> &serialized_init_value_vec);
+                              const std::vector<uint8_t> &serialized_init_value_vec,
+                              DistArray* dist_array);
 
   static void RandNormal(
       type::PrimitiveType value_type,
@@ -216,6 +217,22 @@ class JuliaEvaluator {
                                     Blob *bytes_buff);
 
   static jl_value_t* GetDistArrayAccessor(jl_value_t *dist_array);
+
+  static void CreateDistArrayPartition(DistArray *dist_array,
+                                       const std::string &partition_ptr_str);
+  static void GetDistArrayPartition(DistArray *dist_array,
+                                    const std::string &partition_ptr_str,
+                                    jl_value_t **partition_jl);
+  static void DeleteDistArrayPartition(DistArray *dist_array,
+                                       const std::string &partition_ptr_str);
+  static void SetDistArrayPartition(DistArray *dist_array,
+                                    const std::string &partition_ptr_str,
+                                    jl_value_t* partition);
+  static void ClearDistArrayPartition(DistArray *dist_array,
+                                      const std::string &partition_ptr_str);
+
+  static void DeleteAllDistArrays(std::unordered_map<int32_t, DistArray> *dist_arrays,
+                                  std::unordered_map<int32_t, DistArray> *dist_array_buffers);
 };
 
 }

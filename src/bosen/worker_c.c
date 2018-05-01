@@ -17,9 +17,9 @@ extern "C" {
       int32_t dist_array_id,
       int64_t key,
       int32_t value_type,
-      jl_value_t **value) {
+      jl_value_t *value_vec) {
     requester->RequestDistArrayData(dist_array_id, key,
                                     static_cast<orion::bosen::type::PrimitiveType>(value_type),
-                                    value);
+                                    value_vec);
   }
 }

@@ -48,7 +48,7 @@ class JuliaThreadRequester {
       int32_t dist_array_id,
       int64_t key,
       type::PrimitiveType value_type,
-      jl_value_t **value);
+      jl_value_t *value_vec);
 
   void ReplyDistArrayData(
       const uint8_t* bytes,

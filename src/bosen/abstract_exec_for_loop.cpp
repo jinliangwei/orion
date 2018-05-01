@@ -175,6 +175,7 @@ AbstractExecForLoop::Clear() {
       orion_worker_module,
       "clear_global_read_only_var_buff");
   jl_call0(clear_func);
+  dist_array_cache_.clear();
   JuliaEvaluator::AbortIfException();
 }
 
@@ -438,7 +439,6 @@ AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
       data_buffers.emplace(dist_array_id, data_buff);
     }
     dist_array->DeletePartition(time_partition_id_to_send);
-    dist_array->GcPartitions();
   }
 
   if (data_buffers.empty()) return;

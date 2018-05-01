@@ -436,7 +436,7 @@ JuliaEvaluator::ParseStringWithLineNumberFlatten(
   CHECK(jl_is_string(str_jl));
   ret_array = jl_call2(parser_func, line_number_jl, str_jl);
   CHECK(jl_is_array(ret_array));
-
+  AbortIfException();
   value_array_type = jl_apply_array_type(value_type, 1);
 
   size_t num_output_values = jl_array_len(ret_array);
@@ -444,17 +444,17 @@ JuliaEvaluator::ParseStringWithLineNumberFlatten(
       value_array_type,
       num_output_values));
 
-  key->clear();
+  key->resize(num_output_values * num_dims);
   for (size_t i = 0; i < num_output_values; i++) {
     key_value = jl_arrayref(reinterpret_cast<jl_array_t*>(ret_array), i);
     key_tuple = jl_get_nth_field(key_value, 0);
-    for (size_t i = 0; i < num_dims; i++) {
-      key_ith = jl_get_nth_field(key_tuple, i);
+    for (size_t j = 0; j < num_dims; j++) {
+      key_ith = jl_get_nth_field(key_tuple, j);
       int64_t key_int64 = jl_unbox_int64(key_ith);
-      key->push_back(key_int64);
+      (*key)[i * num_dims + j] = key_int64;
     }
     value_element = jl_get_nth_field(key_value, 1);
-    jl_arrayset(reinterpret_cast<jl_array_t*>(ret_array), value_element, i);
+    jl_arrayset(reinterpret_cast<jl_array_t*>(value_array), value_element, i);
   }
   JL_GC_POP();
   AbortIfException();
@@ -510,7 +510,8 @@ JuliaEvaluator::DefineDistArray(
     const std::vector<int64_t> &dims,
     bool is_dense,
     bool is_buffer,
-    const std::vector<uint8_t> &serialized_init_value) {
+    const std::vector<uint8_t> &serialized_init_value,
+    DistArray* dist_array) {
 
   jl_value_t **jl_values;
   JL_GC_PUSHARGS(jl_values, 13);
@@ -581,7 +582,8 @@ JuliaEvaluator::DefineDistArray(
   args[5] = is_buffer_jl;
   args[6] = init_value_jl;
 
-  jl_call(create_dist_array_func, args, 7);
+  jl_value_t *dist_array_jl = jl_call(create_dist_array_func, args, 7);
+  dist_array->SetJuliaDistArray(dist_array_jl);
   JL_GC_POP();
   AbortIfException();
 }
@@ -873,10 +875,14 @@ JuliaEvaluator::RunMapValues(
       jl_ptr_to_array_1d(key_array_type, temp_child_dims.data(), temp_child_dims.size(), 0));
   jl_function_t *mapper_func = GetFunction(
       GetJlModule(mapper_func_module), mapper_func_name.c_str());
+  LOG(INFO) << __func__ << " calling mapper "
+            << " dim_array_jl = " << (void*) dim_array_jl
+            << " input_values = " << (void*) input_values;
   output_tuple_jl = jl_call3(mapper_func, dim_array_jl, input_values,
                              reinterpret_cast<jl_value_t*>(output_value_type));
+  JuliaEvaluator::AbortIfException();
   CHECK(jl_is_tuple(output_tuple_jl));
-
+  LOG(INFO) << "calling mapper done!";
   *output_values_ptr = jl_get_nth_field(output_tuple_jl, 1);
   CHECK(jl_is_array(*output_values_ptr));
   JL_GC_POP();
@@ -1168,6 +1174,95 @@ JuliaEvaluator::GetDistArrayAccessor(jl_value_t *dist_array) {
   auto* accessor = jl_call1(get_accessor_func, dist_array);
   AbortIfException();
   return accessor;
+}
+
+void
+JuliaEvaluator::CreateDistArrayPartition(DistArray *dist_array,
+                                         const std::string &partition_ptr_str) {
+  jl_value_t* ptr_str_jl = nullptr;
+  JL_GC_PUSH1(&ptr_str_jl);
+  ptr_str_jl = jl_cstr_to_string(partition_ptr_str.c_str());
+  jl_value_t *dist_array_jl = dist_array->GetJuliaDistArray();
+  auto *create_partition_func = GetOrionWorkerFunction(
+      "dist_array_create_and_add_partition");
+
+  jl_call2(create_partition_func, dist_array_jl, ptr_str_jl);
+  JL_GC_POP();
+  AbortIfException();
+}
+
+void
+JuliaEvaluator::GetDistArrayPartition(DistArray *dist_array,
+                                      const std::string &partition_ptr_str,
+                                      jl_value_t **partition_jl) {
+  jl_value_t* ptr_str_jl = nullptr;
+  JL_GC_PUSH1(&ptr_str_jl);
+  ptr_str_jl = jl_cstr_to_string(partition_ptr_str.c_str());
+  jl_value_t *dist_array_jl = dist_array->GetJuliaDistArray();
+  auto *get_partition_func = GetOrionWorkerFunction(
+      "dist_array_get_partition");
+
+  *partition_jl = jl_call2(get_partition_func, dist_array_jl, ptr_str_jl);
+  JL_GC_POP();
+  AbortIfException();
+}
+
+void
+JuliaEvaluator::DeleteDistArrayPartition(DistArray *dist_array,
+                                         const std::string &partition_ptr_str) {
+  LOG(INFO) << __func__;
+  LOG(INFO) << __func__ << " " << partition_ptr_str
+            << " " << (void*) dist_array;
+  jl_value_t* ptr_str_jl = nullptr;
+  JL_GC_PUSH1(&ptr_str_jl);
+  ptr_str_jl = jl_cstr_to_string(partition_ptr_str.c_str());
+  LOG(INFO) << __func__ << " " << (void*) ptr_str_jl;
+  jl_value_t *dist_array_jl = dist_array->GetJuliaDistArray();
+  LOG(INFO) << __func__ << " " << (void*) ptr_str_jl
+            << " " << (void*) dist_array_jl;
+  auto *delete_partition_func = GetOrionWorkerFunction(
+      "dist_array_delete_partition");
+
+  jl_call2(delete_partition_func, dist_array_jl, ptr_str_jl);
+  JL_GC_POP();
+  AbortIfException();
+}
+
+void
+JuliaEvaluator::SetDistArrayPartition(DistArray *dist_array,
+                                      const std::string &partition_ptr_str,
+                                      jl_value_t* partition) {
+  jl_value_t* ptr_str_jl = nullptr;
+  JL_GC_PUSH1(&ptr_str_jl);
+  ptr_str_jl = jl_cstr_to_string(partition_ptr_str.c_str());
+  jl_value_t *dist_array_jl = dist_array->GetJuliaDistArray();
+  auto *set_partition_func = GetOrionWorkerFunction(
+      "dist_array_set_partition");
+
+  jl_call3(set_partition_func, dist_array_jl, ptr_str_jl,
+           partition);
+  JL_GC_POP();
+}
+
+void
+JuliaEvaluator::ClearDistArrayPartition(DistArray *dist_array,
+                                        const std::string &partition_ptr_str) {
+  jl_value_t* ptr_str_jl = nullptr;
+  JL_GC_PUSH1(&ptr_str_jl);
+  ptr_str_jl = jl_cstr_to_string(partition_ptr_str.c_str());
+  jl_value_t *dist_array_jl = dist_array->GetJuliaDistArray();
+  auto *clear_partition_func = GetOrionWorkerFunction(
+      "dist_array_clear_partition");
+
+  jl_call2(clear_partition_func, dist_array_jl, ptr_str_jl);
+  JL_GC_POP();
+}
+
+void
+JuliaEvaluator::DeleteAllDistArrays(std::unordered_map<int32_t, DistArray> *dist_arrays,
+                                   std::unordered_map<int32_t, DistArray> *dist_array_buffers) {
+  dist_arrays->clear();
+  dist_array_buffers->clear();
 }
 
 }

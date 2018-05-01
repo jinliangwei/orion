@@ -67,12 +67,12 @@ end
 function dist_array_cache_fetch(dist_array_id::Int32,
                                 key::Int64,
                                 ValueType::DataType)
-    value = Vector{ValueType}(1)
+    value = Vector{ValueType}()
     ccall((:orion_request_dist_array_data, lib_path),
           Void, (Int32,
                  Int64,
                  Int32,
-                 Ref{Any}),
+                 Any),
           dist_array_id,
           key,
           data_type_to_int32(ValueType),

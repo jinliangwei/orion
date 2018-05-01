@@ -60,6 +60,7 @@ class DistArray {
   JuliaThreadRequester *julia_requester_;
   std::vector<jl_value_t*> gc_partitions_;
   std::unique_ptr<AbstractDistArrayPartition> buffer_partition_;
+  jl_value_t* dist_array_jl_ {nullptr};
  public:
   DistArray(int32_t id,
             const Config& config,
@@ -81,6 +82,8 @@ class DistArray {
             JuliaThreadRequester *julia_requester);
   ~DistArray();
   int32_t GetId() const { return kId; }
+  jl_value_t* GetJuliaDistArray() { return dist_array_jl_; }
+  void SetJuliaDistArray(jl_value_t* dist_array_jl) { dist_array_jl_ = dist_array_jl; }
 
   void LoadPartitionsFromTextFile(std::string file_path);
   void ParseBufferedText(Blob *max_ids,
@@ -120,11 +123,9 @@ class DistArray {
 
   void GetMaxPartitionIds(std::vector<int32_t>* ids);
   void DeletePartition(int32_t partition_id);
-  void DeletePartition(AbstractDistArrayPartition *partition);
 
   void CreateDistArrayBuffer(const std::string &serialized_value_type);
   AbstractDistArrayPartition* GetBufferPartition();
-  void GcPartitions();
  private:
   DISALLOW_COPY(DistArray);
   void RepartitionSerializeAndClearSpaceTime(ExecutorSendBufferMap* send_buff_ptr);

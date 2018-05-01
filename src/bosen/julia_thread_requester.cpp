@@ -11,7 +11,7 @@ JuliaThreadRequester::RequestDistArrayData(
     int32_t dist_array_id,
     int64_t key,
     type::PrimitiveType value_type,
-    jl_value_t **value) {
+    jl_value_t *value_vec) {
   request_replied_ = false;
 
   message::ExecuteMsgHelper::CreateMsg<
@@ -37,16 +37,16 @@ JuliaThreadRequester::RequestDistArrayData(
   std::unique_lock<std::mutex> lock(request_mtx_);
   request_cv_.wait(lock, [this]{ return this->request_replied_; });
   if (requested_value_.size() == 0) {
-    *value = jl_nothing;
     return;
   }
 
+  jl_value_t *value_jl = nullptr;
+  jl_value_t* buff_jl = nullptr;
+  jl_value_t* serialized_value_array = nullptr;
+  jl_value_t *serialized_value_array_type = nullptr;
+  JL_GC_PUSH4(&value_jl, &buff_jl, &serialized_value_array,
+              &serialized_value_array_type);
   if (value_type == type::PrimitiveType::kVoid) {
-    jl_value_t* buff_jl = nullptr;
-    jl_value_t* serialized_value_array = nullptr;
-    jl_value_t *serialized_value_array_type = nullptr;
-    JL_GC_PUSH3(&buff_jl, &serialized_value_array,
-                &serialized_value_array_type);
     serialized_value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
     jl_function_t *io_buffer_func
         = JuliaEvaluator::GetFunction(jl_base_module, "IOBuffer");
@@ -58,14 +58,15 @@ JuliaThreadRequester::RequestDistArrayData(
         requested_value_.data(),
         requested_value_.size(), 0));
     buff_jl = jl_call1(io_buffer_func, serialized_value_array);
-    *value = jl_call1(deserialize_func, buff_jl);
-    JL_GC_POP();
+    value_jl = jl_call1(deserialize_func, buff_jl);
   } else if (value_type == type::PrimitiveType::kString) {
-    *value = jl_cstr_to_string(reinterpret_cast<char*>(requested_value_.data()));
+    value_jl = jl_cstr_to_string(reinterpret_cast<char*>(requested_value_.data()));
   } else {
-    JuliaEvaluator::BoxValue(value_type, requested_value_.data(), value);
+    JuliaEvaluator::BoxValue(value_type, requested_value_.data(), &value_jl);
   }
+  jl_array_ptr_1d_push(reinterpret_cast<jl_array_t*>(value_vec), value_jl);
   requested_value_.resize(0);
+  JL_GC_POP();
 }
 
 void

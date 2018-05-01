@@ -239,6 +239,10 @@ DistArrayPartition<std::string>::ClearBufferAccessor() {
       const char* c_str = jl_string_ptr(string_jl);
       values_[i] = std::string(c_str);
     }
+    keys_.resize(num_values);
+    for (size_t i = 0; i < num_values; i++) {
+      keys_[i] = i;
+    }
   } else {
     auto *get_keys_values_vec_func = JuliaEvaluator::GetOrionWorkerFunction(
         "dist_array_get_accessor_keys_values_vec");

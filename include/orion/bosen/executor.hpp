@@ -152,7 +152,8 @@ class Executor {
       kCreateDistArrayBufferAck = 19,
       kTextFileLoadDone = 20,
       kRepartitionDistArraySerialize = 21,
-      kUpdateDistArrayIndex = 22
+      kUpdateDistArrayIndex = 22,
+      kDeleteAllDistArrays = 23
             };
 
   static const int32_t kPortSpan = 100;
@@ -494,7 +495,7 @@ Executor::HandleClosedConnection(PollConn *poll_conn_ptr) {
     CHECK_EQ(ret, 0);
     auto* conn = reinterpret_cast<conn::SocketConn*>(poll_conn_ptr->conn);
     conn->sock.Close();
-    action_ = Action::kExit;
+    action_ = Action::kDeleteAllDistArrays;
     ret |= EventHandler<PollConn>::kExit;
   }
   return ret;
@@ -747,6 +748,18 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           action_ = Action::kNone;
         }
         break;
+      case Action::kDeleteAllDistArrays:
+        {
+          auto cpp_func = std::bind(
+              JuliaEvaluator::DeleteAllDistArrays,
+              &dist_arrays_,
+              &dist_array_buffers_);
+          exec_cpp_func_task_.func = cpp_func;
+          exec_cpp_func_task_.label = TaskLabel::kDeleteAllDistArrays;
+          julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+          action_ = Action::kNone;
+        }
+        break;
       case Action::kExit:
         break;
       default:
@@ -782,7 +795,7 @@ Executor::HandleMasterMsg() {
     case message::Type::kExecutorStop:
       {
         LOG(INFO) << "master commands stop!";
-        action_ = Action::kExit;
+        action_ = Action::kDeleteAllDistArrays;
         ret = EventHandler<PollConn>::kClearOneMsg | EventHandler<PollConn>::kExit;
       }
       break;
@@ -974,9 +987,9 @@ Executor::HandlePeerRecvThrExecuteMsg() {
             dist_array_ptr,
             key,
             &exec_cpp_func_task_.result_buff);
-          exec_cpp_func_task_.func = cpp_func;
-          exec_cpp_func_task_.label = TaskLabel::kGetAndSerializeDistArrayValues;
-          julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+        exec_cpp_func_task_.func = cpp_func;
+        exec_cpp_func_task_.label = TaskLabel::kGetAndSerializeDistArrayValues;
+        julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
       }
       break;
     case message::ExecuteMsgType::kRequestDistArrayValues:
@@ -1253,6 +1266,12 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
               {
                 ExecForLoopAck();
                 action_ = Action::kNone;
+              }
+              break;
+            case TaskLabel::kDeleteAllDistArrays:
+              {
+                LOG(INFO) << "DeleteAllDistArrays done";
+                action_ = Action::kExit;
               }
               break;
             default:
@@ -2075,7 +2094,8 @@ Executor::DefineJuliaDistArray() {
       dims,
       is_dense,
       false,
-      std::vector<uint8_t>());
+      std::vector<uint8_t>(),
+      &dist_array);
 
   exec_cpp_func_task_.func = cpp_func;
   exec_cpp_func_task_.label = TaskLabel::kDefineJuliaDistArray;

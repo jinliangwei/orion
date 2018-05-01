@@ -39,6 +39,7 @@ mutable struct BasicBlock
     # mapping stmt index to symbols defined or used
     stmt_ssa_defs::Dict{Int64, Set{Symbol}}
     stmt_ssa_uses::Dict{Int64, Set{Symbol}}
+    branch_rendezvous
     BasicBlock(id) = new(id,
                          Vector{BasicBlock}(),
                          Vector{Tuple{Any, BasicBlock}}(),
@@ -60,7 +61,8 @@ mutable struct BasicBlock
                          Set{Symbol}(),
                          Dict{Symbol, Vector{Symbol}}(),
                          Dict{Int64, Set{Symbol}}(),
-                         Dict{Int64, Set{Symbol}}())
+                         Dict{Int64, Set{Symbol}}(),
+                         nothing)
 end
 
 function copy(bb::BasicBlock)::BasicBlock
@@ -86,6 +88,7 @@ function copy(bb::BasicBlock)::BasicBlock
     new_bb.ssa_reaches_dict = copy(bb.ssa_reaches_dict)
     new_bb.stmt_ssa_defs = copy(bb.stmt_ssa_defs)
     new_bb.stmt_ssa_uses = copy(bb.stmt_ssa_uses)
+    new_bb.branch_rendezvous = bb.branch_rendezvous
 end
 
 mutable struct FlowGraphContext
@@ -167,42 +170,45 @@ function compute_use_def(bb_list::Vector{BasicBlock})
 end
 
 function build_flow_graph(expr::Expr, bb::BasicBlock,
-                          build_context::FlowGraphContext)::Vector{BasicBlock}
-    exit_bbs = Vector{BasicBlock}()
+                          build_context::FlowGraphContext)::BasicBlock
+    exit_bb = bb
     if !isa(expr, Expr)
         push!(bb.stmts, copy(expr))
-        push!(exit_bbs, bb)
-        return exit_bbs
+        return bb
     end
     if expr.head == :if
         condition = if_get_condition(expr)
         push!(bb.stmts, copy(condition))
         true_bb_entry = create_basic_block(build_context)
 
-        true_bb_exits = build_flow_graph(if_get_true_branch(expr),
+        true_bb_exit = build_flow_graph(if_get_true_branch(expr),
                                          true_bb_entry,
                                          build_context)
+
         push!(bb.successors, (true, true_bb_entry))
         push!(true_bb_entry.predecessors, bb)
         false_branch = if_get_false_branch(expr)
         if false_branch != nothing
             false_bb_entry = create_basic_block(build_context)
-            false_bb_exits = build_flow_graph(false_branch, false_bb_entry,
+            false_bb_exit = build_flow_graph(false_branch, false_bb_entry,
                                               build_context)
             push!(bb.successors, (false, false_bb_entry))
             push!(false_bb_entry.predecessors, bb)
-            append!(exit_bbs, true_bb_exits)
-            append!(exit_bbs, false_bb_exits)
+
+            exit_bb = create_basic_block(build_context)
+            push!(exit_bb.predecessors, true_bb_exit)
+            push!(true_bb_exit.successors, (nothing, exit_bb))
+            push!(exit_bb.predecessors, false_bb_exit)
+            push!(false_bb_exit.successors, (nothing, exit_bb))
+            bb.branch_rendezvous = exit_bb
             bb.control_flow = (:if, :else)
         else
             exit_bb = create_basic_block(build_context)
-            for true_bb_exit in true_bb_exits
-                push!(true_bb_exit.successors, (nothing, exit_bb))
-                push!(exit_bb.predecessors, true_bb_exit)
-            end
+            push!(true_bb_exit.successors, (nothing, exit_bb))
+            push!(exit_bb.predecessors, true_bb_exit)
+
             push!(bb.successors, (false, exit_bb))
             push!(exit_bb.predecessors, bb)
-            push!(exit_bbs, exit_bb)
             bb.control_flow = :if
         end
     elseif expr.head == :for ||
@@ -218,41 +224,33 @@ function build_flow_graph(expr::Expr, bb::BasicBlock,
         loop_condition_bb.control_flow = expr.head
         push!(loop_condition_bb.stmts, copy(loop_condition))
         true_bb_entry = create_basic_block(build_context)
-        true_bb_exits = build_flow_graph(for_get_loop_body(expr),
-                                         true_bb_entry,
-                                         build_context)
+        true_bb_exit = build_flow_graph(for_get_loop_body(expr),
+                                        true_bb_entry,
+                                        build_context)
+
         push!(loop_condition_bb.successors, (true, true_bb_entry))
         push!(true_bb_entry.predecessors, loop_condition_bb)
-        loop_condition_bb.num_backward_edges = length(true_bb_exits)
-        for exit_bb in true_bb_exits
-            push!(loop_condition_bb.predecessors, exit_bb)
-            push!(exit_bb.successors, (nothing, loop_condition_bb))
-        end
+        loop_condition_bb.num_backward_edges = 1
+
+        push!(loop_condition_bb.predecessors, true_bb_exit)
+        push!(true_bb_exit.successors, (nothing, loop_condition_bb))
 
         loop_exit_bb = create_basic_block(build_context)
         push!(loop_condition_bb.successors, (false, loop_exit_bb))
         push!(loop_exit_bb.predecessors, loop_condition_bb)
 
-        push!(exit_bbs, loop_exit_bb)
+        exit_bb = loop_exit_bb
     elseif expr.head == :block
         curr_bb = bb
         for stmt in block_get_stmts(expr)
-            exit_bbs = build_flow_graph(stmt, curr_bb, build_context)
-            if length(exit_bbs) == 1
-                curr_bb = exit_bbs[1]
-            elseif length(exit_bbs) > 1
-                curr_bb = create_basic_block(build_context)
-                for exit_bb in exit_bbs
-                    push!(exit_bb.successors, (nothing, curr_bb))
-                    push!(curr_bb.predecessors, exit_bb)
-                end
-            end
+            exit_bb = build_flow_graph(stmt, curr_bb, build_context)
+            curr_bb = exit_bb
         end
     else
         push!(bb.stmts, copy(expr))
-        push!(exit_bbs, bb)
+        exit_bb = bb
     end
-    return exit_bbs
+    return exit_bb
 end
 
 function compute_use_def_expr(stmt, bb::BasicBlock)
@@ -1331,21 +1329,8 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
         @assert length(bb.successors) == 2
         true_branch_stmt_vec = Vector{Any}()
         false_branch_stmt_vec = Vector{Any}()
-        true_branch_successors = Set{Int64}()
-        false_branch_successors = Set{Int64}()
-        for suc in bb.successors
-            if suc[1]
-                true_branch_successors = Set(suc[2].successors)
-            else
-                false_branch_successors = Set(suc[2].successors)
-            end
-        end
-        common_successors = intersect(true_branch_successors, false_branch_successors)
-        @assert length(common_successors) == 1
-        comm_suc_bb = collect(common_successors)[1][2]
-        comm_suc_id = comm_suc_bb.id
-        suc_to_handle = comm_suc_bb
-        my_skip_bb_id_set = union(skip_bb_id_set, Set([comm_suc_id]))
+        suc_to_handle = bb.branch_rendezvous
+        my_skip_bb_id_set = union(skip_bb_id_set, Set([suc_to_handle.id]))
         for suc in bb.successors
             @assert isa(suc, Tuple{Bool, BasicBlock})
             if suc[1]
@@ -1433,7 +1418,7 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
             end
         end
 
-        if ((num_unappended_preds - suc_bb.num_backward_edges) == 0) &&
+        if (num_unappended_preds == suc_bb.num_backward_edges) &&
             !(suc_bb.id in skip_bb_id_set)
             recreate_stmts_from_flow_graph(suc_bb,
                                            bb_stmts_dict,
@@ -1479,7 +1464,6 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
 
     syms_deleted = get_deleted_syms(bb_list, ssa_defs,
                                     dist_array_access_context)
-    println("syms_deleted = ", syms_deleted)
     # The set of symbols to be defined include symbols that are
     # used to define DistArray access subscripts
     bb_stmt_dict = Dict{Int64, Dict{Int64, Any}}()
@@ -1540,11 +1524,9 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
         end
     end
 
-    if isempty(syms_to_be_defined)
-        println("no syms to be defined")
-        return nothing
+    if isempty(bb_stmt_dict)
+        return
     end
-
     stmts_are_added = true
     while stmts_are_added
         stmts_are_added = false

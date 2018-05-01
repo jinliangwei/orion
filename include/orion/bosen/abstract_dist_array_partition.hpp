@@ -113,7 +113,6 @@ class AbstractDistArrayPartition {
 
   // apply updates
   virtual const uint8_t* DeserializeAndOverwrite(const uint8_t *buffer) = 0;
-  virtual jl_value_t *GetGcPartition() = 0;
   virtual void Clear() = 0;
   virtual void Sort() = 0;
  protected:

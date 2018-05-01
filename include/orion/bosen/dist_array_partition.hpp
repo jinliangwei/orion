@@ -58,7 +58,6 @@ class DistArrayPartition : public AbstractDistArrayPartition {
       const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
       const std::string &apply_buffer_func_name);
 
-  jl_value_t *GetGcPartition() { return nullptr; }
   void Clear();
 
   void AppendKeyValue(int64_t key, ValueType value);
@@ -301,13 +300,13 @@ DistArrayPartition<ValueType>::ClearBufferAccessor() {
         "dist_array_get_accessor_values_vec");
     values_array_jl = jl_call1(get_values_vec_func, dist_array_jl);
     size_t num_values = jl_array_len(values_array_jl);
+    auto *values_vec = reinterpret_cast<ValueType*>(jl_array_data(values_array_jl));
+    values_.resize(num_values);
+    memcpy(values_.data(), values_vec, num_values * sizeof(ValueType));
     keys_.resize(num_values);
     for (size_t i = 0; i < num_values; i++) {
       keys_[i] = i;
     }
-    auto *values_vec = reinterpret_cast<ValueType*>(jl_array_data(values_array_jl));
-    values_.resize(num_values);
-    memcpy(values_.data(), values_vec, num_values * sizeof(ValueType));
   }
 
   auto *delete_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
@@ -749,7 +748,6 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
       const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
       const std::string &apply_buffer_func_name);
 
-  jl_value_t *GetGcPartition() { return nullptr; }
   void Clear();
 
   void AppendKeyValue(int64_t key, const std::string &value);
@@ -775,11 +773,8 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
 template<>
 class DistArrayPartition<void> : public AbstractDistArrayPartition {
  private:
-  jl_module_t *orion_worker_module_;
-  jl_value_t *dist_array_jl_;
-  jl_value_t *partition_jl_;
-  jl_value_t *values_array_jl_;
   stx::btree_map<int64_t, size_t> sparse_index_;
+  std::string ptr_str_;
 
  public:
   DistArrayPartition(DistArray *dist_array,
@@ -810,7 +805,6 @@ class DistArrayPartition<void> : public AbstractDistArrayPartition {
       const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
       const std::string &apply_buffer_func_name);
 
-  jl_value_t *GetGcPartition() { return partition_jl_; }
   void Clear();
 
  private:
