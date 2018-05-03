@@ -728,6 +728,7 @@ DistArray::DeletePartition(int32_t partition_id) {
 
 void
 DistArray::ComputeMaxPartitionIds() {
+  LOG(INFO) << __func__ << " dist_array id = " << kId;
   if (meta_.GetPartitionScheme() == DistArrayPartitionScheme::kSpaceTime) {
     ComputeMaxPartitionIdsSpaceTime();
   } else {

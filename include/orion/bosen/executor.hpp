@@ -670,6 +670,7 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
       case Action::kRepartitionDistArray:
         {
           bool repartition_mine = RepartitionDistArray();
+          LOG(INFO) << "repartition_mine = " << repartition_mine;
           if (!repartition_mine && !repartition_recv_)
             action_ = Action::kRepartitionDistArrayAck;
           else {
@@ -734,7 +735,8 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           int32_t dist_array_id = dist_array_under_operation_;
           auto &dist_array = dist_arrays_.at(dist_array_id);
           auto &max_ids = dist_array.GetMeta().GetMaxPartitionIds();
-
+          LOG(INFO) << "RepartitionDistArrayAck, max_idx.size = "
+                    << max_ids.size();
           auto *ack_msg = message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayAck>(
             &send_buff_,
             dist_array_id,

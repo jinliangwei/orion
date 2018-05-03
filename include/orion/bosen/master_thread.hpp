@@ -918,9 +918,16 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         size_t num_dims = ack_msg->num_dims;
         int32_t *max_ids = ack_msg->max_ids;
         auto &dist_array_meta = dist_array_metas_.at(dist_array_id);
-        dist_array_meta.AccumMaxPartitionIds(max_ids, num_dims);
+        LOG(INFO) << "RepartitionDistArrayMaxPartitionIds, dist_array_id = " << dist_array_id
+                  << " received num_dims = "
+                  << num_dims;
+        if (num_dims > 0) {
+          dist_array_meta.AccumMaxPartitionIds(max_ids, num_dims);
+        }
         if (num_recved_executor_acks_ == num_expected_executor_acks_) {
           auto &max_ids = dist_array_meta.GetMaxPartitionIds();
+          LOG(INFO) << "RepartitionDistArrayMaxPartitionIds, dist_array_id = "
+                    << dist_array_id << " max_ids.size = " << max_ids.size();
           auto *msg = message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayMaxPartitionIds>(
               &send_buff_,
               dist_array_id,

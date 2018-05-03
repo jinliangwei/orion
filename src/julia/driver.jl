@@ -82,7 +82,7 @@ function exec_for_loop(iteration_space_id::Integer,
                        loop_batch_func_name::AbstractString,
                        prefetch_batch_func_name::AbstractString,
                        is_ordered::Bool)
-
+    println("exec_for_loop for ", iteration_space_id, " ", parallel_scheme)
     global_read_only_var_vals = Vector{Vector{UInt8}}(length(global_read_only_vars))
     index = 1
     for var_sym in global_read_only_vars

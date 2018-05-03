@@ -65,6 +65,7 @@ DistArrayMeta::SetIndexType(DistArrayIndexType index_type) {
 
 void
 DistArrayMeta::SetMaxPartitionIds(int32_t space_id, int32_t time_id) {
+  LOG(INFO) << __func__;
   max_partition_ids_.resize(2);
   max_partition_ids_[0] = space_id;
   max_partition_ids_[1] = time_id;
@@ -72,6 +73,7 @@ DistArrayMeta::SetMaxPartitionIds(int32_t space_id, int32_t time_id) {
 
 void
 DistArrayMeta::SetMaxPartitionIds(int32_t partition_id) {
+  LOG(INFO) << __func__;
   max_partition_ids_.resize(1);
   max_partition_ids_[0] = partition_id;
 }

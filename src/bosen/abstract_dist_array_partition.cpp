@@ -515,7 +515,11 @@ AbstractDistArrayPartition::ComputePrefetchIndices(
     const std::vector<jl_value_t*> &global_read_only_var_vals,
     const std::vector<std::string> &accumulator_var_syms,
     PointQueryKeyDistArrayMap *point_key_vec_map) {
-  LOG(INFO) << __func__;
+  LOG(INFO) << __func__
+            << " " << prefetch_batch_func_name
+            << " num_dist_arrays_to_prefetch = "
+            << global_indexed_dist_arrays.size();
+
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   size_t num_args = global_read_only_var_vals.size()
                     + accumulator_var_syms.size() + 5;
@@ -660,16 +664,9 @@ AbstractDistArrayPartition::Execute(
       dims_array_type_jl, temp_dims.data(), temp_dims.size(), 0));
   keys_vec_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
       keys_array_type_jl, keys_.data(), keys_.size(), 0));
-  LOG(INFO) << __func__ << " value type = " << static_cast<int>(kValueType);
   GetJuliaValueArray(&values_vec_jl);
   JuliaEvaluator::AbortIfException();
-  LOG(INFO) << __func__ << " value_array_size = "
-            << jl_array_len(values_vec_jl);
-  //auto *print_func
-  //    = JuliaEvaluator::GetFunction(jl_main_module, "orionres_print_value_type");
-  //jl_call1(print_func, values_vec_jl);
 
-  JuliaEvaluator::AbortIfException();
   jl_function_t *exec_loop_func
       = JuliaEvaluator::GetFunction(jl_main_module,
                                     loop_batch_func_name.c_str());

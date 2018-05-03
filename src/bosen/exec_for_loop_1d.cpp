@@ -53,7 +53,8 @@ ExecForLoop1D::ExecForLoop1D(
         dist_array_buffers) {
   auto &meta = iteration_space_->GetMeta();
   auto &max_ids = meta.GetMaxPartitionIds();
-  CHECK(max_ids.size() == 1) << "max_ids.size() = " << max_ids.size();
+  CHECK(max_ids.size() == 1) << "max_ids.size() = " << max_ids.size()
+                             << " iteration_space_id = " << iteration_space_id;
   kMaxPartitionId = max_ids[0];
   kNumClocks = (kMaxPartitionId + kNumExecutors) / kNumExecutors;
 

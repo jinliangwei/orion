@@ -722,9 +722,10 @@ function parallelize_2d(iteration_space::Symbol,
                                                                             global_read_only_vars,
                                                                             accumulator_vars)
             end
+            println(prefetch_func)
+            println(prefetch_batch_func)
         end
     end
-
     eval_expr_on_all(loop_partition_func, :Main)
     for partition_func in partition_func_set
         eval_expr_on_all(partition_func, :Main)

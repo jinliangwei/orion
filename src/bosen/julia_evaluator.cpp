@@ -1210,16 +1210,10 @@ JuliaEvaluator::GetDistArrayPartition(DistArray *dist_array,
 void
 JuliaEvaluator::DeleteDistArrayPartition(DistArray *dist_array,
                                          const std::string &partition_ptr_str) {
-  LOG(INFO) << __func__;
-  LOG(INFO) << __func__ << " " << partition_ptr_str
-            << " " << (void*) dist_array;
   jl_value_t* ptr_str_jl = nullptr;
   JL_GC_PUSH1(&ptr_str_jl);
   ptr_str_jl = jl_cstr_to_string(partition_ptr_str.c_str());
-  LOG(INFO) << __func__ << " " << (void*) ptr_str_jl;
   jl_value_t *dist_array_jl = dist_array->GetJuliaDistArray();
-  LOG(INFO) << __func__ << " " << (void*) ptr_str_jl
-            << " " << (void*) dist_array_jl;
   auto *delete_partition_func = GetOrionWorkerFunction(
       "dist_array_delete_partition");
 

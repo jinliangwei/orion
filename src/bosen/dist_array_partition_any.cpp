@@ -265,7 +265,6 @@ DistArrayPartition<void>::GetAndSerializeValue(
   JuliaEvaluator::GetDistArrayPartition(dist_array_, ptr_str_, &values_array_jl);
   jl_value_t *value = jl_arrayref(reinterpret_cast<jl_array_t*>(values_array_jl),
                                   offset);
-
   buff = jl_call0(io_buffer_func);
   jl_call2(serialize_func, buff, value);
   serialized_result_array = jl_call1(takebuff_array_func, buff);
@@ -515,18 +514,14 @@ DistArrayPartition<void>::HashSerialize(
     value_jl = jl_arrayref(reinterpret_cast<jl_array_t*>(values_array_jl), i);
     jl_call2(serialize_func, buff_jl, value_jl);
     JuliaEvaluator::AbortIfException();
-    LOG(INFO) << "calling take!";
     jl_function_t *takebuff_array_func
         = JuliaEvaluator::GetFunction(jl_base_module, "take!");
     serialized_value_array = jl_call1(takebuff_array_func, buff_jl);
     JuliaEvaluator::AbortIfException();
     size_t result_array_length = jl_array_len(serialized_value_array);
-    LOG(INFO) << __func__ << " result_array_length = " << result_array_length;
     uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_value_array));
-    LOG(INFO) << __func__ << " get array_bytes = " << (void*) array_bytes;
     serialized_values[i].resize(result_array_length);
     memcpy(serialized_values[i].data(), array_bytes, result_array_length);
-    LOG(INFO) << __func__ << " copied " << result_array_length << " bytes";
   }
 
   std::unordered_map<int32_t, size_t> server_accum_size;

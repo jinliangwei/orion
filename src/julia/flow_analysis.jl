@@ -19,7 +19,7 @@ mutable struct BasicBlock
     id::Int64
     predecessors::Vector{Any}
     successors::Vector{Tuple{Any, BasicBlock}}
-    num_backward_edges::Int64
+    backward_predecessors::Vector{Int64}
     stmts::Vector{Any}
     control_flow
     uses::Set{Symbol}
@@ -41,9 +41,9 @@ mutable struct BasicBlock
     stmt_ssa_uses::Dict{Int64, Set{Symbol}}
     branch_rendezvous
     BasicBlock(id) = new(id,
-                         Vector{BasicBlock}(),
+                         Vector{Any}(),
                          Vector{Tuple{Any, BasicBlock}}(),
-                         0,
+                         Vector{Int64}(),
                          Vector{Any}(),
                          nothing,
                          Set{Symbol}(),
@@ -69,7 +69,7 @@ function copy(bb::BasicBlock)::BasicBlock
     new_bb = BasicBlock(bb.id)
     new_bb.predecessors = copy(bb.predecessors)
     new_bb.successors = copy(bb.sucessors)
-    new_bb.num_backward_edges = bb.num_backward_edges
+    new_bb.backward_predecessors = bb.backward_predecessors
     new_bb.stmts = copy(bb.stmts)
     control_flow = bb.control_flow
     new_bb.uses = copy(bb.uses)
@@ -114,18 +114,32 @@ function print_basic_block(bb::BasicBlock)
     println("BasicBlock, id = ", bb.id)
     println("predecessors = [", Base.map(x -> (x != nothing ? x.id : "entry"), bb.predecessors), "]")
     println("successors = [", Base.map(x -> (x[1], x[2].id), bb.successors), "]")
+    println("backward_predecessors = [", bb.backward_predecessors, "]")
     println("uses = [", bb.uses, "]")
     println("defsout = [", bb.defsout, "]")
     println("killed = [", bb.killed, "]")
     println("dominators = [", Base.map(x -> x.id, bb.dominators), "]")
     println("im_dominators = [", Base.map(x -> x.id, bb.im_doms), "]")
     println("dominance frontier = ", Base.map(x -> x.id, bb.df), "]")
+    println("ssa_defs = [", bb.ssa_defs, "]")
     println("ssa_defsout = [", bb.ssa_defsout, "]")
     println("ssa_reaches = [", bb.ssa_reaches, "]")
     println("control_flow = ", bb.control_flow)
+    println("sym_to_ssa_var_map = [")
+    for (sym, ssa_var) in bb.sym_to_ssa_var_map
+        println("  ", sym, " => ", ssa_var)
+    end
+    println("]")
     println("stmts = [")
-    for stmt in bb.stmts
-        println("  ", stmt)
+    for stmt_idx in eachindex(bb.stmts)
+        stmt = bb.stmts[stmt_idx]
+        println("  stmt = ", stmt)
+        if stmt_idx in keys(bb.stmt_ssa_defs)
+            println("   stmt_ssa_defs = ", bb.stmt_ssa_defs[stmt_idx])
+        end
+        if stmt_idx in keys(bb.stmt_ssa_uses)
+            println("   stmt_ssa_uses = ", bb.stmt_ssa_uses[stmt_idx])
+        end
     end
     println("]")
 end
@@ -209,6 +223,7 @@ function build_flow_graph(expr::Expr, bb::BasicBlock,
 
             push!(bb.successors, (false, exit_bb))
             push!(exit_bb.predecessors, bb)
+            bb.branch_rendezvous = exit_bb
             bb.control_flow = :if
         end
     elseif expr.head == :for ||
@@ -230,12 +245,13 @@ function build_flow_graph(expr::Expr, bb::BasicBlock,
 
         push!(loop_condition_bb.successors, (true, true_bb_entry))
         push!(true_bb_entry.predecessors, loop_condition_bb)
-        loop_condition_bb.num_backward_edges = 1
 
+        push!(loop_condition_bb.backward_predecessors, true_bb_exit.id)
         push!(loop_condition_bb.predecessors, true_bb_exit)
         push!(true_bb_exit.successors, (nothing, loop_condition_bb))
 
         loop_exit_bb = create_basic_block(build_context)
+        loop_condition_bb.branch_rendezvous = loop_exit_bb
         push!(loop_condition_bb.successors, (false, loop_exit_bb))
         push!(loop_exit_bb.predecessors, loop_condition_bb)
 
@@ -958,11 +974,12 @@ function compute_stmt_ssa_uses_stmt(stmt,
             assigned_to_get_mutated_var_vec(assigned_to, var_mutated_vec)
             for (var_mutated, mutated_type, assigned_to_expr) in var_mutated_vec
                 if mutated_type == Expr
-                    if var_mutated != nothing
-                        @assert isa(var_mutated, Symbol)
-                        push!(stmt_ssa_uses, var_mutated)
+                    @assert is_ref(assigned_to_expr) || is_dot(assigned_to_expr)
+                    if is_ref(assigned_to_expr)
+                        for subscript in ref_get_subscripts(assigned_to_expr)
+                            compute_stmt_ssa_uses_stmt(subscript, stmt_ssa_uses)
+                        end
                     end
-                    compute_stmt_ssa_uses_stmt(assigned_to_expr, stmt_ssa_uses)
                 end
             end
         elseif stmt.head in Set([:call, :invoke, :call1, :foreigncall])
@@ -992,31 +1009,6 @@ function flow_analysis(expr::Expr)
     compute_stmt_ssa_uses(bb_list)
     return flow_graph_entry, context, ssa_context
 end
-
-#function traverse_for_loop(loop_entry::BasicBlock,
-#                           callback,
-#                           cbdata)
-#    bb_list = Vector{BasicBlock}()
-#    push!(bb_list, loop_entry)
-#    for suc in loop_entry.successors
-#        if suc[1] == true
-#            push!(bb_list, suc[2])
-#        end
-#    end
-
-#    visited = Set{Int64}()
-#    while !isempty(bb_list)
-#        bb = shift!(bb_list)
-#        if bb.id in visited
-#            continue
-#        end
-#        push!(visited, bb.id)
-#        callback(bb, cbdata)
-#        for suc in bb.successors
-#            push!(bb_list, suc[2])
-#        end
-#    end
-#end
 
 # returns a tuple (sub_value, loop_index_dim, offset)
 function eval_subscript_expr(expr,
@@ -1129,6 +1121,23 @@ function eval_subscript_expr(expr,
     end
 end
 
+function get_successors_and_ssa_defs_until(entry_bb::BasicBlock,
+                                           end_bb_id::Int64,
+                                           accessed_bb_id_set::Set{Int64},
+                                           ssa_def_set::Set{Symbol})
+    for suc in entry_bb.successors
+        suc_bb = suc[2]
+        if suc_bb.id != end_bb_id &&
+            !(suc_bb.id in accessed_bb_id_set)
+            union!(ssa_def_set, suc_bb.ssa_defs)
+            push!(accessed_bb_id_set, suc_bb.id)
+            get_successors_and_ssa_defs_until(suc_bb, end_bb_id,
+                                              accessed_bb_id_set,
+                                              ssa_def_set)
+        end
+    end
+end
+
 # Deleted symbols are SSA variables whose definition depends on
 # reads from a DistArray other than the iteration space
 # and SSA variables that recursively depend on them.
@@ -1140,15 +1149,39 @@ function get_deleted_syms(bb_list::Vector{BasicBlock},
     bb_dist_array_buffer_access_stmts_dict = dist_array_access_context.bb_dist_array_buffer_access_stmts_dict
 
     syms_deleted = Set{Symbol}()
+    bbs_deleted = Set{Int64}()
     for bb in bb_list
-        if !(bb.id in keys(bb_dist_array_access_dict))
+        if !(bb.id in keys(bb_dist_array_access_dict)) &&
+            !(bb.id in keys(bb_dist_array_buffer_access_stmts_dict))
             continue
         end
-        stmt_access_dict = bb_dist_array_access_dict[bb.id]
-        for (stmt_idx, access_dict) in stmt_access_dict
-            #TODO: more accurate!
-            if stmt_idx in keys(bb.stmt_ssa_defs)
-                union!(syms_deleted, bb.stmt_ssa_defs[stmt_idx])
+        if bb.control_flow == (:if, :else) ||
+            bb.control_flow == :if ||
+            bb.control_flow == :for ||
+            bb.control_flow == :while
+            condition_stmt_idx = length(bb.stmts)
+            if !(
+                ((bb.id in keys(bb_dist_array_access_dict)) &&
+                 (condition_stmt_idx in keys(bb_dist_array_access_dict[bb.id]))) ||
+                ((bb.id in keys(bb_dist_array_buffer_access_stmts_dict)) &&
+                 (condition_stmt_idx in bb_dist_array_buffer_access_stmts_dict[bb.id]))
+            )
+                continue
+            end
+            syms_deleted = union(syms_deleted, bb.stmt_ssa_defs[condition_stmt_idx])
+            rendezvous = bb.branch_rendezvous
+            bb_syms_deleted = Set{Symbol}()
+            bb_bbs_deleted = Set{Int64}()
+            get_successors_and_ssa_defs_until(bb, rendezvous.id, bb_bbs_deleted, bb_syms_deleted)
+            union!(syms_deleted, bb_syms_deleted)
+            union!(bbs_deleted, bb_bbs_deleted)
+        end
+        if bb.id in keys(bb_dist_array_access_dict)
+            stmt_access_dict = bb_dist_array_access_dict[bb.id]
+            for (stmt_idx, access_dict) in stmt_access_dict
+                if stmt_idx in keys(bb.stmt_ssa_defs)
+                    union!(syms_deleted, bb.stmt_ssa_defs[stmt_idx])
+                end
             end
         end
         if bb.id in keys(bb_dist_array_buffer_access_stmts_dict)
@@ -1160,12 +1193,34 @@ function get_deleted_syms(bb_list::Vector{BasicBlock},
             end
         end
     end
-
     syms_are_deleted = !isempty(syms_deleted)
-    while syms_are_deleted
+    bbs_are_deleted = !isempty(bbs_deleted)
+
+    while syms_are_deleted || bbs_are_deleted
         syms_are_deleted = false
+        bbs_are_deleted = false
         new_syms_deleted = copy(syms_deleted)
+        new_bbs_deleted = copy(bbs_deleted)
         for bb in bb_list
+            if bb.id in new_bbs_deleted
+                continue
+            end
+            for stmt_idx in eachindex(bb.stmts)
+                uses_deleted_syms = false
+                if stmt_idx in keys(bb.stmt_ssa_uses)
+                    uses_deleted_syms = !isempty(intersect(bb.stmt_ssa_uses[stmt_idx], syms_deleted))
+                end
+                if !uses_deleted_syms
+                    continue
+                end
+                if stmt_idx in keys(bb.stmt_ssa_defs)
+                    new_syms_deleted = union(syms_deleted, bb.stmt_ssa_defs[stmt_idx])
+                end
+                if new_syms_deleted != syms_deleted
+                    syms_are_deleted = true
+                    syms_deleted = new_syms_deleted
+                end
+            end
             if bb.control_flow == (:if, :else) ||
                 bb.control_flow == :if ||
                 bb.control_flow == :for ||
@@ -1182,39 +1237,24 @@ function get_deleted_syms(bb_list::Vector{BasicBlock},
                 if condition_stmt_idx in keys(bb.stmt_ssa_defs)
                     new_syms_deleted = union(syms_deleted, bb.stmt_ssa_defs[condition_stmt_idx])
                 end
-                for suc in bb.successors
-                    @assert isa(suc, Tuple)
-                    if !isa(suc[1], Bool)
-                        continue
-                    end
-                    suc_syms_deleted = suc[2].ssa_defs
-                    new_syms_deleted = union(new_syms_deleted, suc_syms_deleted)
-                end
+                rendezvous = bb.branch_rendezvous
+                bb_syms_deleted = Set{Symbol}()
+                bb_bbs_deleted = Set{Int64}()
+                get_successors_and_ssa_defs_until(bb, rendezvous.id, bb_bbs_deleted, bb_syms_deleted)
+                union!(new_syms_deleted, bb_syms_deleted)
+                union!(new_bbs_deleted, bb_bbs_deleted)
                 if new_syms_deleted != syms_deleted
                     syms_are_deleted = true
                     syms_deleted = new_syms_deleted
                 end
-            else
-                for stmt_idx in eachindex(bb.stmts)
-                    uses_deleted_syms = false
-                    if stmt_idx in keys(bb.stmt_ssa_uses)
-                        uses_deleted_syms = !isempty(intersect(bb.stmt_ssa_uses[stmt_idx], syms_deleted))
-                    end
-                    if !uses_deleted_syms
-                        continue
-                    end
-                    if stmt_idx in keys(bb.stmt_ssa_defs)
-                        new_syms_deleted = union(syms_deleted, bb.stmt_ssa_defs[stmt_idx])
-                    end
-                    if new_syms_deleted != syms_deleted
-                        syms_are_deleted = true
-                        syms_deleted = new_syms_deleted
-                    end
+                if new_bbs_deleted != bbs_deleted
+                    bbs_are_deleted = true
+                    bbs_deleted = new_bbs_deleted
                 end
             end
         end
     end
-    return syms_deleted
+    return syms_deleted, bbs_deleted
 end
 
 function remap_ssa_vars_visit(expr::Any,
@@ -1273,19 +1313,27 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
                                         appended_bbs::Set{Int64},
                                         ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                                         skip_bb_id_set::Set{Int64})
+    add_control_flow_stmt = false
     if bb.id in keys(bb_stmts_dict) &&
         length(bb_stmts_dict[bb.id]) > 0
         stmt_dict = bb_stmts_dict[bb.id]
-        for stmt_idx = eachindex(bb.stmts)
-            if !(stmt_idx in keys(stmt_dict)) ||
-                (bb.control_flow != nothing && stmt_idx == length(bb.stmts))
+        for stmt_idx in eachindex(bb.stmts)
+            if !(stmt_idx in keys(stmt_dict))
                 continue
             end
             stmt = stmt_dict[stmt_idx]
+            if bb.control_flow != nothing &&
+                stmt_idx == length(bb.stmts) &&
+                !isa(stmt, Vector)
+                add_control_flow_stmt = true
+                continue
+            end
             if isa(stmt, Vector)
                 for dist_array_read in stmt
                     @assert isa(dist_array_read, Tuple)
-                    transformed_read_stmt = transform_dist_array_read_func(dist_array_read, ssa_defs)
+                    transformed_read_stmt = transform_dist_array_read_func(
+                        dist_array_read,
+                        ssa_defs)
                     append!(stmt_vec, transformed_read_stmt)
                 end
             elseif !isa(stmt, Tuple)
@@ -1296,113 +1344,102 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
 
     push!(appended_bbs, bb.id)
     suc_to_handle = nothing
-    if bb.control_flow == :if
-        if_stmt = :(if $(bb.stmts[end]) end)
-        if_stmt_vec = if_stmt.args[2].args
-        @assert length(bb.successors) == 2
-        true_branch_stmt_vec = Vector{Any}()
-        for suc in bb.successors
-            if !suc[1]
-                my_skip_bb_id_set = union(skip_bb_id_set, Set([suc[2].id]))
+    if add_control_flow_stmt
+        suc_to_handle = bb.branch_rendezvous
+        if bb.control_flow == :if
+            if_stmt = :(if $(bb.stmts[end]) end)
+            if_stmt_vec = if_stmt.args[2].args
+            @assert length(bb.successors) == 2
+            true_branch_stmt_vec = Vector{Any}()
+            my_skip_bb_id_set = union(skip_bb_id_set, Set([bb.branch_rendezvous.id]))
+            for suc in bb.successors
+                @assert isa(suc, Tuple{Bool, BasicBlock})
+                if suc[1]
+                    recreate_stmts_from_flow_graph(suc[2],
+                                                   bb_stmts_dict,
+                                                   transform_dist_array_read_func,
+                                                   true_branch_stmt_vec,
+                                                   appended_bbs,
+                                                   ssa_defs,
+                                                   my_skip_bb_id_set)
+                end
             end
-        end
-        for suc in bb.successors
-            @assert isa(suc, Tuple{Bool, BasicBlock})
-            if suc[1]
-                recreate_stmts_from_flow_graph(suc[2],
-                                               bb_stmts_dict,
-                                               transform_dist_array_read_func,
-                                               true_branch_stmt_vec,
-                                               appended_bbs,
-                                               ssa_defs,
-                                               my_skip_bb_id_set)
-            else
-                suc_to_handle = suc[2]
-            end
-        end
-        if !isempty(true_branch_stmt_vec)
+            @assert !isempty(true_branch_stmt_vec)
             append!(if_stmt_vec, true_branch_stmt_vec)
             push!(stmt_vec, if_stmt)
-        end
-    elseif bb.control_flow == (:if, :else)
-        if_stmt = :(if $(bb.stmts[end]) else end)
-        @assert length(bb.successors) == 2
-        true_branch_stmt_vec = Vector{Any}()
-        false_branch_stmt_vec = Vector{Any}()
-        suc_to_handle = bb.branch_rendezvous
-        my_skip_bb_id_set = union(skip_bb_id_set, Set([suc_to_handle.id]))
-        for suc in bb.successors
-            @assert isa(suc, Tuple{Bool, BasicBlock})
-            if suc[1]
-                recreate_stmts_from_flow_graph(suc[2],
-                                               bb_stmts_dict,
-                                               transform_dist_array_read_func,
-                                               true_branch_stmt_vec,
-                                               appended_bbs,
-                                               ssa_defs,
-                                               my_skip_bb_id_set)
-            else
-                recreate_stmts_from_flow_graph(suc[2],
-                                               bb_stmts_dict,
-                                               transform_dist_array_read_func,
-                                               false_branch_stmt_vec,
-                                               appended_bbs,
-                                               ssa_defs,
-                                               my_skip_bb_id_set)
+        elseif bb.control_flow == (:if, :else)
+            if_stmt = :(if $(bb.stmts[end]) else end)
+            @assert length(bb.successors) == 2
+            true_branch_stmt_vec = Vector{Any}()
+            false_branch_stmt_vec = Vector{Any}()
+            my_skip_bb_id_set = union(skip_bb_id_set, Set([suc_to_handle.id]))
+            for suc in bb.successors
+                @assert isa(suc, Tuple{Bool, BasicBlock})
+                if suc[1]
+                    recreate_stmts_from_flow_graph(suc[2],
+                                                   bb_stmts_dict,
+                                                   transform_dist_array_read_func,
+                                                   true_branch_stmt_vec,
+                                                   appended_bbs,
+                                                   ssa_defs,
+                                                   my_skip_bb_id_set)
+                else
+                    recreate_stmts_from_flow_graph(suc[2],
+                                                   bb_stmts_dict,
+                                                   transform_dist_array_read_func,
+                                                   false_branch_stmt_vec,
+                                                   appended_bbs,
+                                                   ssa_defs,
+                                                   my_skip_bb_id_set)
 
+                end
             end
-        end
-        if !isempty(true_branch_stmt_vec)
-            append!(if_stmt.args[2].args, true_branch_stmt_vec)
-        end
-        if !isempty(false_branch_stmt_vec)
-            append!(if_stmt.args[3].args, false_branch_stmt_vec)
-        end
-
-        if !isempty(true_branch_stmt_vec) ||
-            !isempty(false_branch_stmt_vec)
+            if !isempty(true_branch_stmt_vec)
+                append!(if_stmt.args[2].args, true_branch_stmt_vec)
+            end
+            if !isempty(false_branch_stmt_vec)
+                append!(if_stmt.args[3].args, false_branch_stmt_vec)
+            end
+            @assert !isempty(true_branch_stmt_vec) ||
+                !isempty(false_branch_stmt_vec)
             push!(stmt_vec, if_stmt)
-        end
-    elseif bb.control_flow == :while ||
-        bb.control_flow == :for
-        println("adding loop")
-        if bb.control_flow == :while
-            loop_stmt = :(while $(bb.stmts[end]) end)
-        else
-            loop_stmt = :(for i = 0:1
-                          end)
-            loop_stmt.args[1] = bb.stmts[end]
-        end
-        @assert length(bb.successors) == 2
-        true_branch_stmt_vec = Vector{Any}()
-        for suc in bb.successors
-            if !suc[1]
-                my_skip_bb_id_set = union(skip_bb_id_set, Set([suc[2].id]))
-            end
-        end
-        for suc in bb.successors
-            @assert isa(suc, Tuple{Bool, BasicBlock})
-            if suc[1]
-                unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
-                                                               bb_stmts_dict,
-                                                               transform_dist_array_read_func,
-                                                               true_branch_stmt_vec,
-                                                               appended_bbs,
-                                                               ssa_defs,
-                                                               my_skip_bb_id_set)
-                @assert unhandled_suc == nothing ||
-                    unhandled_suc.id in skip_bb_id_set
+        elseif bb.control_flow == :while ||
+            bb.control_flow == :for
+            if bb.control_flow == :while
+                loop_stmt = :(while $(bb.stmts[end]) end)
             else
-                suc_to_handle = suc[2]
+                loop_stmt = :(for i = 0:1
+                              end)
+                loop_stmt.args[1] = bb.stmts[end]
             end
-        end
-        if !isempty(true_branch_stmt_vec)
+            @assert length(bb.successors) == 2
+            true_branch_stmt_vec = Vector{Any}()
+            my_skip_bb_id_set = union(skip_bb_id_set, Set([bb.branch_rendezvous.id]))
+            for suc in bb.successors
+                @assert isa(suc, Tuple{Bool, BasicBlock})
+                if suc[1]
+                    unhandled_suc = recreate_stmts_from_flow_graph(suc[2],
+                                                                   bb_stmts_dict,
+                                                                   transform_dist_array_read_func,
+                                                                   true_branch_stmt_vec,
+                                                                   appended_bbs,
+                                                                   ssa_defs,
+                                                                   my_skip_bb_id_set)
+                    @assert unhandled_suc == nothing ||
+                        unhandled_suc.id in my_skip_bb_id_set
+                end
+            end
+            @assert !isempty(true_branch_stmt_vec)
             append!(loop_stmt.args[2].args, true_branch_stmt_vec)
             push!(stmt_vec, loop_stmt)
         end
-    elseif !isempty(bb.successors)
-        @assert length(bb.successors) == 1
-        suc_to_handle = bb.successors[1][2]
+    else
+        if bb.control_flow != nothing
+            suc_to_handle = bb.branch_rendezvous
+        elseif !isempty(bb.successors)
+            @assert length(bb.successors) == 1
+            suc_to_handle = bb.successors[1][2]
+        end
     end
 
     if suc_to_handle != nothing
@@ -1411,15 +1448,7 @@ function recreate_stmts_from_flow_graph(bb::BasicBlock,
             return nothing
         end
 
-        num_unappended_preds = 0
-        for pred in suc_bb.predecessors
-            if !(pred.id in appended_bbs)
-                num_unappended_preds += 1
-            end
-        end
-
-        if (num_unappended_preds == suc_bb.num_backward_edges) &&
-            !(suc_bb.id in skip_bb_id_set)
+        if !(suc_bb.id in skip_bb_id_set)
             recreate_stmts_from_flow_graph(suc_bb,
                                            bb_stmts_dict,
                                            transform_dist_array_read_func,
@@ -1452,6 +1481,51 @@ function sym_use_visit(expr, context::SymUseContext)
     end
 end
 
+function add_enclosing_control_flow(entry_bb::BasicBlock,
+                                    syms_to_be_defined::Set{Symbol},
+                                    bb_stmt_dict::Dict{Int64, Dict{Int64, Any}})::Bool
+    stmts_are_added = false
+    for dom in entry_bb.dominators
+        add_dom = false
+        for suc in dom.successors
+            if isa(suc[1], Bool) &&
+                (
+                    (
+                        (dom.control_flow == :for || dom.control_flow == :while ||
+                         dom.control_flow == :if) &&
+                        suc[1] &&
+                        (suc[2] in entry_bb.dominators)
+                    ) ||
+                    (
+                        (dom.control_flow == (:if, :else)) &&
+                        (suc[2] in entry_bb.dominators)
+                    )
+                )
+                add_dom = true
+                break
+            end
+        end
+        if !add_dom
+            continue
+        end
+        condition_stmt_idx = length(dom.stmts)
+        if dom.id in keys(bb_stmt_dict) &&
+            condition_stmt_idx in keys(bb_stmt_dict[dom.id])
+            continue
+        end
+        if dom.id in keys(bb_stmt_dict)
+            bb_stmt_dict[dom.id][condition_stmt_idx] = dom.stmts[condition_stmt_idx]
+        else
+            bb_stmt_dict[dom.id] = Dict(condition_stmt_idx => dom.stmts[condition_stmt_idx])
+        end
+        if condition_stmt_idx in keys(dom.stmt_ssa_uses)
+            union!(syms_to_be_defined, dom.stmt_ssa_uses[condition_stmt_idx])
+        end
+        stmts_are_added = true
+    end
+    return stmts_are_added
+end
+
 function get_prefetch_stmts(flow_graph::BasicBlock,
                             dist_array_syms::Set{Symbol},
                             ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
@@ -1459,11 +1533,12 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
     if isempty(dist_array_syms)
         return nothing
     end
+    println("get_prefetch_stmts")
     bb_list = flow_graph_to_list(flow_graph)
     bb_dist_array_access_dict = dist_array_access_context.bb_dist_array_access_dict
 
-    syms_deleted = get_deleted_syms(bb_list, ssa_defs,
-                                    dist_array_access_context)
+    syms_deleted, bbs_deleted = get_deleted_syms(bb_list, ssa_defs,
+                                                 dist_array_access_context)
     # The set of symbols to be defined include symbols that are
     # used to define DistArray access subscripts
     bb_stmt_dict = Dict{Int64, Dict{Int64, Any}}()
@@ -1471,6 +1546,9 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
     sym_use_context = SymUseContext(syms_deleted)
     for bb in bb_list
         if !(bb.id in keys(bb_dist_array_access_dict))
+            continue
+        end
+        if bb.id in bbs_deleted
             continue
         end
         stmt_dict = Dict{Int64, Vector{Any}}()
@@ -1531,45 +1609,8 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
     while stmts_are_added
         stmts_are_added = false
         for bb in bb_list
-            branches_in = false
-            if bb.control_flow == (:if, :else) ||
-                bb.control_flow == :if ||
-                bb.control_flow == :for ||
-                bb.control_flow == :while
-                if bb.control_flow == (:if, :else)
-                    for suc in bb.successors
-                        @assert isa(suc[1], Bool)
-                        if suc[2].id in keys(bb_stmt_dict)
-                            branches_in = true
-                            break
-                        end
-                    end
-                else
-                    for suc in bb.successors
-                        @assert isa(suc[1], Bool)
-                        if suc[1] && suc[2].id in keys(bb_stmt_dict)
-                            branches_in = true
-                            break
-                        end
-                    end
-                end
-            end
-            if branches_in
-                condition_stmt_idx = length(bb.stmts)
-                if bb.id in keys(bb_stmt_dict) &&
-                    condition_stmt_idx in keys(bb_stmt_dict[bb.id])
-                    continue
-                end
-                if bb.id in keys(bb_stmt_dict)
-                    bb_stmt_dict[bb.id][condition_stmt_idx] = bb.stmts[condition_stmt_idx]
-                else
-                    bb_stmt_dict[bb.id] = Dict(condition_stmt_idx => bb.stmts[condition_stmt_idx])
-                end
-                if condition_stmt_idx in keys(bb.stmt_ssa_uses)
-                    union!(syms_to_be_defined, bb.stmt_ssa_uses[condition_stmt_idx])
-                    println("after branch is added, syms_to_be_defind = ", syms_to_be_defined)
-                end
-                stmts_are_added = true
+            if bb.id in bbs_deleted
+                continue
             end
             for stmt_idx in eachindex(bb.stmts)
                 stmt = bb.stmts[stmt_idx]
@@ -1591,10 +1632,12 @@ function get_prefetch_stmts(flow_graph::BasicBlock,
                 end
                 stmts_are_added = true
             end
+            if bb.id in keys(bb_stmt_dict)
+                stmts_are_added |= add_enclosing_control_flow(bb, syms_to_be_defined,
+                                                              bb_stmt_dict)
+            end
         end
     end
-
-    println(bb_stmt_dict)
     prefetch_computation_stmts = quote end
     appended_bbs = Set{Int64}()
     stmt_vec = Vector{Any}()
