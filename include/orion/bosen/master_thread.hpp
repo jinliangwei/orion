@@ -450,9 +450,6 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         auto *msg = message::DriverMsgHelper::get_msg<
             message::DriverMsgEvalExpr>(recv_buff);
         size_t expected_size = msg->ast_size;
-        LOG(INFO) << "received EvalExpr from driver, expected_size = "
-                   << expected_size;
-
         bool received_next_msg
             = ReceiveArbitraryBytes(driver_.sock, &recv_buff, &driver_recv_byte_buff_,
                                     expected_size);

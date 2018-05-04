@@ -1123,3 +1123,7 @@ function Base.similar{T, N}(access_recorder::DistArrayAccessCountRecorder{N},
                             ::Type{T}, dims::NTuple{N, Int64})
     return DistArrayAccessCountRecorder{N}(dims)
 end
+
+function fill_deepcopy{T}(value::T, num_values)::Vector{T}
+    return [deepcopy(value) for i = 1:num_values]
+end

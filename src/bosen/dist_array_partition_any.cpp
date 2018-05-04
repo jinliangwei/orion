@@ -94,6 +94,8 @@ DistArrayPartition<void>::ClearAccessor() {
   JuliaEvaluator::AbortIfException();
   JL_GC_POP();
   storage_type_ = DistArrayPartitionStorageType::kKeyValueBuffer;
+  LOG(INFO) << __func__ << " dist_array_id = " << dist_array_->kId
+            << " done!";
 }
 
 void
@@ -136,6 +138,7 @@ DistArrayPartition<void>::CreateBufferAccessor() {
 void
 DistArrayPartition<void>::ClearCacheAccessor() {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kAccessor);
+  LOG(INFO) << __func__ << " dist_array_id = " << dist_array_->kId;
   jl_value_t* tuple_jl = nullptr;
   jl_value_t* keys_array_jl = nullptr;
   jl_value_t* values_array_jl = nullptr;
@@ -167,6 +170,7 @@ DistArrayPartition<void>::ClearCacheAccessor() {
 void
 DistArrayPartition<void>::ClearBufferAccessor() {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kAccessor);
+  LOG(INFO) << __func__ << " dist_array_id = " << dist_array_->kId;
   jl_value_t* tuple_jl = nullptr;
   jl_value_t* keys_array_jl = nullptr;
   jl_value_t* values_array_jl = nullptr;
@@ -207,6 +211,8 @@ DistArrayPartition<void>::ClearBufferAccessor() {
   JL_GC_POP();
   sorted_ = false;
   storage_type_ = DistArrayPartitionStorageType::kKeyValueBuffer;
+  LOG(INFO) << __func__ << " dist_array_id = " << dist_array_->kId
+            << " done!";
 }
 
 void

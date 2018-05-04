@@ -649,8 +649,6 @@ JuliaEvaluator::Fill(
               &serialized_value_buff,
               &serialized_value_array_type);
   num_values_jl = jl_box_uint64(num_values);
-  LOG(INFO) << __func__ << " serialized_init_value size = "
-            << serialized_init_value.size();
   serialized_value_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
   serialized_value_array = reinterpret_cast<jl_value_t*>(
       jl_ptr_to_array_1d(serialized_value_array_type,
@@ -666,7 +664,7 @@ JuliaEvaluator::Fill(
   CHECK(deserialize_func != nullptr);
   init_value_jl = jl_call1(deserialize_func, serialized_value_buff);
 
-  jl_function_t *fill_func = GetFunction(jl_base_module, "fill");
+  jl_function_t *fill_func = GetOrionWorkerFunction("fill_deepcopy");
   *values_ptr = jl_call2(fill_func, init_value_jl,
                          num_values_jl);
 

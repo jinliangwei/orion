@@ -111,10 +111,7 @@ end
 
 function create_dist_array_buffer_accessor{T, N}(dist_array_buffer::DenseDistArrayBuffer{T, N})
     num_values = reduce(*, dist_array_buffer.dims)
-    values = Vector{T}(num_values)
-    for i = 1:num_values
-        values[i] = dist_array_buffer.init_value
-    end
+    values = fill_deepcopy(dist_array_buffer.init_value, num_values)
     dist_array_buffer.accessor = Nullable{DenseDistArrayAccessor{T, N}}(
         DenseDistArrayAccessor{T, N}(0, values,
                                   [dist_array_buffer.dims...]))
