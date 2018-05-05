@@ -437,7 +437,7 @@ AbstractDistArrayPartition::Map(AbstractDistArrayPartition *child_partition) {
   const auto &dist_array_sym = dist_array_meta.GetSymbol();
   auto map_type = dist_array_meta.GetMapType();
   JuliaEvaluator::GetDistArrayValueType(dist_array_sym,
-                                     reinterpret_cast<jl_datatype_t**>(&dist_array_value_type));
+                                        reinterpret_cast<jl_datatype_t**>(&dist_array_value_type));
   std::vector<int64_t> output_keys;
   const auto &parent_dims = GetDims();
   JuliaEvaluator::RunMapGeneric(map_type,

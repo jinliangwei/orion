@@ -724,6 +724,7 @@ DistArray::DeletePartition(int32_t partition_id) {
   auto partition_iter = partitions_.find(partition_id);
   CHECK(partition_iter != partitions_.end());
   delete partition_iter->second;
+  partitions_.erase(partition_id);
 }
 
 void

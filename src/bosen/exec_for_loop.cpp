@@ -199,6 +199,7 @@ Executor::CheckAndExecuteForLoop(bool next_partition) {
   bool stop_search = false;
   while (true) {
     auto runnable_status = exec_for_loop_->GetCurrPartitionRunnableStatus();
+    LOG(INFO) << __func__ << " " << static_cast<int>(runnable_status);
     switch (runnable_status) {
       case AbstractExecForLoop::RunnableStatus::kRunnable:
         {
@@ -422,6 +423,7 @@ Executor::RequestExecForLoopGlobalIndexedDistArrays() {
 
 void
 Executor::RequestExecForLoopPipelinedTimePartitions() {
+  LOG(INFO) << __func__;
   message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRequestExecForLoopPipelinedTimePartitions>(
       &send_buff_);
   Send(&prt_poll_conn_, prt_pipe_conn_.get());

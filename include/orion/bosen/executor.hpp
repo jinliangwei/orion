@@ -918,6 +918,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
       break;
     case message::ExecuteMsgType::kReplyExecForLoopPipelinedTimePartitions:
       {
+        LOG(INFO) <<"Got ReplyExecForLoopPipelinedTimePartitions";
         action_ = Action::kNone;
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgReplyExecForLoopPipelinedTimePartitions>(recv_buff);
@@ -943,6 +944,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
       break;
     case message::ExecuteMsgType::kReplyExecForLoopPredecessorCompletion:
       {
+        LOG(INFO) <<"Got ReplyExecForLoopPredcessorCompletion";
         CHECK(exec_for_loop_.get());
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgReplyExecForLoopPredecessorCompletion>(recv_buff);

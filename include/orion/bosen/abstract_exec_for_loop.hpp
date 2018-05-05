@@ -41,6 +41,8 @@ class AbstractExecForLoop {
   std::unordered_map<int32_t, DistArray*> global_indexed_dist_arrays_;
   std::unordered_map<int32_t, std::unique_ptr<AbstractDistArrayPartition>> dist_array_cache_;
   std::unordered_map<int32_t, DistArray*> dist_array_buffers_;
+  std::unordered_map<int32_t, std::set<int32_t>> skipped_time_partitioned_dist_array_id_map_;
+
   std::set<int32_t> written_dist_array_ids_;
 
   DistArray *iteration_space_;

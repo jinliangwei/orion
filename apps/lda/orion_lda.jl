@@ -8,33 +8,34 @@ Orion.helloworld()
 const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 1
+const num_executors = 16
 const num_servers = 1
 
 Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity, num_executors, num_servers)
 
-const data_path = "file:///proj/BigLearning/jinlianw/data/20news.dat.200"
-const num_topics = 100
+#const data_path = "file:///proj/BigLearning/jinlianw/data/20news.dat"
+const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat"
+const num_topics = 1000
 
 Orion.@share const alpha = 0.1
 Orion.@share const beta = 0.1
-const num_iterations = 10
+const num_iterations = 1
 
 const alpha_beta = alpha * beta
 
-Orion.@share function parse_line(line_num::Int64, line::AbstractString)::Vector{Tuple{Tuple{Int64, Int32},
+Orion.@share function parse_line(line_num::Int64, line::AbstractString)::Vector{Tuple{Tuple{Int64, Int64},
                                                                                    Int64}
                                                                                 }
     # Parse each line to be word counts
     tokens = split(strip(line),  ' ')
-    pair_vec = Vector{Tuple{Tuple{Int64, Int32},
+    pair_vec = Vector{Tuple{Tuple{Int64, Int64},
                          Int64
                          }
                    }()
     for token in tokens[2:end]
         word_count = split(token, ":")
-        word_id = parse(Int32, word_count[1]) + 1
+        word_id = parse(Int64, word_count[1]) + 1
         count = parse(Int64, word_count[2])
         push!(pair_vec, ((line_num, word_id), count))
     end
@@ -110,7 +111,6 @@ Orion.@parallel_for for doc_word_count in doc_word_counts
     count = doc_word_count[2]
     assignment_vec = topic_assignments[doc_id, word_id]
     word_topic_dict = word_topic_table[word_id]
-    println("wid = ", word_id, " word_topic = ", word_topic_dict)
     doc_topic_dict = doc_topic_table[doc_id]
     topic_summary_buff_vec = topic_summary_buff[1]
 
@@ -127,7 +127,8 @@ Orion.@parallel_for for doc_word_count in doc_word_counts
     doc_topic_table[doc_id] = doc_topic_dict
     topic_summary_buff[1] = topic_summary_buff_vec
 end
-
+#Orion.stop()
+#exit()
 println("initializing s_sum")
 
 Orion.@accumulator s_sum_accum = 0
@@ -201,6 +202,13 @@ Orion.set_write_buffer(word_log_gamma_sum_buff, word_log_gamma_sum, apply_buffer
 
 Orion.@accumulator llh = 0.0
 
+#Orion.@dist_array word_q_terms = Orion.fill([0, Vector{Tuple{Float32, Int32}}()], (vocab_size,))
+#Orion.materialize(word_q_terms)
+
+#Orion.@parallel_for for word_topic_dict_pair in word_topic_table
+#    word_id = word_topic_dict_pair[1]
+#end
+
 @time for iteration = 1:num_iterations
     println("iteration = ", iteration)
     Orion.@parallel_for for doc_word_count in doc_word_counts
@@ -260,7 +268,7 @@ Orion.@accumulator llh = 0.0
                         break
                     end
                 end
-                if sample > 0
+                if sample >= 0
                     new_topic = q_terms[num_nonzero_q_terms][2]
                 end
             elseif sample < q_sum + doc_r_sum
@@ -278,7 +286,7 @@ Orion.@accumulator llh = 0.0
                 if sample >= 0
                     new_topic = topic_last
                 end
-            elseif sample < q_sum + doc_r_sum + s_sum_val
+            elseif sample <= q_sum + doc_r_sum + s_sum_val
                 sample -= q_sum + doc_r_sum
                 sample /= alpha_beta
                 for t in 1:num_topics
@@ -340,11 +348,6 @@ Orion.@accumulator llh = 0.0
             topic = topic_log_gamma_sum[1][1]
             topic_log_gamma_sum_val = topic_log_gamma_sum[2][1]
             topic_summary_vec = topic_summary[1]
-            #println("topic = ", topic, " summary_count = ", topic_summary_vec[topic])
-            #println("topic_log_gamma_sum_val = ", topic_log_gamma_sum_val,
-            #        " minus ", lgamma(vocab_size * beta + topic_summary_vec[topic]))
-            #println("add ", lgamma(vocab_size * beta),
-            #        " minus ", vocab_size * lgamma(beta))
             llh += topic_log_gamma_sum_val - lgamma(vocab_size * beta + topic_summary_vec[topic])
             llh += lgamma(vocab_size * beta) - vocab_size * lgamma(beta)
             topic_log_gamma_sum[2][1] = 0.0

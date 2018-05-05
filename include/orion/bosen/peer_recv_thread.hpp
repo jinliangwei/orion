@@ -628,7 +628,7 @@ PeerRecvThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
 
 void
 PeerRecvThread::ServePipelinedTimePartitionsRequest() {
-  LOG(INFO) << __func__ << " requestd = " << has_executor_requested_global_indexed_dist_array_data_
+  LOG(INFO) << __func__ << " requested = " << has_executor_requested_pipeline_time_partitions_
             << " received = " << !pipelined_time_partitions_buff_vec_.empty();
   if (!has_executor_requested_pipeline_time_partitions_) return;
   if (pipelined_time_partitions_buff_vec_.empty()) return;

@@ -449,6 +449,7 @@ DistArrayPartition<void>::Repartition1D(
 
 SendDataBuffer
 DistArrayPartition<void>::Serialize() {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   jl_value_t* buff_jl = nullptr;
   jl_value_t* serialized_value_array = nullptr;
   jl_value_t* value_jl = nullptr;

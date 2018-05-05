@@ -208,16 +208,31 @@ bool
 AbstractExecForLoop::HasRecvedAllTimePartitionedDistArrays(
     int32_t time_partition_id) const {
   for (auto &dist_array_pair : time_partitioned_dist_arrays_) {
+    LOG(INFO) << __func__ << " dist_array_id = " << dist_array_pair.first
+              << " time_partition_id = " << time_partition_id;
     auto* dist_array = dist_array_pair.second;
     auto* partition = dist_array->GetLocalPartition(time_partition_id);
-    if (partition == nullptr) return false;
+    if (partition == nullptr) {
+      LOG(INFO) << __func__ << " partition missing!";
+      auto skipped_iter = skipped_time_partitioned_dist_array_id_map_.find(
+          time_partition_id);
+      if (skipped_iter == skipped_time_partitioned_dist_array_id_map_.end()) {
+        LOG(INFO) << __func__ << " no skipping dist_arrays";
+        return false;
+      }
+      auto &skipped_set = skipped_iter->second;
+      if (skipped_set.count(dist_array_pair.first) == 0) {
+        LOG(INFO) << __func__ << " no skipping target dist_array";
+        return false;
+      }
+    }
   }
+  LOG(INFO) << __func__ << " return true";
   return true;
 }
 
 void
 AbstractExecForLoop::ComputePrefetchIndices() {
-  PrepareToExecCurrPartition();
   std::vector<int32_t> dist_array_ids_vec;
 
   for (const auto &dist_array_pair : global_indexed_dist_arrays_) {
@@ -422,33 +437,44 @@ AbstractExecForLoop::GetAndClearDistArrayCacheSendMap(
 
 void
 AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
+  LOG(INFO) << __func__;
   time_partitions_serialized_bytes_ = nullptr;
   time_partitions_serialized_size_ = 0;
   int32_t time_partition_id_to_send = GetTimePartitionIdToSend();
+  LOG(INFO) << "time_partition_id_to_send = " << time_partition_id_to_send;
   if (time_partition_id_to_send < 0) return;
   std::unordered_map<int32_t, SendDataBuffer> data_buffers;
+  std::vector<int32_t> skipped_dist_array_id_vec;
   for (auto &dist_array_pair : time_partitioned_dist_arrays_) {
     int32_t dist_array_id = dist_array_pair.first;
     auto *dist_array = dist_array_pair.second;
     auto *dist_array_partition = dist_array->GetLocalPartition(
         time_partition_id_to_send);
-    if (dist_array_partition == nullptr) continue;
+    if (dist_array_partition == nullptr) {
+      skipped_dist_array_id_vec.push_back(dist_array_id);
+      continue;
+    }
     auto data_buff = dist_array_partition->Serialize();
     if (data_buff.second > 0) {
-      CHECK(data_buff.first != nullptr);
       data_buffers.emplace(dist_array_id, data_buff);
+    } else {
+      skipped_dist_array_id_vec.push_back(dist_array_id);
     }
     dist_array->DeletePartition(time_partition_id_to_send);
   }
+  skipped_time_partitioned_dist_array_id_map_.erase(time_partition_id_to_send);
 
-  if (data_buffers.empty()) return;
-  size_t total_size = sizeof(size_t) + sizeof(int32_t);
+  if (data_buffers.empty() && skipped_dist_array_id_vec.empty()) return;
+  size_t total_size = sizeof(size_t) + sizeof(size_t) + sizeof(int32_t);
   for (auto &data_buff : data_buffers) {
     total_size += sizeof(int32_t) + data_buff.second.second;
   }
+  total_size += sizeof(int32_t) * skipped_dist_array_id_vec.size();
   auto* buffer_bytes = new uint8_t[total_size];
   uint8_t* cursor = buffer_bytes;
   *reinterpret_cast<size_t*>(cursor) = data_buffers.size();
+  cursor += sizeof(size_t);
+  *reinterpret_cast<size_t*>(cursor) = skipped_dist_array_id_vec.size();
   cursor += sizeof(size_t);
   *reinterpret_cast<int32_t*>(cursor) = time_partition_id_to_send;
   cursor += sizeof(int32_t);
@@ -457,10 +483,15 @@ AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
     auto &data_buff = data_buff_pair.second;
     *reinterpret_cast<int32_t*>(cursor) = dist_array_id;
     cursor += sizeof(int32_t);
-    memcpy(cursor, data_buff.first, data_buff.second);
-    cursor += data_buff.second;
-    delete[] data_buff.first;
+    if (data_buff.second > 0) {
+      memcpy(cursor, data_buff.first, data_buff.second);
+      cursor += data_buff.second;
+      delete[] data_buff.first;
+    }
   }
+  memcpy(cursor, skipped_dist_array_id_vec.data(),
+         sizeof(int32_t) * skipped_dist_array_id_vec.size());
+  cursor += sizeof(int32_t) * skipped_dist_array_id_vec.size();
   time_partitions_serialized_bytes_ = buffer_bytes;
   time_partitions_serialized_size_ = total_size;
 }
@@ -469,6 +500,8 @@ void
 AbstractExecForLoop::DeserializePipelinedTimePartitions(const uint8_t* bytes) {
   const uint8_t *cursor = bytes;
   size_t num_data_buffers = *reinterpret_cast<const size_t*>(cursor);
+  cursor += sizeof(size_t);
+  size_t num_skipped_dist_arrays = *reinterpret_cast<const size_t*>(cursor);
   cursor += sizeof(size_t);
   int32_t time_partition_id = *reinterpret_cast<const int32_t*>(cursor);
   cursor += sizeof(int32_t);
@@ -479,12 +512,28 @@ AbstractExecForLoop::DeserializePipelinedTimePartitions(const uint8_t* bytes) {
     auto iter = time_partitioned_dist_arrays_.find(dist_array_id);
     CHECK(iter != time_partitioned_dist_arrays_.end())
         << "id = " << dist_array_id;
+    LOG(INFO) << __func__ << " dist_array_id = "
+              << dist_array_id << " time_partition_id = "
+              << time_partition_id;
     auto *dist_array = iter->second;
     auto create_pair = dist_array->GetAndCreateLocalPartition(time_partition_id);
     CHECK(create_pair.second);
     auto *partition = create_pair.first;
     cursor = partition->Deserialize(cursor);
     partition->BuildIndex();
+  }
+
+  LOG(INFO) << __func__ << " num_skipped_dist_arrays = " << num_skipped_dist_arrays;
+  if (num_skipped_dist_arrays > 0) {
+    auto skipped_set_pair = skipped_time_partitioned_dist_array_id_map_.emplace(
+        time_partition_id, std::set<int32_t>());
+    CHECK(skipped_set_pair.second);
+    auto &skipped_set = skipped_set_pair.first->second;
+    for (size_t i = 0; i < num_skipped_dist_arrays; i++) {
+      int32_t dist_array_id = *reinterpret_cast<const int32_t*>(cursor);
+      cursor += sizeof(int32_t);
+      skipped_set.insert(dist_array_id);
+    }
   }
 }
 
