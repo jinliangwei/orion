@@ -33,7 +33,6 @@ DistArrayPartition<void>::CreateAccessor() {
               &keys_array_jl, &values_array_jl);
 
   jl_value_t *dist_array_jl = dist_array_->GetJuliaDistArray();
-  JuliaEvaluator::GetDistArrayPartition(dist_array_, ptr_str_, &values_array_jl);
   auto &dist_array_meta = dist_array_->GetMeta();
   bool is_dense = dist_array_meta.IsDense() && dist_array_meta.IsContiguousPartitions();
   auto *create_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
@@ -41,6 +40,7 @@ DistArrayPartition<void>::CreateAccessor() {
   if (is_dense) {
     Sort();
     key_begin_jl = jl_box_int64(keys_.size() > 0 ? keys_[0] : 0);
+    JuliaEvaluator::GetDistArrayPartition(dist_array_, ptr_str_, &values_array_jl);
     jl_call3(create_accessor_func, dist_array_jl, key_begin_jl,
              values_array_jl);
   } else {
@@ -48,7 +48,7 @@ DistArrayPartition<void>::CreateAccessor() {
     keys_array_jl = reinterpret_cast<jl_value_t*>(jl_ptr_to_array_1d(
         keys_array_type_jl,
         keys_.data(), keys_.size(), 0));
-
+    JuliaEvaluator::GetDistArrayPartition(dist_array_, ptr_str_, &values_array_jl);
     jl_call3(create_accessor_func, dist_array_jl, keys_array_jl,
              values_array_jl);
   }
@@ -94,13 +94,10 @@ DistArrayPartition<void>::ClearAccessor() {
   JuliaEvaluator::AbortIfException();
   JL_GC_POP();
   storage_type_ = DistArrayPartitionStorageType::kKeyValueBuffer;
-  LOG(INFO) << __func__ << " dist_array_id = " << dist_array_->kId
-            << " done!";
 }
 
 void
 DistArrayPartition<void>::CreateCacheAccessor() {
-  LOG(INFO) << __func__;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   jl_value_t *key_begin_jl = nullptr;
   jl_value_t *keys_array_type_jl = nullptr;
@@ -138,7 +135,6 @@ DistArrayPartition<void>::CreateBufferAccessor() {
 void
 DistArrayPartition<void>::ClearCacheAccessor() {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kAccessor);
-  LOG(INFO) << __func__ << " dist_array_id = " << dist_array_->kId;
   jl_value_t* tuple_jl = nullptr;
   jl_value_t* keys_array_jl = nullptr;
   jl_value_t* values_array_jl = nullptr;
@@ -170,7 +166,6 @@ DistArrayPartition<void>::ClearCacheAccessor() {
 void
 DistArrayPartition<void>::ClearBufferAccessor() {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kAccessor);
-  LOG(INFO) << __func__ << " dist_array_id = " << dist_array_->kId;
   jl_value_t* tuple_jl = nullptr;
   jl_value_t* keys_array_jl = nullptr;
   jl_value_t* values_array_jl = nullptr;
@@ -211,8 +206,6 @@ DistArrayPartition<void>::ClearBufferAccessor() {
   JL_GC_POP();
   sorted_ = false;
   storage_type_ = DistArrayPartitionStorageType::kKeyValueBuffer;
-  LOG(INFO) << __func__ << " dist_array_id = " << dist_array_->kId
-            << " done!";
 }
 
 void
@@ -349,19 +342,13 @@ DistArrayPartition<void>::Sort() {
     min_key = std::min(key, min_key);
   }
   key_start_ = min_key;
-  std::vector<int64_t> perm(keys_.size());
-  std::vector<size_t> julia_index(keys_.size());
-  for (size_t i = 0; i < keys_.size(); i++) {
-    julia_index[i] = i;
-  }
+  std::vector<size_t> perm(keys_.size());
 
   std::iota(perm.begin(), perm.end(), 0);
   std::sort(perm.begin(), perm.end(),
             [&] (const size_t &i, const size_t &j) {
               return keys_[i] < keys_[j];
             });
-  std::transform(perm.begin(), perm.end(), julia_index.begin(),
-                 [&](size_t i) { return julia_index[i]; });
 
   auto &meta = dist_array_->GetMeta();
   if (meta.IsContiguousPartitions()) {
@@ -388,25 +375,13 @@ DistArrayPartition<void>::Sort() {
       jl_alloc_array_1d(value_array_type, keys_.size()));
 
   for (size_t i = 0; i < keys_.size(); i++) {
-    size_t index = julia_index[i];
+    size_t index = perm[i];
     value_jl = jl_arrayref(reinterpret_cast<jl_array_t*>(old_values_array_jl), index);
     jl_arrayset(reinterpret_cast<jl_array_t*>(new_values_array_jl), value_jl, i);
   }
   JuliaEvaluator::SetDistArrayPartition(dist_array_, ptr_str_, new_values_array_jl);
   JL_GC_POP();
   sorted_ = true;
-}
-
-void
-DistArrayPartition<void>::Repartition(
-    const int32_t *repartition_ids) {
-  auto &dist_array_meta = dist_array_->GetMeta();
-  auto partition_scheme = dist_array_meta.GetPartitionScheme();
-  if (partition_scheme == DistArrayPartitionScheme::kSpaceTime) {
-    RepartitionSpaceTime(repartition_ids);
-  } else {
-    Repartition1D(repartition_ids);
-  }
 }
 
 void
@@ -655,6 +630,8 @@ DistArrayPartition<void>::DeserializeAndAppend(const uint8_t *buffer) {
   cursor += sizeof(size_t);
 
   size_t orig_num_keys = keys_.size();
+
+  CHECK_EQ(orig_num_keys, jl_array_len(values_array_jl));
   keys_.resize(orig_num_keys + num_keys);
   memcpy(keys_.data() + orig_num_keys, cursor, num_keys * sizeof(int64_t));
   cursor += sizeof(int64_t) * num_keys;

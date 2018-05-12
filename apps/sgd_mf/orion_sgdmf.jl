@@ -7,11 +7,11 @@ Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 # test library path
 Orion.helloworld()
 
-#const master_ip = "10.117.1.3"
-const master_ip = "127.0.0.1"
+const master_ip = "10.117.1.17"
+#const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 1
+const num_executors = 64
 const num_servers = 1
 
 # initialize logging of the runtime library
@@ -21,12 +21,12 @@ Orion.init(master_ip, master_port, comm_buff_capacity,
 
 #const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
 #const data_path = "file:///home/ubuntu/data/ml-10M100K/ratings.csv"
-const data_path = "file:///users/jinlianw/ratings.csv"
-#const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
+#const data_path = "file:///users/jinlianw/ratings.csv"
+const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/ml-20m/ratings_p.csv"
 const K = 1000
-const num_iterations = 2
-const step_size = Float32(0.02)
+const num_iterations = 256
+const step_size = Float32(0.01)
 
 Orion.@accumulator err = 0
 Orion.@accumulator line_cnt = 0

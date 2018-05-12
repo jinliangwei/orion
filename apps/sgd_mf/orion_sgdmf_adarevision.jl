@@ -7,10 +7,10 @@ Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 # test library path
 Orion.helloworld()
 
-const master_ip = "127.0.0.1"
+const master_ip = "10.117.1.17"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 16
+const num_executors = 64
 const num_servers = 1
 
 # initialize logging of the runtime library
@@ -24,7 +24,7 @@ Orion.init(master_ip, master_port, comm_buff_capacity,
 const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/ml-20m/ratings_p.csv"
 const K = 1000
-const num_iterations = 32
+const num_iterations = 64
 const alpha = Float32(0.08)
 
 Orion.@accumulator err = 0
@@ -93,12 +93,6 @@ start_time = now()
         W_grad .= (-Float32(2) * diff) .* H_row
         H_grad .= (-Float32(2) * diff) .* W_row
 
-        #W_z_row = @view W_z[:, x_idx]
-        #H_z_row = @view H_z[:, y_idx]
-
-        #W_lr_old .= alpha ./ sqrt.(W_z_row)
-        #H_lr_old .= alpha ./ sqrt.(H_z_row)
-
         W_z[:, x_idx] .+= abs2.(W_grad)
         H_z[:, y_idx] .+= abs2.(H_grad)
 
@@ -110,8 +104,6 @@ start_time = now()
 
         W[:, x_idx] .= W_row .- (W_lr .* W_grad)
         H[:, y_idx] .= H_row .- (H_lr .* H_grad)
-        #W[:, x_idx] .= W_row .- (W_lr .* W_grad) .+ ((W_lr_old .- W_lr) .* W_grad)
-        #H[:, y_idx] .= H_row .- (H_lr .* H_grad) .+ ((H_lr_old .- H_lr) .* H_grad)
     end
     @time if iteration % 1 == 0 ||
         iteration == num_iterations

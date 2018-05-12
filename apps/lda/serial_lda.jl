@@ -1,6 +1,6 @@
 const data_path = "/proj/BigLearning/jinlianw/data/20news.dat.200"
 const vocab_size = 60057
-const num_topics = 100
+const num_topics = 400
 const alpha = 0.1
 const beta = 0.1
 const num_iterations = 4
@@ -90,9 +90,9 @@ total_sec = 0.0
 alpha_beta = alpha * beta
 beta_sum = beta * vocab_size
 
-@time for iteration = 1:num_iterations
+for iteration = 1:num_iterations
     println("iteration = ", iteration)
-    for doc_id in eachindex(docs)
+    @time for doc_id in eachindex(docs)
         topic_assignmnt_vec = doc_topic_assignmnts[doc_id]
         doc_topic_dict = doc_topic_table[doc_id]
         s_sum = 0

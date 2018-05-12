@@ -628,8 +628,6 @@ PeerRecvThread::HandleClosedConnection(PollConn *poll_conn_ptr) {
 
 void
 PeerRecvThread::ServePipelinedTimePartitionsRequest() {
-  LOG(INFO) << __func__ << " requested = " << has_executor_requested_pipeline_time_partitions_
-            << " received = " << !pipelined_time_partitions_buff_vec_.empty();
   if (!has_executor_requested_pipeline_time_partitions_) return;
   if (pipelined_time_partitions_buff_vec_.empty()) return;
   auto* buff_vec = new PeerRecvPipelinedTimePartitionsBuffer*[pipelined_time_partitions_buff_vec_.size()];
@@ -642,7 +640,6 @@ PeerRecvThread::ServePipelinedTimePartitionsRequest() {
   SendToExecutor();
   send_buff_.clear_to_send();
   send_buff_.reset_sent_sizes();
-  LOG(INFO) << __func__ << " served";
 }
 
 void

@@ -356,7 +356,7 @@ DistArrayPartition<std::string>::GetAndSerializeValues(const int64_t *keys,
 }
 
 void
-DistArrayPartition<std::string>::Sort(){
+DistArrayPartition<std::string>::Sort() {
   if (sorted_) return;
   if (keys_.size() == 0) return;
   int64_t min_key = keys_[0];
@@ -408,18 +408,6 @@ void
 DistArrayPartition<std::string>::AppendValue(const std::string &value) {
   values_.push_back(value);
   sorted_ = false;
-}
-
-void
-DistArrayPartition<std::string>::Repartition(
-    const int32_t *repartition_ids) {
-  auto &dist_array_meta = dist_array_->GetMeta();
-  auto partition_scheme = dist_array_meta.GetPartitionScheme();
-  if (partition_scheme == DistArrayPartitionScheme::kSpaceTime) {
-    RepartitionSpaceTime(repartition_ids);
-  } else {
-    Repartition1D(repartition_ids);
-  }
 }
 
 void

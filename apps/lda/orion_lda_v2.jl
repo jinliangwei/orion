@@ -5,22 +5,23 @@ Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 # test library path
 Orion.helloworld()
 
-const master_ip = "127.0.0.1"
+const master_ip = "10.117.1.21"
+#const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 1
+const num_executors = 32
 const num_servers = 1
 
 Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity, num_executors, num_servers)
 
-const data_path = "file:///proj/BigLearning/jinlianw/data/20news.dat.4"
-#const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat"
-const num_topics = 10
+#const data_path = "file:///proj/BigLearning/jinlianw/data/20news.dat"
+const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm"
+const num_topics = 1000
 
 Orion.@share const alpha = 0.1
 Orion.@share const beta = 0.1
-const num_iterations = 2
+const num_iterations = 40
 
 const alpha_beta = alpha * beta
 
@@ -103,18 +104,19 @@ Orion.@share function apply_buffered_vec(vec_key,
 end
 
 Orion.set_write_buffer(topic_summary_buff, topic_summary, apply_buffered_vec)
-
+Orion.@share srand(1)
 println("initialization")
-Orion.@parallel_for for doc_word_count in doc_word_counts
-    doc_id = doc_word_count[1][1]
-    word_id = doc_word_count[1][2]
-    count = doc_word_count[2]
-    assignment_vec = topic_assignments[doc_id, word_id]
+Orion.dist_array_set_num_partitions_per_dim(topic_assignments, num_executors * 4)
+Orion.@parallel_for for topic_assignment_pair in topic_assignments
+    doc_id = topic_assignment_pair[1][1]
+    word_id = topic_assignment_pair[1][2]
+    assignment_vec = topic_assignment_pair[2]
+    word_count = length(assignment_vec)
     word_topic_dict = word_topic_table[word_id]
     doc_topic_dict = doc_topic_table[doc_id]
     topic_summary_buff_vec = topic_summary_buff[1]
 
-    for c = 1:count
+    for c = 1:word_count
         topic = rand(1:num_topics)
         assignment_vec[c] = topic
         word_topic_count = get(word_topic_dict, topic, 0)
@@ -127,8 +129,7 @@ Orion.@parallel_for for doc_word_count in doc_word_counts
     doc_topic_table[doc_id] = doc_topic_dict
     topic_summary_buff[1] = topic_summary_buff_vec
 end
-#Orion.stop()
-#exit()
+
 println("initializing s_sum")
 
 Orion.@accumulator s_sum_accum = 0
@@ -188,9 +189,6 @@ Orion.@parallel_for for doc_topic_dict_tuple in doc_topic_table
     q_coeff[doc_id] = q_coeff_vec
 end
 
-llh_vec = Vector{Float64}()
-word_llh_vec = Vector{Float64}()
-q_terms = Vector{Tuple{Float32, Int32}}(num_topics)
 
 Orion.@dist_array word_log_gamma_sum = Orion.fill([0.0], (num_topics,))
 Orion.materialize(word_log_gamma_sum)
@@ -202,19 +200,67 @@ Orion.set_write_buffer(word_log_gamma_sum_buff, word_log_gamma_sum, apply_buffer
 
 Orion.@accumulator llh = 0.0
 
+Orion.@dist_array word_topic_vec_table = Orion.fill(Vector{Tuple{Int64, Int32}}(),
+                                                    (vocab_size,))
+Orion.materialize(word_topic_vec_table)
+
+Orion.@parallel_for for word_topic_dict_pair in word_topic_table
+    word_id = word_topic_dict_pair[1][1]
+    word_topic_dict = word_topic_dict_pair[2]
+    num_nonzero_counts = length(word_topic_dict)
+    word_topic_vec = Vector{Tuple{Int64, Int32}}(num_nonzero_counts)
+    index = 1
+    for (topic, topic_count) in word_topic_dict
+        word_topic_vec[index] = (topic_count, topic)
+        index += 1
+    end
+    @assert index == length(word_topic_vec) + 1
+    sort!(word_topic_vec, by = x -> x[1], rev = true)
+    word_topic_vec_table[word_id] = word_topic_vec
+end
+
+Orion.@share function find_index(vec::Vector{Tuple{Int64, Int32}},
+                                 key)
+    for idx in eachindex(vec)
+        element = vec[idx]
+        if key == element[2]
+            return idx
+        end
+    end
+    return -1
+end
+
+q_terms = Vector{Tuple{Float32, Int32}}(num_topics)
+llh_vec = Vector{Float64}()
+word_llh_vec = Vector{Float64}()
+
+time_vec = Vector{Float64}()
+start_time = now()
+
 @time for iteration = 1:num_iterations
     println("iteration = ", iteration)
-    Orion.@parallel_for for doc_word_count in doc_word_counts
-        doc_id = doc_word_count[1][1]
-        word_id = doc_word_count[1][2]
-        word_count = doc_word_count[2]
-        assignment_vec = topic_assignments[doc_id, word_id]
+    Orion.@parallel_for for topic_assignment_pair in topic_assignments
+        doc_id = topic_assignment_pair[1][1]
+        word_id = topic_assignment_pair[1][2]
+        assignment_vec = topic_assignment_pair[2]
+        word_count = length(assignment_vec)
         doc_topic_dict = doc_topic_table[doc_id]
-        word_topic_dict = word_topic_table[word_id]
-        #println("wid = ", word_id, " word_topic = ", word_topic_dict)
+        word_topic_vec = word_topic_vec_table[word_id]
         topic_summary_vec = topic_summary[1]
         doc_q_coeff = q_coeff[doc_id]
         s_sum_val = s_sum[1]
+
+        q_sum = 0.0
+        num_nonzero_q_terms = 0
+        for index in eachindex(word_topic_vec)
+            topic_count = word_topic_vec[index][1]
+            topic = word_topic_vec[index][2]
+            q_term = doc_q_coeff[topic] * topic_count
+            num_nonzero_q_terms += 1
+            q_terms[num_nonzero_q_terms] = (q_term, topic)
+            q_sum += q_term
+        end
+
         for c = 1:word_count
             old_topic = assignment_vec[c]
             denom = topic_summary_vec[old_topic] + beta_sum
@@ -224,36 +270,24 @@ Orion.@accumulator llh = 0.0
             r_sum[doc_id] += ((doc_topic_dict[old_topic] - 1) * beta) / (denom - 1)
             doc_q_coeff[old_topic] = (alpha + doc_topic_dict[old_topic] - 1) / (denom - 1)
             doc_r_sum = r_sum[doc_id]
-
+            @assert old_topic in keys(doc_topic_dict)
             doc_topic_dict[old_topic] -= 1
             if doc_topic_dict[old_topic] == 0
                 delete!(doc_topic_dict, old_topic)
             end
 
-            word_topic_dict[old_topic] -= 1
-            if word_topic_dict[old_topic] == 0
-                delete!(word_topic_dict, old_topic)
-            end
+            old_topic_index = find_index(word_topic_vec, old_topic)
+            old_topic_count = word_topic_vec[old_topic_index][1]
+            word_topic_vec[old_topic_index] = (old_topic_count - 1, old_topic)
+            q_sum -= q_terms[old_topic_index][1]
+            q_terms[old_topic_index] = ((old_topic_count - 1) * doc_q_coeff[old_topic], old_topic)
+            q_sum += q_terms[old_topic_index][1]
 
             topic_summary_buff[1][old_topic] -= 1
 
-            q_sum = 0.0
-            index = 1
-            num_nonzero_q_terms = 0
-            for (topic, topic_count) in word_topic_dict
-                q_term = (topic == old_topic) ? (doc_q_coeff[topic] * (topic_count - 1)) :
-                    doc_q_coeff[topic] * topic_count
-                q_terms[index] = (q_term, topic)
-                q_sum += q_term
-                index += 1
-                num_nonzero_q_terms += 1
-            end
             total_mass = q_sum + doc_r_sum + s_sum_val
             sample = rand() * total_mass
-            #println("sample = ", sample, " q_sum = ", q_sum,
-            #        " q_sum + doc_r_sum = ", q_sum + doc_r_sum,
-            #        " q_sum + doc_r_sum + s_sum_val = ", q_sum + doc_r_sum + s_sum_val)
-            new_topic = 0
+            new_topic = Int32(0)
             if sample < q_sum
                 for q_term in q_terms[1:num_nonzero_q_terms]
                     sample -= q_term[1]
@@ -291,12 +325,11 @@ Orion.@accumulator llh = 0.0
                     end
                 end
                 if sample >= 0
-                    new_topic = num_topics
+                    new_topic = Int32(num_topics)
                 end
             else
                 error("sample = ", sample, " total_mass = ", total_mass)
             end
-            #println("new_topic = ", new_topic)
             denom = topic_summary_vec[new_topic] + beta_sum
             s_sum_buff -= alpha_beta / denom
             s_sum_buff += alpha_beta / (denom + 1)
@@ -311,31 +344,48 @@ Orion.@accumulator llh = 0.0
                 doc_topic_dict[new_topic] = 1
             end
 
-            if new_topic in keys(word_topic_dict)
-                word_topic_dict[new_topic] += 1
+            new_topic_index = find_index(word_topic_vec, new_topic)
+            if new_topic_index != -1
+                new_topic_count = word_topic_vec[new_topic_index][1]
+                word_topic_vec[new_topic_index] = (new_topic_count + 1, new_topic)
+                q_sum -= q_terms[new_topic_index][1]
             else
-                word_topic_dict[new_topic] = 1
+                new_topic_count = 1
+                push!(word_topic_vec, (new_topic_count, new_topic))
+                num_nonzero_q_terms += 1
+                new_topic_index = length(word_topic_vec)
             end
-
+            q_terms[new_topic_index] = (new_topic_count * doc_q_coeff[new_topic], new_topic)
+            q_sum += q_terms[new_topic_index][1]
             topic_summary_buff[1][new_topic] += 1
             assignment_vec[c] = new_topic
         end
-
-        topic_assignments[doc_id, word_id] = assignment_vec
         doc_topic_table[doc_id] = doc_topic_dict
-        word_topic_table[word_id] = word_topic_dict
+        word_topic_vec_table[word_id] = word_topic_vec
         q_coeff[doc_id] = doc_q_coeff
     end
+    Orion.@parallel_for for word_topic_vec_pair in word_topic_vec_table
+        word_topic_vec = word_topic_vec_pair[2]
+        sort!(word_topic_vec, by = x -> x[1], rev = true)
+        num_nonzeros = 0
+        for (topic_count, topic) in word_topic_vec
+            if topic_count == 0
+                break
+            end
+            num_nonzeros += 1
+        end
+        resize!(word_topic_vec, num_nonzeros)
+    end
 
-    if iteration % 1 == 0 ||
+    if iteration % 4 == 0 ||
         iteration == num_iterations
-        Orion.@parallel_for for word_topic_dict_pair in word_topic_table
-            word_id = word_topic_dict_pair[1][1]
-            word_topic_dict = word_topic_dict_pair[2]
-            for topic = 1:num_topics
-                count = get(word_topic_dict, topic, 0)
+        Orion.@parallel_for for word_topic_pair in word_topic_vec_table
+            word_topic_vec = word_topic_pair[2]
+
+            for (count, topic) in word_topic_vec
                 word_log_gamma_sum_buff[topic][1] += lgamma(count + beta)
             end
+            llh += (num_topics - length(word_topic_vec)) * lgamma(beta)
         end
 
         Orion.@parallel_for for topic_log_gamma_sum in word_log_gamma_sum
@@ -346,9 +396,8 @@ Orion.@accumulator llh = 0.0
             llh += lgamma(vocab_size * beta) - vocab_size * lgamma(beta)
             topic_log_gamma_sum[2][1] = 0.0
         end
-        llh = Orion.get_aggregated_value(:llh, :+)
-        println("word_llh = ", llh)
-        push!(word_llh_vec, llh)
+        word_llh = Orion.get_aggregated_value(:llh, :+)
+        push!(word_llh_vec, word_llh)
         # compute topic likelihood
         Orion.@parallel_for for doc_topic_dict_pair in doc_topic_table
             doc_topic_dict = doc_topic_dict_pair[2]
@@ -365,12 +414,14 @@ Orion.@accumulator llh = 0.0
         llh = Orion.get_aggregated_value(:llh, :+)
         Orion.reset_accumulator(:llh)
         push!(llh_vec, llh)
-        println("iteration = ", iteration, " llh = ", llh)
-        llh = Orion.get_aggregated_value(:llh, :+)
-        println("after reset, llh = ", llh)
+        curr_time = now()
+        elapsed = Int(Dates.value(curr_time - start_time)) / 1000
+        push!(time_vec, elapsed)
+        println("iteration = ", iteration, " elapsed = ", elapsed, " llh = ", llh, " word_llh = ", word_llh)
     end
 end
 
+println(time_vec)
 println(word_llh_vec)
 println(llh_vec)
 Orion.stop()

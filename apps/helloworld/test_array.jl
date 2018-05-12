@@ -1,55 +1,59 @@
-module Test
-import Main: size, getindex
-export MyArray, size, getindex
-type MyArray{T} <: AbstractArray{T}
-    value::Int32
-    ValueType::DataType
-    MyArray(value) = new(value,
-                         T)
+struct MyArray{T, N} <: AbstractArray{T, N}
+    values::Vector{T}
+    dims::NTuple{N, Int64}
+    MyArray{T, N}(dims::NTuple{N, Int64}) where {T, N} = length(dims) > 0 ?
+        new(randn(reduce(*, [dims...])), dims) :
+        new(Vector{T}(), dims)
 end
 
-function size(a::MyArray)
-    return 10
+Base.IndexStyle(::MyArray) = IndexLinear()
+
+function Base.size(array::MyArray)
+    return array.dims
 end
 
-function getindex(a::MyArray, i::Int)
-    println("i = ", i)
-    return a.value
+function Base.getindex(array::MyArray, i::Int)
+    println(i)
+    return array.values[i]
 end
 
-function getindex(a::MyArray, I...)
-    println("I = ", typeof(I))
-    return a.value
+function Base.setindex!(array::MyArray, v, i::Int)
+    array.values[i] = v
 end
 
+function Base.similar{T}(array::MyArray, ::Type{T}, dims::Dims)
+    return MyArray{T, length(dims)}(dims)
 end
 
-using Test
-
-a = MyArray{Int32}(2)
-c = a[10]
-println(a.ValueType)
-
-println(c)
-
-d = a[1, 2]
-println(d)
-
-t = Vector{Int32}(0)
-push!(t, 10)
-println(t[1])
-
-function print_sym(s, t)
-    println(typeof(s), " ", s, " value = ", t)
+my_array = MyArray{Float64, 2}((100, 10000))
+function test_my_array(test_arr)
+    sum = zeros(100)
+    @time for i = 1:10000
+        row = @view test_arr[:, i]
+        sum .= sum + row
+    end
+    println(sum)
 end
 
-macro print_sym(expr)
-    sym_expr = Expr(expr)
-    println(sym_expr)
-    return :(print_sym($expr, :($expr)))
-    #return :(println("good"))
+function test_my_array_global()
+    sum = zeros(100)
+    @time for i = 1:10000
+        row = my_array[:, i]
+        sum .= sum + row
+    end
+    println(sum)
 end
 
-g = 10
+function test_array()
+    my_array = randn(100, 10000)
+    sum = zeros(100)
+    @time for i = 1:10000
+        row = @view my_array[:, i]
+        sum .= sum + row
+    end
+    println(sum)
+end
 
-@print_sym g
+#test_array()
+#test_my_array(my_array)
+test_my_array_global()

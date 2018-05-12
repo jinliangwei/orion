@@ -79,8 +79,6 @@ ExecForLoopSpaceTimeUnordered::~ExecForLoopSpaceTimeUnordered() { }
 
 AbstractExecForLoop::RunnableStatus
 ExecForLoopSpaceTimeUnordered::GetCurrPartitionRunnableStatus() {
-  LOG(INFO) << __func__ << " space_id = " << curr_space_partition_id_
-            << " time_id = " << curr_time_partition_id_;
   if (clock_ == kNumClocks) return AbstractExecForLoop::RunnableStatus::kCompleted;
 
   if (curr_time_partition_id_ > kMaxTimePartitionId)
@@ -93,16 +91,12 @@ ExecForLoopSpaceTimeUnordered::GetCurrPartitionRunnableStatus() {
   }
 
   if (!global_indexed_dist_arrays_.empty()) {
-    if (!(
-            (clock_ <= pred_clock_) ||
-            ((clock_ == pred_clock_ + 1) && (time_sub_clock_ <= pred_time_sub_clock_))
-          )) {
-      LOG(INFO) << __func__ << " AwaitPredecessor to advance to my clock "
-                << " clock = " << clock_
-                << " pred_clock_ = " << pred_clock_
-                << " pred_time_sub_clock_ = " << pred_time_sub_clock_;
-      return AbstractExecForLoop::RunnableStatus::kAwaitPredecessor;
-    }
+    //if (!(
+    //        (clock_ <= pred_clock_) ||
+    //        ((clock_ == pred_clock_ + 1) && (time_sub_clock_ <= pred_time_sub_clock_))
+    //      )) {
+    //  return AbstractExecForLoop::RunnableStatus::kAwaitPredecessor;
+    //}
     if (!SkipPrefetch()) {
       if (!HasSentAllPrefetchRequests()) return AbstractExecForLoop::RunnableStatus::kPrefetchGlobalIndexedDistArrays;
       if (!HasRecvedAllPrefetches()) return AbstractExecForLoop::RunnableStatus::kAwaitGlobalIndexedDistArrays;
@@ -144,9 +138,6 @@ ExecForLoopSpaceTimeUnordered::ApplyPredecessorNotice(uint64_t clock) {
   pred_clock_ = static_cast<int32_t>(clock >> 32);
   pred_time_sub_clock_ = static_cast<int32_t>(clock &
                                               static_cast<uint64_t>(std::numeric_limits<int>::max()));
-  LOG(INFO) << __func__ << " pred_clock = " << pred_clock_
-            << " pred_time_sub_clock = " << pred_time_sub_clock_;
-  LOG(INFO) << __func__ << " clock = " << std::hex << clock;
 }
 
 void
@@ -160,34 +151,28 @@ ExecForLoopSpaceTimeUnordered::ComputePartitionIdsAndFindPartitionToExecute() {
 
 void
 ExecForLoopSpaceTimeUnordered::PrepareToExecCurrPartition() {
+  LOG(INFO) << __func__ << " start";
   if (curr_partition_prepared_) return;
-  LOG(INFO) << __func__ << " space = " << curr_space_partition_id_
-            << " time = " << curr_time_partition_id_;
   for (auto& dist_array_pair : space_partitioned_dist_arrays_) {
-    LOG(INFO) << __func__ << " CreateAccessor for sp " << dist_array_pair.first;
     auto* dist_array = dist_array_pair.second;
     auto *access_partition = dist_array->GetLocalPartition(curr_space_partition_id_);
     access_partition->CreateAccessor();
   }
 
   for (auto& dist_array_pair : time_partitioned_dist_arrays_) {
-    LOG(INFO) << __func__ << " CreateAccessor for tp " << dist_array_pair.first;
     auto* dist_array = dist_array_pair.second;
     auto *access_partition = dist_array->GetLocalPartition(curr_time_partition_id_);
-    LOG(INFO) << __func__
-              << " dist_array_id = " << dist_array_pair.first
-              << " access_partition = " << (void*) access_partition;
     CHECK(access_partition != nullptr);
     access_partition->CreateAccessor();
   }
 
   for (auto& buffer_pair : dist_array_buffers_) {
-    LOG(INFO) << __func__ << " CreateBufferAccessor for " << buffer_pair.first;
     auto* dist_array_buffer = buffer_pair.second;
     auto *buffer_partition = dist_array_buffer->GetBufferPartition();
     buffer_partition->CreateBufferAccessor();
   }
   curr_partition_prepared_ = true;
+  LOG(INFO) << __func__ << " end";
 }
 
 void

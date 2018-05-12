@@ -9,7 +9,7 @@ const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
 const num_executors = 16
-const num_servers = 8
+const num_servers = 1
 
 # initialize logging of the runtime library
 Orion.glog_init()
@@ -18,7 +18,7 @@ Orion.init(master_ip, master_port, comm_buff_capacity, num_executors,
 
 const data_path = "file:///proj/BigLearning/jinlianw/data/kdda"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/a1a"
-const num_iterations = 10
+const num_iterations = 128
 const step_size = Float32(0.00001)
 const num_features = 20216830
 #const num_features = 123
@@ -65,17 +65,17 @@ Orion.@dist_array weights = Orion.rand(num_features)
 Orion.materialize(weights)
 
 Orion.@share function sigmoid(z)
-    return 1.0 ./ (1.0 .+ exp(-z))
+    return Float32(1.0) ./ (Float32(1.0) .+ exp(-z))
 end
 
 Orion.@share function safe_log(x)
-    if abs(x) < 1e-15
-        x = 1e-15
+    if abs(x) < Float32(1e-15)
+        x = Float32(1e-15)
     end
     return log(x)
 end
 
-Orion.@dist_array weights_buf = Orion.create_sparse_dist_array_buffer((weights.dims...), 0.0)
+Orion.@dist_array weights_buf = Orion.create_sparse_dist_array_buffer((weights.dims...), Float32(0.0))
 Orion.materialize(weights_buf)
 
 Orion.@share function apply_buffered_update(key, weight, update)

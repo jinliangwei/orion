@@ -46,7 +46,6 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
                              Blob *bytes_buff);
 
-  void Repartition(const int32_t *repartition_ids);
   SendDataBuffer Serialize();
   void HashSerialize(ExecutorDataBufferMap *data_buffer_map);
   const uint8_t* Deserialize(const uint8_t *buffer);
@@ -63,6 +62,9 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   void AppendKeyValue(int64_t key, ValueType value);
   void AppendValue(ValueType value);
  private:
+  void RepartitionSpaceTime(const int32_t *repartition_ids);
+  void Repartition1D(const int32_t *repartition_ids);
+
   void GetJuliaValueArray(jl_value_t **value);
   void GetJuliaValueArray(const std::vector<int64_t> &keys,
                           jl_value_t **value_array);
@@ -70,9 +72,6 @@ class DistArrayPartition : public AbstractDistArrayPartition {
                       jl_value_t *values);
   void AppendJuliaValue(jl_value_t *value);
   void AppendJuliaValueArray(jl_value_t *value);
-
-  void RepartitionSpaceTime(const int32_t *repartition_ids);
-  void Repartition1D(const int32_t *repartition_ids);
 
   void BuildDenseIndex();
   void BuildSparseIndex();
@@ -464,19 +463,6 @@ DistArrayPartition<ValueType>::AppendValue(ValueType value) {
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::Repartition(
-    const int32_t *repartition_ids) {
-  auto &dist_array_meta = dist_array_->GetMeta();
-  auto partition_scheme = dist_array_meta.GetPartitionScheme();
-  if (partition_scheme == DistArrayPartitionScheme::kSpaceTime) {
-    RepartitionSpaceTime(repartition_ids);
-  } else {
-    Repartition1D(repartition_ids);
-  }
-}
-
-template<typename ValueType>
-void
 DistArrayPartition<ValueType>::RepartitionSpaceTime(
     const int32_t *repartition_ids) {
   for (size_t i = 0; i < keys_.size(); i++) {
@@ -736,7 +722,6 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
   void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
                              Blob *bytes_buff);
 
-  void Repartition(const int32_t *repartition_ids);
   SendDataBuffer Serialize();
   void HashSerialize(ExecutorDataBufferMap *data_buffer_map);
   const uint8_t* Deserialize(const uint8_t *buffer);
@@ -793,7 +778,6 @@ class DistArrayPartition<void> : public AbstractDistArrayPartition {
   void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
                              Blob *bytes_buff);
 
-  void Repartition(const int32_t *repartition_ids);
   SendDataBuffer Serialize();
   void HashSerialize(ExecutorDataBufferMap *data_buffer_map);
   const uint8_t* Deserialize(const uint8_t *buffer);

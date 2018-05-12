@@ -1090,10 +1090,10 @@ struct DistArrayAccessCountRecorder{N} <: AbstractArray{Int32, N}
     keys_dict::Dict{Int64, UInt64}
     dims::NTuple{N, Int64}
     DistArrayAccessCountRecorder{N}(dims::Vector{Int64}) where {N} = new(Dict{Int64, UInt64}(),
-                                                            tuple(dims...))
+                                                                         tuple(dims...))
 
     DistArrayAccessCountRecorder{N}(dims::NTuple{N, Int64}) where {N} = new(Dict{Int64, UInt64}(),
-                                                               dims)
+                                                                            dims)
 end
 
 Base.IndexStyle(::Type{DistArrayAccessCountRecorder}) = IndexLinear()

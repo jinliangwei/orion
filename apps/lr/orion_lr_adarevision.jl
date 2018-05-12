@@ -18,7 +18,7 @@ Orion.init(master_ip, master_port, comm_buff_capacity, num_executors,
 
 const data_path = "file:///proj/BigLearning/jinlianw/data/kdda"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/a1a"
-const num_iterations = 10
+const num_iterations = 40
 Orion.@share const alpha = Float32(0.1)
 const num_features = 20216830
 #const num_features = 123

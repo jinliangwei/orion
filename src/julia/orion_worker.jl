@@ -82,3 +82,7 @@ end
 function orionres_print_value_type(value)
     println(typeof(value))
 end
+
+function orionres_value_to_string(value)::String
+    return string(value)
+end

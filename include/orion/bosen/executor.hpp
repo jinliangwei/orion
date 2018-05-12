@@ -670,7 +670,6 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
       case Action::kRepartitionDistArray:
         {
           bool repartition_mine = RepartitionDistArray();
-          LOG(INFO) << "repartition_mine = " << repartition_mine;
           if (!repartition_mine && !repartition_recv_)
             action_ = Action::kRepartitionDistArrayAck;
           else {
@@ -735,8 +734,6 @@ Executor::HandleMsg(PollConn* poll_conn_ptr) {
           int32_t dist_array_id = dist_array_under_operation_;
           auto &dist_array = dist_arrays_.at(dist_array_id);
           auto &max_ids = dist_array.GetMeta().GetMaxPartitionIds();
-          LOG(INFO) << "RepartitionDistArrayAck, max_idx.size = "
-                    << max_ids.size();
           auto *ack_msg = message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayAck>(
             &send_buff_,
             dist_array_id,
@@ -1849,6 +1846,7 @@ Executor::ParseDistArrayTextBuffer(DistArray& dist_array,
 
 bool
 Executor::RepartitionDistArray() {
+  LOG(INFO) << __func__;
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
       master_recv_byte_buff_.GetSize());
@@ -1856,7 +1854,6 @@ Executor::RepartitionDistArray() {
   task::RepartitionDistArray repartition_dist_array_task;
   repartition_dist_array_task.ParseFromString(task_str);
   int32_t id = repartition_dist_array_task.id();
-  LOG(INFO) << __func__ << " dist_array_id = " << id;
   dist_array_under_operation_ = id;
 
   auto partition_scheme = static_cast<DistArrayPartitionScheme>(repartition_dist_array_task.partition_scheme());
@@ -1880,10 +1877,6 @@ Executor::RepartitionDistArray() {
       ) {
     repartition_recv_ = false;
   }
-
-  LOG(INFO) << "from_server = " << from_server
-            << " to_server = " << to_server
-            << " kIsServer = " << kIsServer;
 
   if ((from_server && !kIsServer) || (!from_server && kIsServer)) return false;
 
@@ -1947,7 +1940,6 @@ Executor::RepartitionDistArraySerialize(int32_t dist_array_id,
 
 void
 Executor::RepartitionDistArraySend() {
-  LOG(INFO) << __func__;
   auto dist_array_id = dist_array_under_operation_;
   auto &dist_array_to_repartition = dist_arrays_.at(dist_array_under_operation_);
   auto &meta = dist_array_to_repartition.GetMeta();

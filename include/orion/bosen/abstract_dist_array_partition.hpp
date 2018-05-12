@@ -119,7 +119,11 @@ class AbstractDistArrayPartition {
   DISALLOW_COPY(AbstractDistArrayPartition);
   void AppendKeyValue(int64_t key, jl_value_t* value);
   std::vector<int64_t>& GetKeys();
-  virtual void Repartition(const int32_t *repartition_ids) = 0;
+  void Repartition(const int32_t *repartition_ids) ;
+
+  virtual void RepartitionSpaceTime(const int32_t *repartition_ids) = 0;
+  virtual void Repartition1D(const int32_t *repartition_ids) = 0;
+
   virtual void GetJuliaValueArray(jl_value_t **value) = 0;
   virtual void GetJuliaValueArray(const std::vector<int64_t> &keys, jl_value_t **value) = 0;
   virtual void SetJuliaValues(const std::vector<int64_t> &keys, jl_value_t *value) = 0;

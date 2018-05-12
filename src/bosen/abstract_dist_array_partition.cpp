@@ -129,7 +129,6 @@ AbstractDistArrayPartition::ParseText(Blob *max_key,
         char *line = strtok(char_buff_.data(), "\n");
         while (line != nullptr) {
           if (flatten_results) {
-            LOG(FATAL);
             key.clear();
             JuliaEvaluator::ParseStringFlatten(line,
                                                map_func_module,
@@ -220,6 +219,18 @@ AbstractDistArrayPartition::AppendKeyValue(int64_t key, jl_value_t* value) {
 std::vector<int64_t>&
 AbstractDistArrayPartition::GetKeys() {
   return keys_;
+}
+
+void
+AbstractDistArrayPartition::Repartition(
+    const int32_t *repartition_ids) {
+  auto &dist_array_meta = dist_array_->GetMeta();
+  auto partition_scheme = dist_array_meta.GetPartitionScheme();
+  if (partition_scheme == DistArrayPartitionScheme::kSpaceTime) {
+    RepartitionSpaceTime(repartition_ids);
+  } else {
+    Repartition1D(repartition_ids);
+  }
 }
 
 void
@@ -427,8 +438,6 @@ AbstractDistArrayPartition::Map(AbstractDistArrayPartition *child_partition) {
   JL_GC_PUSH3(&dist_array_value_type, &input_values, &output_values);
 
   GetJuliaValueArray(&input_values);
-  LOG(INFO) << __func__ << " input_values = "
-            << (void*) input_values;
   auto *child_dist_array = child_partition->dist_array_;
   auto &dist_array_meta = child_dist_array->GetMeta();
   const auto &child_dims = dist_array_meta.GetDims();
@@ -482,6 +491,7 @@ AbstractDistArrayPartition::ComputeHashRepartitionIdsAndRepartition(size_t num_p
 void
 AbstractDistArrayPartition::ComputeRepartitionIdsAndRepartition(
     const std::string &repartition_func_name) {
+  LOG(INFO) << __func__;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   jl_value_t *array_type = nullptr,
             *keys_vec_jl = nullptr,
@@ -502,7 +512,7 @@ AbstractDistArrayPartition::ComputeRepartitionIdsAndRepartition(
   JuliaEvaluator::AbortIfException();
   CHECK(!jl_exception_occurred()) << jl_typeof_str(jl_exception_occurred());
   int32_t *repartition_ids = reinterpret_cast<int32_t*>(jl_array_data(repartition_ids_vec_jl));
-  LOG(INFO) << __func__ << " size = " << keys_.size();
+
   Repartition(repartition_ids);
   JL_GC_POP();
 }
@@ -625,7 +635,6 @@ AbstractDistArrayPartition::Execute(
   size_t num_args = accessed_dist_arrays.size() + accessed_dist_array_buffers.size()
                     + global_read_only_var_vals.size()
                     + accumulator_var_syms.size() + 3;
-  LOG(INFO) << "num_args = " << num_args;
   jl_value_t **jl_values;
   JL_GC_PUSHARGS(jl_values, num_args + 3);
 

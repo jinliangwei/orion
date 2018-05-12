@@ -9,7 +9,6 @@ namespace bosen {
 
 void
 Executor::CreateExecForLoop() {
-  LOG(INFO) << __func__;
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
       master_recv_byte_buff_.GetSize());
@@ -18,6 +17,8 @@ Executor::CreateExecForLoop() {
   int32_t iteration_space_id = exec_for_loop_task.iteration_space_id();
   ForLoopParallelScheme parallel_scheme
       = static_cast<ForLoopParallelScheme>(exec_for_loop_task.parallel_scheme());
+  LOG(INFO) << __func__ << " iteration_space_id = "
+            << iteration_space_id;
 
   const int32_t *space_partitioned_dist_array_ids
      = exec_for_loop_task.space_partitioned_dist_array_ids().data();

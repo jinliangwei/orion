@@ -624,6 +624,8 @@ JULIA_HOME
 JAVA_HOME
 HADOOP_HOME
 THIRD_PARTY_HOME
+GOOGLE_PROF_ON
+GPROF_ON
 PERF_COUNT_ON
 SANITIZER_ON
 DEBUG_ON
@@ -686,6 +688,8 @@ enable_option_checking
 enable_debug
 enable_sanitizer
 enable_perfcount
+enable_gprof
+enable_googleprof
 enable_superpage
 enable_assert
 enable_assertions
@@ -1327,7 +1331,9 @@ Optional Features:
   --enable-FEATURE[=ARG]  include FEATURE [ARG=yes]
   --enable-debug    Turn on debugging
   --enable-sanitizer    Turn on google sanitizer
-  --enable-perfcount    Turn on sedna perf count
+  --enable-perfcount    Turn on perf count
+  --enable-gprof    Turn on GNU Profiling
+  --enable-googleprof    Turn on Google prof
   --disable-superpage     disable superpage support
 
   --disable-assertions    disable debugging assertions
@@ -4241,10 +4247,38 @@ if test "${enable_perfcount+set}" = set; then :
   *) as_fn_error $? "bad value ${enableval} for --enable-perfcount" "$LINENO" 5 ;;
 esac
 else
-  perfcount=no
+  perfcount=false
 fi
 
 PERF_COUNT_ON=$perfcount
+
+
+# Check whether --enable-gprof was given.
+if test "${enable_gprof+set}" = set; then :
+  enableval=$enable_gprof; case "${enableval}" in
+  yes) gprof=true ;;
+  no) gprof=false ;;
+  *) as_fn_error $? "bad value ${enableval} for --enable-gprof" "$LINENO" 5 ;;
+esac
+else
+  gprof=false
+fi
+
+GPROF_ON=$gprof
+
+
+# Check whether --enable-googleprof was given.
+if test "${enable_googleprof+set}" = set; then :
+  enableval=$enable_googleprof; case "${enableval}" in
+  yes) googleprof=true ;;
+  no) googleprof=false ;;
+  *) as_fn_error $? "bad value ${enableval} for --enable-googleprof" "$LINENO" 5 ;;
+esac
+else
+  googleprof=false
+fi
+
+GOOGLE_PROF_ON=$googleprof
 
 
 

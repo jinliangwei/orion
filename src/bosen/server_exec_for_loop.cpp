@@ -47,7 +47,6 @@ ServerExecForLoop::DeserializeAndApplyDistArrayCaches(
 void
 ServerExecForLoop::DeserializeAndApplyDistArrayBuffers(
     uint8_t* bytes) {
-  LOG(INFO) << __func__;
   const auto *cursor = bytes;
   size_t num_dist_arrays = *reinterpret_cast<const size_t*>(cursor);
   cursor += sizeof(size_t);
