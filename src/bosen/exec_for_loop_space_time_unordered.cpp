@@ -91,12 +91,12 @@ ExecForLoopSpaceTimeUnordered::GetCurrPartitionRunnableStatus() {
   }
 
   if (!global_indexed_dist_arrays_.empty()) {
-    //if (!(
-    //        (clock_ <= pred_clock_) ||
-    //        ((clock_ == pred_clock_ + 1) && (time_sub_clock_ <= pred_time_sub_clock_))
-    //      )) {
-    //  return AbstractExecForLoop::RunnableStatus::kAwaitPredecessor;
-    //}
+    if (!(
+            (clock_ <= pred_clock_) ||
+            ((clock_ == pred_clock_ + 1) && (time_sub_clock_ <= pred_time_sub_clock_))
+          )) {
+      return AbstractExecForLoop::RunnableStatus::kAwaitPredecessor;
+    }
     if (!SkipPrefetch()) {
       if (!HasSentAllPrefetchRequests()) return AbstractExecForLoop::RunnableStatus::kPrefetchGlobalIndexedDistArrays;
       if (!HasRecvedAllPrefetches()) return AbstractExecForLoop::RunnableStatus::kAwaitGlobalIndexedDistArrays;
