@@ -1542,6 +1542,17 @@ Executor::HandleDriverMsg() {
         action_ = Action::kExecutorAck;
       }
       break;
+    case message::DriverMsgType::kDeleteDistArray:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgDeleteDistArray>(recv_buff);
+        int32_t dist_array_id = msg->dist_array_id;
+        ret = EventHandler<PollConn>::kClearOneMsg;
+        action_ = Action::kExecutorAck;
+        dist_arrays_.erase(dist_array_id);
+        dist_array_buffers_.erase(dist_array_id);
+      }
+      break;
     default:
       {
         LOG(FATAL) << "unknown message type " << static_cast<int>(msg_type);
@@ -2212,6 +2223,8 @@ Executor::SetDistArrayBufferInfo() {
   size_t num_helper_dist_arrays = set_dist_array_buffer_info.helper_dist_array_ids_size();
   const int32_t *helper_dist_array_buffer_ids = set_dist_array_buffer_info.helper_dist_array_buffer_ids().data();
   size_t num_helper_dist_array_buffers = set_dist_array_buffer_info.helper_dist_array_buffer_ids_size();
+  int32_t delay_mode = set_dist_array_buffer_info.delay_mode();
+  size_t max_delay = set_dist_array_buffer_info.max_delay();
 
   dist_array_buffer_info_map_.emplace(dist_array_buffer_id,
                                       DistArrayBufferInfo(dist_array_id,
@@ -2219,7 +2232,9 @@ Executor::SetDistArrayBufferInfo() {
                                                           helper_dist_array_ids,
                                                           num_helper_dist_arrays,
                                                           helper_dist_array_buffer_ids,
-                                                          num_helper_dist_array_buffers));
+                                                          num_helper_dist_array_buffers,
+                                                          delay_mode,
+                                                          max_delay));
 }
 
 void
