@@ -1285,10 +1285,11 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
       break;
     case message::ExecuteMsgType::kRequestDistArrayValue:
       {
-        auto *msg = message::Helper::get_msg<
+        auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgRequestDistArrayValue>(recv_buff);
         int64_t key = msg->key;
         int32_t server_id = key % kNumServers;
+
         send_buff_.Copy(recv_buff);
         Send(&server_conn_[server_id], server_[server_id].get());
         send_buff_.clear_to_send();
@@ -1846,7 +1847,6 @@ Executor::ParseDistArrayTextBuffer(DistArray& dist_array,
 
 bool
 Executor::RepartitionDistArray() {
-  LOG(INFO) << __func__;
   std::string task_str(
       reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
       master_recv_byte_buff_.GetSize());
@@ -1871,6 +1871,7 @@ Executor::RepartitionDistArray() {
   bool from_server = orig_partition_scheme == DistArrayPartitionScheme::kHashServer;
   bool to_server = partition_scheme == DistArrayPartitionScheme::kHashServer;
 
+  LOG(INFO) << __func__ << " dist_array_id = " << id;
   repartition_recv_ = true;
   if ((to_server && (!kIsServer || (from_server && kConfig.kNumServers == 1))) ||
       (!to_server && (kIsServer || (!from_server && kConfig.kNumExecutors == 1)))
