@@ -42,6 +42,11 @@ type SparseDistArrayBuffer{T, N} <: DistArrayBuffer{T, N}
                                     false)
 end
 
+@enum DistArrayBufferDelayMode DistArrayBufferDelayMode_default =
+    1 DistArrayBufferDelayMode_max_delay =
+    2 DistArrayBufferDelayMode_auto =
+    3
+
 function Base.getindex(dist_array::DistArrayBuffer,
                        I...)
     @assert !isnull(dist_array.accessor)
@@ -138,7 +143,7 @@ function dist_array_get_accessor_values_vec{T, N}(dist_array_buffer::DenseDistAr
 end
 
 function create_dist_array_on_worker(id::Int32,
-                                     ValueType::DataType,
+                                     ValueType::Any,
                                      symbol::AbstractString,
                                      dims::Vector{Int64},
                                      is_dense::Bool,

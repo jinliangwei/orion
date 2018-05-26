@@ -76,6 +76,7 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   void BuildDenseIndex();
   void BuildSparseIndex();
   void Sort();
+  void ShrinkValueVecToFit();
 };
 
 /*---- template general implementation -----*/
@@ -228,7 +229,7 @@ DistArrayPartition<ValueType>::CreateBufferAccessor() {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::ClearCacheAccessor() {
-  LOG(INFO) << __func__;
+  LOG(INFO) << __func__ << " dist_array_id = " << dist_array_->kId;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kAccessor);
   jl_value_t* tuple_jl = nullptr;
   jl_value_t* keys_array_jl = nullptr;
@@ -355,8 +356,10 @@ DistArrayPartition<ValueType>::BuildSparseIndex() {
     auto value = values_[i];
     sparse_index_[key] = value;
   }
-  keys_.clear();
-  values_.clear();
+  std::vector<int64_t> empty_buff;
+  keys_.swap(empty_buff);
+  std::vector<ValueType> empty_value_buff;
+  values_.swap(empty_value_buff);
   storage_type_ = DistArrayPartitionStorageType::kSparseIndex;
 }
 
@@ -436,10 +439,18 @@ DistArrayPartition<ValueType>::Sort() {
 
 template<typename ValueType>
 void
+DistArrayPartition<ValueType>::ShrinkValueVecToFit() {
+
+}
+
+template<typename ValueType>
+void
 DistArrayPartition<ValueType>::Clear() {
   CHECK(storage_type_ != DistArrayPartitionStorageType::kAccessor);
-  keys_.clear();
-  values_.clear();
+  std::vector<int64_t> empty_buff;
+  keys_.swap(empty_buff);
+  std::vector<ValueType> empty_value_buff;
+  values_.swap(empty_value_buff);
   sparse_index_.clear();
   key_start_ = -1;
   storage_type_ = DistArrayPartitionStorageType::kKeyValueBuffer;
@@ -752,6 +763,7 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
   void BuildDenseIndex();
   void BuildSparseIndex();
   void Sort();
+  void ShrinkValueVecToFit();
 };
 
 /*----- Specialized for all other types ------*/
@@ -807,6 +819,7 @@ class DistArrayPartition<void> : public AbstractDistArrayPartition {
   void BuildSparseIndex();
   void Sort();
   void GetJuliaDistArray(jl_value_t** dist_array);
+  void ShrinkValueVecToFit();
 };
 
 }

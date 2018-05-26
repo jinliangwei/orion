@@ -27,7 +27,9 @@ ExecForLoopSpaceTimeUnordered::ExecForLoopSpaceTimeUnordered(
     const char* loop_batch_func_name,
     const char *prefetch_batch_func_name,
     std::unordered_map<int32_t, DistArray> *dist_arrays,
-    std::unordered_map<int32_t, DistArray> *dist_array_buffers):
+    std::unordered_map<int32_t, DistArray> *dist_array_buffers,
+    const std::unordered_map<int32_t, DistArrayBufferInfo> &dist_array_buffer_info_map,
+    bool is_repeated):
     AbstractExecForLoop(
         executor_id,
         num_executors,
@@ -52,7 +54,9 @@ ExecForLoopSpaceTimeUnordered::ExecForLoopSpaceTimeUnordered(
         loop_batch_func_name,
         prefetch_batch_func_name,
         dist_arrays,
-        dist_array_buffers),
+        dist_array_buffers,
+        dist_array_buffer_info_map,
+        is_repeated),
     curr_space_partition_id_ (executor_id) {
   auto &meta = iteration_space_->GetMeta();
   auto &max_ids = meta.GetMaxPartitionIds();
@@ -67,62 +71,15 @@ ExecForLoopSpaceTimeUnordered::ExecForLoopSpaceTimeUnordered(
             << " max_time_partition_id = " << kMaxTimePartitionId
             << " num_space_sub_clocks = " << kNumSpaceSubClocks
             << " num_time_sub_clocks = " << kNumTimeSubClocks;
-
-  clock_ = 0;
-  space_sub_clock_ = 0;
-  time_sub_clock_ = 0;
-
-  ComputePartitionIdsAndFindPartitionToExecute();
 }
 
 ExecForLoopSpaceTimeUnordered::~ExecForLoopSpaceTimeUnordered() { }
 
-AbstractExecForLoop::RunnableStatus
-ExecForLoopSpaceTimeUnordered::GetCurrPartitionRunnableStatus() {
-  if (clock_ == kNumClocks) return AbstractExecForLoop::RunnableStatus::kCompleted;
-
-  if (curr_time_partition_id_ > kMaxTimePartitionId)
-    return AbstractExecForLoop::RunnableStatus::kSkip;
-
-  if (curr_partition_ == nullptr) {
-    if (!HasRecvedAllTimePartitionedDistArrays(curr_time_partition_id_))
-      return AbstractExecForLoop::RunnableStatus::kAwaitPredecessor;
-    return AbstractExecForLoop::RunnableStatus::kSkip;
-  }
-
-  if (!global_indexed_dist_arrays_.empty()) {
-    if (!(
-            (clock_ <= pred_clock_) ||
-            ((clock_ == pred_clock_ + 1) && (time_sub_clock_ <= pred_time_sub_clock_))
-          )) {
-      return AbstractExecForLoop::RunnableStatus::kAwaitPredecessor;
-    }
-    if (!SkipPrefetch()) {
-      if (!HasSentAllPrefetchRequests()) return AbstractExecForLoop::RunnableStatus::kPrefetchGlobalIndexedDistArrays;
-      if (!HasRecvedAllPrefetches()) return AbstractExecForLoop::RunnableStatus::kAwaitGlobalIndexedDistArrays;
-    }
-  }
-
-  if (!HasRecvedAllTimePartitionedDistArrays(curr_time_partition_id_))
-      return AbstractExecForLoop::RunnableStatus::kAwaitPredecessor;
-
-  return AbstractExecForLoop::RunnableStatus::kRunnable;
-}
-
 void
-ExecForLoopSpaceTimeUnordered::FindNextToExecPartition() {
-  if (clock_ == kNumClocks) return;
-  space_sub_clock_++;
-  if (space_sub_clock_ == kNumSpaceSubClocks) {
-    space_sub_clock_ = 0;
-    time_sub_clock_++;
-    if (time_sub_clock_ == kNumTimeSubClocks) {
-      time_sub_clock_ = 0;
-      clock_++;
-    }
-  }
-  if (clock_ == kNumClocks) return;
-  ComputePartitionIdsAndFindPartitionToExecute();
+ExecForLoopSpaceTimeUnordered::ApplyPredecessorNotice(uint64_t clock) {
+  pred_clock_ = static_cast<int32_t>(clock >> 32);
+  pred_time_sub_clock_ = static_cast<int32_t>(clock &
+                                              static_cast<uint64_t>(std::numeric_limits<int>::max()));
 }
 
 int32_t
@@ -134,76 +91,42 @@ ExecForLoopSpaceTimeUnordered::GetTimePartitionIdToSend() {
 }
 
 void
-ExecForLoopSpaceTimeUnordered::ApplyPredecessorNotice(uint64_t clock) {
-  pred_clock_ = static_cast<int32_t>(clock >> 32);
-  pred_time_sub_clock_ = static_cast<int32_t>(clock &
-                                              static_cast<uint64_t>(std::numeric_limits<int>::max()));
+ExecForLoopSpaceTimeUnordered::InitClocks() {
+  clock_ = 0;
+  space_sub_clock_ = 0;
+  time_sub_clock_ = 0;
+}
+
+void
+ExecForLoopSpaceTimeUnordered::AdvanceClock() {
+  if (clock_ == kNumClocks) return;
+  space_sub_clock_++;
+  if (space_sub_clock_ == kNumSpaceSubClocks) {
+    space_sub_clock_ = 0;
+    time_sub_clock_++;
+    if (time_sub_clock_ == kNumTimeSubClocks) {
+      time_sub_clock_ = 0;
+      clock_++;
+    }
+  }
+}
+
+bool
+ExecForLoopSpaceTimeUnordered::LastPartition() {
+  return (space_sub_clock_ == (kNumSpaceSubClocks - 1)) &&
+      (time_sub_clock_ == (kNumTimeSubClocks - 1)) &&
+      (clock_ == (kNumClocks - 1));
 }
 
 void
 ExecForLoopSpaceTimeUnordered::ComputePartitionIdsAndFindPartitionToExecute() {
+  if (clock_ == kNumClocks) return;
   curr_time_partition_id_ = time_sub_clock_ * kNumExecutors
                             + (clock_ + kExecutorId) % kNumClocks;
   curr_space_partition_id_ = space_sub_clock_ * kNumExecutors + kExecutorId;
   curr_partition_ = iteration_space_->GetLocalPartition(curr_space_partition_id_,
                                                         curr_time_partition_id_);
-}
-
-void
-ExecForLoopSpaceTimeUnordered::PrepareToExecCurrPartition() {
-  LOG(INFO) << __func__ << " start";
-  if (curr_partition_prepared_) return;
-  for (auto& dist_array_pair : space_partitioned_dist_arrays_) {
-    auto* dist_array = dist_array_pair.second;
-    auto *access_partition = dist_array->GetLocalPartition(curr_space_partition_id_);
-    access_partition->CreateAccessor();
-  }
-
-  for (auto& dist_array_pair : time_partitioned_dist_arrays_) {
-    auto* dist_array = dist_array_pair.second;
-    auto *access_partition = dist_array->GetLocalPartition(curr_time_partition_id_);
-    CHECK(access_partition != nullptr);
-    access_partition->CreateAccessor();
-  }
-
-  for (auto& buffer_pair : dist_array_buffers_) {
-    auto* dist_array_buffer = buffer_pair.second;
-    auto *buffer_partition = dist_array_buffer->GetBufferPartition();
-    buffer_partition->CreateBufferAccessor();
-  }
-  curr_partition_prepared_ = true;
-  LOG(INFO) << __func__ << " end";
-}
-
-void
-ExecForLoopSpaceTimeUnordered::ClearCurrPartition() {
-  if (!curr_partition_prepared_) return;
-  for (auto& dist_array_pair : space_partitioned_dist_arrays_) {
-    auto* dist_array = dist_array_pair.second;
-    auto *access_partition = dist_array->GetLocalPartition(curr_space_partition_id_);
-    access_partition->ClearAccessor();
-  }
-
-  for (auto& dist_array_pair : time_partitioned_dist_arrays_) {
-    auto* dist_array = dist_array_pair.second;
-    auto *access_partition = dist_array->GetLocalPartition(curr_time_partition_id_);
-    access_partition->ClearAccessor();
-  }
-
-  for (auto& dist_array_pair : global_indexed_dist_arrays_) {
-    auto dist_array_id = dist_array_pair.first;
-    auto *cache_partition = dist_array_cache_.at(dist_array_id).get();
-    cache_partition->ClearCacheAccessor();
-  }
-
-  for (auto& buffer_pair : dist_array_buffers_) {
-    auto* dist_array_buffer = buffer_pair.second;
-    auto *buffer_partition = dist_array_buffer->GetBufferPartition();
-    buffer_partition->ClearBufferAccessor();
-  }
-  curr_partition_prepared_ = false;
-  dist_array_cache_prepared_ = false;
-  prefetch_status_ = SkipPrefetch() ? PrefetchStatus::kSkipPrefetch : PrefetchStatus::kNotPrefetched;
+  InitPartitionToExec();
 }
 
 }

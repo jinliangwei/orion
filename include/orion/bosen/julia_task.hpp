@@ -37,7 +37,9 @@ enum class TaskLabel {
     kExecForLoopApplyDistArrayBufferData = 24,
     kExecForLoopInit = 25,
     kExecForLoopClear = 26,
-    kDeleteAllDistArrays = 27
+    kDeleteAllDistArrays = 27,
+    kDeleteDistArray = 28,
+    kSkipPartition = 29
           };
 
 class JuliaTask {

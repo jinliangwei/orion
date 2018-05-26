@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <net/if.h>
 #include <arpa/inet.h>
+#include <utility>
 
 namespace orion {
 namespace bosen {
@@ -36,5 +37,6 @@ GetIPFromStr(const char *str, uint32_t *ip) {
   *ip = inp.s_addr;
   return ret;
 }
+
 }
 }

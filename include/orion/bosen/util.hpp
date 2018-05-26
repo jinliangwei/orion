@@ -37,4 +37,17 @@ get_aligned(void* addr, size_t alignment) {
   return reinterpret_cast<void*>(aligned);
 }
 
+template<typename T>
+inline T Gcd(T m, T n) {
+  CHECK_GT(m, 0);
+  CHECK_GT(n, 0);
+  if (m < n) std::swap(m, n);
+  while (n != 0) {
+    T n_temp = n;
+    n = m % n;
+    m = n_temp;
+  }
+  return m;
+}
+
 }

@@ -265,12 +265,6 @@ EventHandler<PollConn>::WaitAndHandleEvent() {
         exit = ReadAndRunReadEventHandler(poll_conn_ptr);
         if (exit) break;
         auto& recv_buff = poll_conn_ptr->get_recv_buff();
-        //while (recv_buff.ReceivedFullMsg()
-        //       && (!recv_buff.IsExepectingNextMsg())) {
-        //  exit = RunReadEventHandler(poll_conn_ptr);
-        //  if (exit) break;
-        //}
-        //if (exit) break;
         if (recv_buff.is_eof()) {
           int clear_code = closed_connection_handler_(poll_conn_ptr);
           if (clear_code & kExit) break;

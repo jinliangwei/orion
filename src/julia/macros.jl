@@ -3,12 +3,8 @@ macro share(ex::Expr)
     esc(ex)
 end
 
-macro parallel_for(expr::Expr)
-    return parallelize_for_loop(expr, false)
-end
-
-macro ordered_parallel_for(expr::Expr)
-    return parallelize_for_loop(expr, true)
+macro parallel_for(args...)
+    return parallelize_for_loop(args...)
 end
 
 macro accumulator(expr::Expr)
@@ -25,7 +21,24 @@ macro accumulator(expr::Expr)
     return ret
 end
 
-function parallelize_for_loop(loop_stmt::Expr, is_ordered::Bool)
+function parallelize_for_loop(args...)
+    @assert length(args) > 0
+
+    loop_stmt = args[end]
+    is_ordered = false
+    is_repeated = false
+
+    for arg in args[1:(length(args) - 1)]
+        @assert isa(arg, Symbol)
+        if arg == :ordered
+            is_ordered = true
+        elseif arg == :repeated
+            is_repeated = true
+        else
+            error("unrecognized specifier ", arg)
+        end
+    end
+
     println("parallelize_for loop")
     @assert is_for_loop(loop_stmt)
     iteration_var = for_get_iteration_var(loop_stmt)
@@ -62,6 +75,7 @@ function parallelize_for_loop(loop_stmt::Expr, is_ordered::Bool)
                                          accumulator_vars,
                                          loop_body,
                                          is_ordered,
+                                         is_repeated,
                                          ssa_context.ssa_defs,
                                          flow_graph)
 

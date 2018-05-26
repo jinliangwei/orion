@@ -14,16 +14,21 @@ ServerExecForLoop::ServerExecForLoop(
     const int32_t *global_indexed_dist_array_ids,
     size_t num_global_indexed_dist_arrays,
     const int32_t *dist_array_buffer_ids,
-    size_t num_dist_array_buffers):
+    size_t num_dist_array_buffers,
+    bool is_repeated):
     kServerId(server_id),
     kNumExecutors(num_executors),
     dist_arrays_(dist_arrays),
     dist_array_buffers_(dist_array_buffers),
-    dist_array_buffer_info_map_(dist_array_buffer_info_map) {
-  LOG(INFO) << __func__ << " NumExecutors = " << kNumExecutors;
-}
+    dist_array_buffer_info_map_(dist_array_buffer_info_map),
+    kIsRepeated(is_repeated) { }
 
 ServerExecForLoop::~ServerExecForLoop() { }
+
+void
+ServerExecForLoop::InitEachExecution() {
+  num_completed_executors_ = 0;
+}
 
 void
 ServerExecForLoop::DeserializeAndApplyDistArrayCaches(
@@ -47,6 +52,8 @@ ServerExecForLoop::DeserializeAndApplyDistArrayCaches(
 void
 ServerExecForLoop::DeserializeAndApplyDistArrayBuffers(
     uint8_t* bytes) {
+  if (num_completed_executors_ > 0)
+    LOG(INFO) << __func__;
   const auto *cursor = bytes;
   size_t num_dist_arrays = *reinterpret_cast<const size_t*>(cursor);
   cursor += sizeof(size_t);
@@ -109,11 +116,11 @@ ServerExecForLoop::DeserializeAndApplyDistArrayBuffers(
 
 bool
 ServerExecForLoop::NotifyExecForLoopDone() {
-  completed_executors_++;
-  LOG(INFO) << __func__ << " completed_executors = "
-            << completed_executors_ << " numExecutors = " << kNumExecutors
-            << " bool = " << (completed_executors_ == kNumExecutors);
-  return (completed_executors_ == kNumExecutors);
+  num_completed_executors_++;
+  LOG(INFO) << __func__ << " num_completed_executors = "
+            << num_completed_executors_ << " numExecutors = " << kNumExecutors
+            << " bool = " << (num_completed_executors_ == kNumExecutors);
+  return (num_completed_executors_ == kNumExecutors);
 }
 
 }

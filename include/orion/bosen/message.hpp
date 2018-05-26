@@ -128,7 +128,8 @@ enum class DriverMsgType {
     kCreateDistArrayBuffer = 14,
     kSetDistArrayBufferInfo = 15,
     kDeleteDistArrayBufferInfo = 16,
-    kUpdateDistArrayIndex = 17
+    kUpdateDistArrayIndex = 17,
+    kDeleteDistArray = 18
 };
 
 struct DriverMsg {

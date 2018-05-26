@@ -26,6 +26,7 @@ static size_t WriteAllUntilBlock(int fd, const void *buf, size_t count) {
         LOG(FATAL) << "write failed, errno = " << errno;
       }
     }
+    CHECK_GT(ret, 0);
     bytes_written += ret;
   } while (bytes_written < count);
   return bytes_written;

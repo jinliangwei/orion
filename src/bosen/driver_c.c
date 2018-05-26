@@ -90,6 +90,11 @@ extern "C" {
                                   value_type_size);
   }
 
+  void orion_delete_dist_array(
+      int32_t id) {
+    driver->DeleteDistArray(id);
+  }
+
   jl_value_t* orion_eval_expr_on_all(
       const uint8_t* expr,
       size_t expr_size,
@@ -125,7 +130,9 @@ extern "C" {
       const int32_t *helper_buffer_ids,
       size_t num_helper_buffers,
       const int32_t *helper_dist_array_ids,
-      size_t num_helper_dist_arrays) {
+      size_t num_helper_dist_arrays,
+      int32_t dist_array_buffer_delay_mode,
+      size_t max_delay) {
     driver->SetDistArrayBufferInfo(
         dist_array_buffer_id,
         dist_array_id,
@@ -133,7 +140,9 @@ extern "C" {
         helper_buffer_ids,
         num_helper_buffers,
         helper_dist_array_ids,
-        num_helper_dist_arrays);
+        num_helper_dist_arrays,
+        dist_array_buffer_delay_mode,
+        max_delay);
   }
 
   void orion_delete_dist_array_buffer_info(
@@ -142,6 +151,7 @@ extern "C" {
   }
 
   void orion_exec_for_loop(
+      int32_t exec_for_loop_id,
       int32_t iteration_space_id,
       int32_t parallel_scheme,
       const int32_t *space_partitioned_dist_array_ids,
@@ -161,8 +171,10 @@ extern "C" {
       size_t num_accumulator_var_syms,
       const char *loop_batch_func_name,
       const char *prefetch_batch_func_name,
-      bool is_ordered) {
+      bool is_ordered,
+      bool is_repeated) {
     driver->ExecForLoop(
+        exec_for_loop_id,
         iteration_space_id,
         parallel_scheme,
         space_partitioned_dist_array_ids,
@@ -182,7 +194,8 @@ extern "C" {
         num_accumulator_var_syms,
         loop_batch_func_name,
         prefetch_batch_func_name,
-        is_ordered);
+        is_ordered,
+        is_repeated);
   }
 
   jl_value_t* orion_get_accumulator_value(

@@ -27,6 +27,25 @@ AbstractDistArrayPartition::GetDistArraySymbol() {
 const std::vector<int64_t>&
 AbstractDistArrayPartition::GetDims() const { return dist_array_->GetDims(); }
 
+size_t
+AbstractDistArrayPartition::GetLength() const {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  return keys_.size();
+}
+
+void
+AbstractDistArrayPartition::ComputeKeyDiffs(const std::vector<int64_t> &target_keys,
+                                            std::vector<int64_t> *diff_keys) const {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  diff_keys->clear();
+  auto temp_keys = keys_;
+  std::sort(temp_keys.begin(), temp_keys.end());
+  for (auto target_key : target_keys) {
+    bool found = std::binary_search(temp_keys.begin(), temp_keys.end(), target_key);
+    if (!found) diff_keys->emplace_back(target_key);
+  }
+}
+
 void
 AbstractDistArrayPartition::ParseText(Blob *max_key,
                                       size_t line_number_start) {
@@ -174,7 +193,9 @@ AbstractDistArrayPartition::ParseText(Blob *max_key,
     default:
       LOG(FATAL) << "shouldn't happend";
   }
-  char_buff_.clear();
+  std::vector<char> empty_buff;
+  char_buff_.swap(empty_buff);
+  ShrinkValueVecToFit();
   JL_GC_POP();
 }
 
@@ -278,7 +299,7 @@ AbstractDistArrayPartition::LoadFromHDFS(
   size_t read_offset = partition_id * partition_size;
 
   if (read_offset >= file_size) return false;
-  size_t read_size = std::min(read_offset + partition_size * 2,
+  size_t read_size = std::min(partition_size * 2,
                               file_size - read_offset);
 
   std::vector<char> temp_char_buff(read_size + 1);
@@ -329,7 +350,7 @@ AbstractDistArrayPartition::LoadFromPosixFS(
   size_t read_offset = partition_id * partition_size;
 
   if (read_offset >= file_size) return false;
-  size_t read_size = std::min(read_offset + partition_size * 2,
+  size_t read_size = std::min(partition_size * 2,
                               file_size - read_offset);
   fseek(data_file, read_offset, SEEK_SET);
   std::vector<char> temp_char_buff(read_size + 1);
@@ -469,12 +490,15 @@ void
 AbstractDistArrayPartition::ComputeKeysFromBuffer(
     const std::vector<int64_t> &dims) {
   size_t num_dims = dims.size();
-  keys_.clear();
+  keys_.resize(key_buff_.size() / num_dims);
   for (int i = 0; i < key_buff_.size(); i += num_dims) {
     int64_t key_i = key::array_to_int64(dims, key_buff_.data() + i);
-    keys_.push_back(key_i);
+    keys_[i / num_dims] = key_i;
   }
-  key_buff_.clear();
+  {
+    std::vector<int64_t> empty_buff;
+    key_buff_.swap(empty_buff);
+  }
 }
 
 void
@@ -524,7 +548,9 @@ AbstractDistArrayPartition::ComputePrefetchIndices(
     const std::unordered_map<int32_t, DistArray*> &global_indexed_dist_arrays,
     const std::vector<jl_value_t*> &global_read_only_var_vals,
     const std::vector<std::string> &accumulator_var_syms,
-    PointQueryKeyDistArrayMap *point_key_vec_map) {
+    PointQueryKeyDistArrayMap *point_key_vec_map,
+    size_t offset,
+    size_t num_elements) {
   LOG(INFO) << __func__
             << " " << prefetch_batch_func_name
             << " num_dist_arrays_to_prefetch = "
@@ -532,7 +558,7 @@ AbstractDistArrayPartition::ComputePrefetchIndices(
 
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   size_t num_args = global_read_only_var_vals.size()
-                    + accumulator_var_syms.size() + 5;
+                    + accumulator_var_syms.size() + 7;
   jl_value_t **jl_values;
   JL_GC_PUSHARGS(jl_values, num_args + 5);
 
@@ -541,6 +567,8 @@ AbstractDistArrayPartition::ComputePrefetchIndices(
   jl_value_t* &dims_vec_jl = jl_values[2];
   jl_value_t* &ids_array_jl = jl_values[3];
   jl_value_t* &global_indexed_dist_array_dims_vec_jl = jl_values[4];
+  jl_value_t* &offset_jl = jl_values[5];
+  jl_value_t* &num_elements_jl = jl_values[6];
 
   jl_value_t* &global_indexed_dist_array_dims_jl = jl_values[num_args];
   jl_value_t* &keys_array_type_jl = jl_values[num_args + 1];
@@ -548,7 +576,9 @@ AbstractDistArrayPartition::ComputePrefetchIndices(
   jl_value_t* &dims_array_type_jl = jl_values[num_args + 3];
   jl_value_t* &ret_jl = jl_values[num_args + 4];
 
-  size_t args_index = 5;
+  offset_jl = jl_box_uint64(offset);
+  num_elements_jl = jl_box_uint64(num_elements);
+  size_t args_index = 7;
   for (size_t i = 0; i < global_read_only_var_vals.size(); i++, args_index++) {
     jl_values[args_index] = global_read_only_var_vals[i];
   }
@@ -625,7 +655,9 @@ AbstractDistArrayPartition::Execute(
     const std::vector<jl_value_t*> &accessed_dist_arrays,
     const std::vector<jl_value_t*> &accessed_dist_array_buffers,
     const std::vector<jl_value_t*> &global_read_only_var_vals,
-    const std::vector<std::string> &accumulator_var_syms) {
+    const std::vector<std::string> &accumulator_var_syms,
+    size_t offset,
+    size_t num_elements) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   LOG(INFO) << __func__
             << " dist_array_id = " << dist_array_->kId
@@ -634,18 +666,22 @@ AbstractDistArrayPartition::Execute(
 
   size_t num_args = accessed_dist_arrays.size() + accessed_dist_array_buffers.size()
                     + global_read_only_var_vals.size()
-                    + accumulator_var_syms.size() + 3;
+                    + accumulator_var_syms.size() + 5;
   jl_value_t **jl_values;
   JL_GC_PUSHARGS(jl_values, num_args + 3);
 
   jl_value_t *&keys_vec_jl = jl_values[0],
            *&values_vec_jl = jl_values[1],
              *&dims_vec_jl = jl_values[2],
+              *&offset_jl = jl_values[3],
+         *&num_elements_jl = jl_values[4],
       *&dims_array_type_jl = jl_values[num_args],
       *&keys_array_type_jl = jl_values[num_args + 1],
       *&accumulator_val_jl = jl_values[num_args + 2];
-  size_t args_index = 3;
+  offset_jl = jl_box_uint64(offset);
+  num_elements_jl = jl_box_uint64(num_elements);
 
+  size_t args_index = 5;
   for (size_t i = 0; i < accessed_dist_arrays.size(); i++, args_index++) {
     jl_values[args_index] = JuliaEvaluator::GetDistArrayAccessor(accessed_dist_arrays[i]);
   }

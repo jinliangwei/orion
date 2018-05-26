@@ -1,11 +1,19 @@
 #include <orion/bosen/abstract_exec_for_loop.hpp>
 #include <orion/bosen/julia_evaluator.hpp>
 #include <orion/bosen/julia_module.hpp>
+#include <orion/bosen/util.hpp>
 #include <string.h>
 #include <vector>
 #include <memory>
+
 namespace orion {
 namespace bosen {
+
+// DistArray Prefetch
+// 1) if a DistArray is written to, it is prefetch at the beginning of each
+// partitoin to ensure dependence is preserved;
+// 2) if a DistArray has one or multiple DistArrayBuffers applied to it, it is prefetch
+// when each DistArrayBuffer is applied
 
 AbstractExecForLoop::AbstractExecForLoop(
     int32_t executor_id,
@@ -31,17 +39,27 @@ AbstractExecForLoop::AbstractExecForLoop(
     const char* loop_batch_func_name,
     const char *prefetch_batch_func_name,
     std::unordered_map<int32_t, DistArray> *dist_arrays,
-    std::unordered_map<int32_t, DistArray> *dist_array_buffers):
+    std::unordered_map<int32_t, DistArray> *dist_array_buffers,
+    const std::unordered_map<int32_t, DistArrayBufferInfo> &dist_array_buffer_info_map,
+    bool is_repeated):
     prefetch_status_(strlen(prefetch_batch_func_name) == 0 ? PrefetchStatus::kSkipPrefetch : PrefetchStatus::kNotPrefetched),
     kExecutorId(executor_id),
     kNumExecutors(num_executors),
     kNumServers(num_servers),
     kLoopBatchFuncName(loop_batch_func_name),
-    kPrefetchBatchFuncName(prefetch_batch_func_name) {
+    kPrefetchBatchFuncName(prefetch_batch_func_name),
+    kDistArrayBufferInfoMap(dist_array_buffer_info_map),
+    kIsRepeated(is_repeated) {
   LOG(INFO) << "strlen(prefetch_batch_func_name) = " << strlen(prefetch_batch_func_name);
   auto iter = dist_arrays->find(iteration_space_id);
   CHECK(iter != dist_arrays->end());
   iteration_space_ = &(iter->second);
+
+  std::set<int32_t> accessed_dist_array_id_set;
+  for (size_t i = 0; i < num_accessed_dist_arrays; i++) {
+    int32_t dist_array_id = accessed_dist_array_ids[i];
+    accessed_dist_array_id_set.emplace(dist_array_id);
+  }
 
   for (size_t i = 0; i < num_space_partitioned_dist_arrays; i++) {
     int32_t id = space_partitioned_dist_array_ids[i];
@@ -63,6 +81,10 @@ AbstractExecForLoop::AbstractExecForLoop(
     CHECK(iter != dist_arrays->end());
     auto *dist_array_ptr = &(iter->second);
     global_indexed_dist_arrays_.emplace(std::make_pair(id, dist_array_ptr));
+    if (accessed_dist_array_id_set.count(id) == 1) {
+      accessed_global_indexed_dist_arrays_.emplace(std::make_pair(id, dist_array_ptr));
+      dist_array_cache_buffer_to_create_accessor_.emplace(std::make_pair(id, true));
+    }
   }
 
   for (size_t i = 0; i < num_dist_array_buffers; i++) {
@@ -72,6 +94,8 @@ AbstractExecForLoop::AbstractExecForLoop(
     auto *dist_array_buffer = &(iter->second);
     dist_array_buffers_.emplace(dist_array_buffer_id, dist_array_buffer);
     accessed_dist_array_buffer_syms_.emplace_back(dist_array_buffer->GetMeta().GetSymbol());
+    dist_array_cache_buffer_to_create_accessor_.emplace(
+        std::make_pair(dist_array_buffer_id, true));
   }
 
   for (size_t i = 0; i < num_written_dist_array_ids; i++) {
@@ -87,8 +111,9 @@ AbstractExecForLoop::AbstractExecForLoop(
     accessed_dist_array_syms_.emplace_back(dist_array_ptr->GetMeta().GetSymbol());
   }
 
+  global_read_only_var_vals_.resize(num_global_read_only_var_vals);
   for (size_t i = 0; i < num_global_read_only_var_vals; i++) {
-    global_read_only_var_vals_.emplace_back(*global_read_only_var_vals[i]);
+    global_read_only_var_vals_[i] = *global_read_only_var_vals[i];
   }
 
   for (size_t i = 0; i < num_accumulator_var_syms; i++) {
@@ -99,24 +124,15 @@ AbstractExecForLoop::AbstractExecForLoop(
 AbstractExecForLoop::~AbstractExecForLoop() { }
 
 void
-AbstractExecForLoop::Init() {
-  jl_value_t *num_global_read_only_var_vals_jl = nullptr;
-  jl_value_t *index_jl = nullptr;
-  jl_value_t *serialized_value_array = nullptr;
-  jl_value_t *serialized_value_array_type = nullptr;
-
-  JL_GC_PUSH4(&num_global_read_only_var_vals_jl,
-              &index_jl,
-              &serialized_value_array,
-              &serialized_value_array_type);
-
-  for (auto global_indexed_dist_array_pair : global_indexed_dist_arrays_) {
-    int32_t id = global_indexed_dist_array_pair.first;
-    auto* dist_array_ptr = global_indexed_dist_array_pair.second;
-    dist_array_cache_.emplace(id,
-                              std::unique_ptr<AbstractDistArrayPartition>(dist_array_ptr->CreatePartition()));
+AbstractExecForLoop::ResetGlobalReadOnlyVarVals(const std::string * const *global_read_only_var_vals,
+                                                size_t num_global_read_only_var_vals) {
+  for (size_t i = 0; i < num_global_read_only_var_vals; i++) {
+    global_read_only_var_vals_[i] = *global_read_only_var_vals[i];
   }
+}
 
+void
+AbstractExecForLoop::InitOnCreation() {
   accessed_dist_arrays_.resize(accessed_dist_array_syms_.size());
   jl_value_t *dist_array = nullptr;
   for (size_t i = 0; i < accessed_dist_array_syms_.size(); i++) {
@@ -130,6 +146,29 @@ AbstractExecForLoop::Init() {
     JuliaEvaluator::GetVarJlValue(accessed_dist_array_buffer_syms_[i], &dist_array_buffer);
     accessed_dist_array_buffers_[i] = dist_array_buffer;
   }
+  InitExecInterval();
+  InitEachExecution(true);
+}
+
+void
+AbstractExecForLoop::InitEachExecution(bool is_first_time) {
+  LOG(INFO) << __func__ << " is_first_time = " << is_first_time;
+  for (auto global_indexed_dist_array_pair : accessed_global_indexed_dist_arrays_) {
+    int32_t id = global_indexed_dist_array_pair.first;
+    auto* dist_array_ptr = global_indexed_dist_array_pair.second;
+    dist_array_cache_.emplace(id,
+                              std::unique_ptr<AbstractDistArrayPartition>(dist_array_ptr->CreatePartition()));
+  }
+
+  jl_value_t *num_global_read_only_var_vals_jl = nullptr;
+  jl_value_t *index_jl = nullptr;
+  jl_value_t *serialized_value_array = nullptr;
+  jl_value_t *serialized_value_array_type = nullptr;
+
+  JL_GC_PUSH4(&num_global_read_only_var_vals_jl,
+              &index_jl,
+              &serialized_value_array,
+              &serialized_value_array_type);
 
   size_t num_global_read_only_var_vals = global_read_only_var_vals_.size();
   global_read_only_var_jl_vals_.resize(num_global_read_only_var_vals);
@@ -162,6 +201,18 @@ AbstractExecForLoop::Init() {
   }
   JuliaEvaluator::AbortIfException();
   JL_GC_POP();
+
+  for (auto &to_create_accessor_pair : dist_array_cache_buffer_to_create_accessor_) {
+    to_create_accessor_pair.second = true;
+  }
+  server_prefetch_info_list_iter_ = server_prefetch_info_list_.begin();
+  is_first_time_ = is_first_time;
+  num_elements_to_exec_ = num_elements_per_exec_;
+  skipped_time_partitioned_dist_array_id_map_.clear();
+  prefetch_status_ = SkipPrefetch() ? PrefetchStatus::kSkipPrefetch :
+                     PrefetchStatus::kNotPrefetched;
+  InitClocks();
+  ComputePartitionIdsAndFindPartitionToExecute();
 }
 
 void
@@ -173,6 +224,92 @@ AbstractExecForLoop::Clear() {
   jl_call0(clear_func);
   dist_array_cache_.clear();
   JuliaEvaluator::AbortIfException();
+}
+
+void
+AbstractExecForLoop::InitExecInterval() {
+  size_t num_elements_per_exec = 0;
+  std::set<int32_t> global_indexed_dist_array_ids_with_buffer_applied;
+  for (auto &dist_array_buffer_pair : dist_array_buffers_) {
+    int32_t dist_array_buffer_id = dist_array_buffer_pair.first;
+    auto buffer_info_iter = kDistArrayBufferInfoMap.find(dist_array_buffer_id);
+    if (buffer_info_iter == kDistArrayBufferInfoMap.end()) continue;
+    const auto &buffer_info = buffer_info_iter->second;
+    auto delay_mode = buffer_info.kDelayMode;
+    auto max_delay = buffer_info.kMaxDelay;
+    if (delay_mode == DistArrayBufferDelayMode::kMaxDelay) {
+      if (num_elements_per_exec == 0) {
+        num_elements_per_exec = max_delay;
+      } else {
+        num_elements_per_exec = Gcd(max_delay, num_elements_per_exec);
+      }
+
+    }
+    dist_array_buffer_delay_info_.emplace(std::make_pair(dist_array_buffer_id,
+                                                         DistArrayBufferDelayInfo(max_delay,
+                                                                                  delay_mode)));
+    int32_t dist_array_id = buffer_info.kDistArrayId;
+    global_indexed_dist_array_ids_with_buffer_applied.emplace(dist_array_id);
+    for (auto helper_dist_array_id : buffer_info.kHelperDistArrayIds) {
+      global_indexed_dist_array_ids_with_buffer_applied.emplace(helper_dist_array_id);
+    }
+
+    for (auto helper_dist_array_buffer_id : buffer_info.kHelperDistArrayBufferIds) {
+      dist_array_buffer_delay_info_.emplace(std::make_pair(helper_dist_array_buffer_id,
+                                                           DistArrayBufferDelayInfo(max_delay,
+                                                                                    delay_mode)));
+    }
+  }
+
+  for (auto &dist_array_pair : global_indexed_dist_arrays_) {
+    int32_t dist_array_id = dist_array_pair.first;
+    if ((global_indexed_dist_array_ids_with_buffer_applied.count(dist_array_id) == 0) &&
+        (written_dist_array_ids_.count(dist_array_id) == 0)) {
+      read_only_global_indexed_dist_array_ids_.emplace(dist_array_id);
+    }
+  }
+
+  num_elements_per_exec_ = num_elements_per_exec;
+  num_elements_to_exec_ = num_elements_per_exec;
+}
+
+AbstractExecForLoop::RunnableStatus
+AbstractExecForLoop::GetRunnableStatus() {
+  if (skipped_ ||
+      (curr_partition_num_elements_executed_ >= curr_partition_length_)) {
+    AdvanceClock();
+    ComputePartitionIdsAndFindPartitionToExecute();
+  }
+
+  if (IsCompleted())
+    return AbstractExecForLoop::RunnableStatus::kCompleted;
+
+  if (SkipTimePartition())
+    return AbstractExecForLoop::RunnableStatus::kSkip;
+
+  int32_t time_partition_id = GetCurrTimePartitionId();
+  if (curr_partition_ == nullptr ||
+      curr_partition_->GetLength() == 0) {
+    if (!HasRecvedAllTimePartitionedDistArrays(time_partition_id))
+      return AbstractExecForLoop::RunnableStatus::kAwaitPredecessor;
+    return AbstractExecForLoop::RunnableStatus::kSkip;
+  }
+
+  if (!accessed_global_indexed_dist_arrays_.empty()) {
+    if (AwaitPredecessorForGlobalIndexedDistArrays()) {
+      return AbstractExecForLoop::RunnableStatus::kAwaitPredecessor;
+    }
+    if (!SkipPrefetch()) {
+      if (!HasSentAllPrefetchRequests())
+        return AbstractExecForLoop::RunnableStatus::kPrefetchGlobalIndexedDistArrays;
+      if (!HasRecvedAllPrefetches())
+        return AbstractExecForLoop::RunnableStatus::kAwaitGlobalIndexedDistArrays;
+    }
+  }
+
+  if (!HasRecvedAllTimePartitionedDistArrays(time_partition_id))
+      return AbstractExecForLoop::RunnableStatus::kAwaitPredecessor;
+  return AbstractExecForLoop::RunnableStatus::kRunnable;
 }
 
 void
@@ -223,48 +360,154 @@ AbstractExecForLoop::HasRecvedAllTimePartitionedDistArrays(
 
 void
 AbstractExecForLoop::ComputePrefetchIndices() {
-  std::vector<int32_t> dist_array_ids_vec;
+  if (server_prefetch_info_list_iter_
+      != server_prefetch_info_list_.end()) {
+    LOG(INFO) << __func__ << " reuse prefetch keys";
+    server_prefetch_key_map_ptr_ = &(server_prefetch_info_list_iter_->kKeyMap);
+    const auto& re_prefetch_dist_array_ids = server_prefetch_info_list_iter_->kRePrefetchDistArrayIds;
+    server_prefetch_info_list_iter_++;
+    for (auto dist_array_id : re_prefetch_dist_array_ids) {
+      auto& to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_id);
+      CHECK(!to_create_accessor);
+      to_create_accessor = true;
+      auto *cache_partition = dist_array_cache_.at(dist_array_id).get();
+      cache_partition->ClearCacheAccessor();
+    }
+  } else {
+    CHECK(is_first_time_);
+    std::vector<int32_t> dist_array_ids_vec;
+    for (const auto &dist_array_pair : accessed_global_indexed_dist_arrays_) {
+      dist_array_ids_vec.push_back(dist_array_pair.first);
+    }
 
-  for (const auto &dist_array_pair : global_indexed_dist_arrays_) {
-    dist_array_ids_vec.push_back(dist_array_pair.first);
+    if (num_elements_per_exec_ == 0) {
+      curr_partition_->ComputePrefetchIndices(
+          kPrefetchBatchFuncName,
+          dist_array_ids_vec,
+          accessed_global_indexed_dist_arrays_,
+          global_read_only_var_jl_vals_,
+          accumulator_var_syms_,
+          &point_prefetch_dist_array_map_,
+          0,
+          curr_partition_length_);
+    } else {
+      size_t num_elements_left_in_curr_partition
+          = curr_partition_length_ - curr_partition_num_elements_executed_;
+      size_t num_elements_to_exec
+          = std::min(num_elements_to_exec_, num_elements_left_in_curr_partition);
+      curr_partition_->ComputePrefetchIndices(
+          kPrefetchBatchFuncName,
+          dist_array_ids_vec,
+          accessed_global_indexed_dist_arrays_,
+          global_read_only_var_jl_vals_,
+          accumulator_var_syms_,
+          &point_prefetch_dist_array_map_,
+          curr_partition_num_elements_executed_,
+          num_elements_to_exec);
+    }
+    std::vector<int64_t> diff_keys;
+    std::vector<int32_t> re_prefetch_dist_array_ids;
+    for (auto &to_create_accessor_pair : dist_array_cache_buffer_to_create_accessor_) {
+      if (to_create_accessor_pair.second) continue;
+      auto dist_array_id = to_create_accessor_pair.first;
+      auto iter = point_prefetch_dist_array_map_.find(dist_array_id);
+      if (iter == point_prefetch_dist_array_map_.end()) continue;
+
+      auto cache_iter = dist_array_cache_.find(dist_array_id);
+      if (cache_iter == dist_array_cache_.end()) continue;
+
+      auto *cache_partition = cache_iter->second.get();
+      cache_partition->ClearCacheAccessor();
+      cache_partition->ComputeKeyDiffs(iter->second, &diff_keys);
+      if (diff_keys.empty()) {
+        point_prefetch_dist_array_map_.erase(iter);
+        cache_partition->CreateCacheAccessor();
+      } else {
+        iter->second = diff_keys;
+        re_prefetch_dist_array_ids.emplace_back(dist_array_id);
+        to_create_accessor_pair.second = true;
+      }
+    }
+
+    for (const auto &dist_array_key_pair : point_prefetch_dist_array_map_) {
+      int32_t dist_array_id = dist_array_key_pair.first;
+      const auto &point_key_vec = dist_array_key_pair.second;
+      for (auto key : point_key_vec) {
+        int32_t server_id = key % kNumServers;
+        server_prefetch_key_map_[server_id][dist_array_id].push_back(key);
+      }
+    }
+    point_prefetch_dist_array_map_.clear();
+    if (kIsRepeated) {
+      server_prefetch_info_list_.emplace_back(server_prefetch_key_map_,
+                                              std::move(re_prefetch_dist_array_ids));
+    }
+    server_prefetch_key_map_ptr_ = &server_prefetch_key_map_;
   }
-
-  curr_partition_->ComputePrefetchIndices(
-      kPrefetchBatchFuncName,
-      dist_array_ids_vec,
-      global_indexed_dist_arrays_,
-      global_read_only_var_jl_vals_,
-      accumulator_var_syms_,
-      &point_prefetch_dist_array_map_);
 }
 
 void
 AbstractExecForLoop::ExecuteForLoopPartition() {
-  PrepareToExecCurrPartition();
-  PrepareDistArrayCachePartitions();
-  curr_partition_->Execute(kLoopBatchFuncName,
-                           accessed_dist_arrays_,
-                           accessed_dist_array_buffers_,
-                           global_read_only_var_jl_vals_,
-                           accumulator_var_syms_);
-  ClearCurrPartition();
+  if (curr_partition_num_elements_executed_ == 0) {
+    PrepareSpaceDistArrayPartitions();
+    PrepareTimeDistArrayPartitions();
+  }
+  PrepareDistArrayCacheBufferPartitions();
+  size_t num_elements_executed = 0;
+  bool end_of_partition = false;
+  if (num_elements_per_exec_ == 0) {
+    curr_partition_->Execute(kLoopBatchFuncName,
+                             accessed_dist_arrays_,
+                             accessed_dist_array_buffers_,
+                             global_read_only_var_jl_vals_,
+                             accumulator_var_syms_,
+                             0,
+                             curr_partition_length_);
+    num_elements_executed = curr_partition_length_;
+    end_of_partition = true;
+    curr_partition_num_elements_executed_ += num_elements_executed;
+  } else {
+    size_t num_elements_left_in_curr_partition
+        = curr_partition_length_ - curr_partition_num_elements_executed_;
+    size_t num_elements_to_exec_this_partition
+        = std::min(num_elements_to_exec_, num_elements_left_in_curr_partition);
+    curr_partition_->Execute(kLoopBatchFuncName,
+                             accessed_dist_arrays_,
+                             accessed_dist_array_buffers_,
+                             global_read_only_var_jl_vals_,
+                             accumulator_var_syms_,
+                             curr_partition_num_elements_executed_,
+                             num_elements_to_exec_this_partition);
+    num_elements_executed = num_elements_to_exec_this_partition;
+    num_elements_to_exec_ -= num_elements_executed;
+    if (num_elements_to_exec_ == 0)
+      num_elements_to_exec_ = num_elements_per_exec_;
+    curr_partition_num_elements_executed_ += num_elements_executed;
+    end_of_partition = (curr_partition_num_elements_executed_ == curr_partition_length_);
+  }
+  UpdateDistArrayBufferDelayInfo(num_elements_executed, end_of_partition,
+                                 LastPartition());
+  if (end_of_partition) {
+    ClearSpaceDistArrayPartitions();
+    ClearTimeDistArrayPartitions();
+  }
+  ClearDistArrayCacheBufferPartitions();
+}
+
+void
+AbstractExecForLoop::Skip() {
+  skipped_ = true;
+  if (LastPartition())
+    UpdateDistArrayBufferDelayInfoWhenSkipLastPartition();
+  ClearTimeDistArrayPartitions();
+  if (LastPartition())
+    ClearDistArrayCacheBufferPartitions();
 }
 
 void
 AbstractExecForLoop::SerializeAndClearPrefetchIds(ExecutorSendBufferMap *send_buffer_map) {
-  std::unordered_map<int32_t, PointQueryKeyDistArrayMap> server_point_key_map;
-
-  for (const auto &dist_array_key_pair : point_prefetch_dist_array_map_) {
-    int32_t dist_array_id = dist_array_key_pair.first;
-    const auto &point_key_vec = dist_array_key_pair.second;
-    for (auto key : point_key_vec) {
-      int32_t server_id = key % kNumServers;
-      server_point_key_map[server_id][dist_array_id].push_back(key);
-    }
-  }
-
-  num_pending_prefetch_requests_ = server_point_key_map.size();
-  for (const auto &server_point_key_pair : server_point_key_map) {
+  num_pending_prefetch_requests_ = server_prefetch_key_map_ptr_->size();
+  for (const auto &server_point_key_pair : *server_prefetch_key_map_ptr_) {
     int32_t server_id = server_point_key_pair.first;
     const auto &dist_array_point_key_map = server_point_key_pair.second;
     size_t server_num_bytes = sizeof(size_t); // num_dist_arrays
@@ -292,7 +535,7 @@ AbstractExecForLoop::SerializeAndClearPrefetchIds(ExecutorSendBufferMap *send_bu
       cursor += sizeof(int64_t) * point_key_vec.size();
     }
   }
-  point_prefetch_dist_array_map_.clear();
+  server_prefetch_key_map_.clear();
 }
 
 void
@@ -309,6 +552,9 @@ AbstractExecForLoop::SerializeAndClearDistArrayBuffers() {
   std::unordered_map<int32_t, uint8_t*> server_cursor_map;
   for (auto &dist_array_pair : dist_array_buffers_) {
     int32_t dist_array_buffer_id = dist_array_pair.first;
+    auto to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_buffer_id);
+    if (!to_create_accessor) continue;
+
     auto *buffer_partition = dist_array_pair.second->GetBufferPartition();
     auto iter_pair = dist_array_buffer_data_buffer_map.emplace(dist_array_buffer_id, ExecutorDataBufferMap());
     auto iter = iter_pair.first;
@@ -362,6 +608,9 @@ AbstractExecForLoop::SerializeAndClearDistArrayCaches() {
   std::unordered_map<int32_t, uint8_t*> server_cursor_map;
   for (auto &dist_array_pair : dist_array_cache_) {
     auto dist_array_id = dist_array_pair.first;
+    auto to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(
+        dist_array_id);
+    if (!to_create_accessor) continue;
     auto *cache_partition = dist_array_pair.second.get();
     if (written_dist_array_ids_.count(dist_array_id) == 0) {
       cache_partition->Clear();
@@ -451,6 +700,9 @@ AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
     dist_array->DeletePartition(time_partition_id_to_send);
   }
   skipped_time_partitioned_dist_array_id_map_.erase(time_partition_id_to_send);
+  LOG(INFO) << __func__
+            << " erased skipped_time_partitioned_dist_array_id_map, time_partition_id_to_send = "
+            << time_partition_id_to_send;
 
   if (data_buffers.empty() && skipped_dist_array_id_vec.empty()) return;
   size_t total_size = sizeof(size_t) + sizeof(size_t) + sizeof(int32_t);
@@ -509,6 +761,8 @@ AbstractExecForLoop::DeserializePipelinedTimePartitions(const uint8_t* bytes) {
   }
 
   if (num_skipped_dist_arrays > 0) {
+    LOG(INFO) << "skipped_time_partitioned_dist_array_id_map emplace, time_partition_id = "
+              << time_partition_id;
     auto skipped_set_pair = skipped_time_partitioned_dist_array_id_map_.emplace(
         time_partition_id, std::set<int32_t>());
     CHECK(skipped_set_pair.second);
@@ -549,8 +803,6 @@ void
 AbstractExecForLoop::CachePrefetchDistArrayValues(
     PeerRecvGlobalIndexedDistArrayDataBuffer **buff_vec,
     size_t num_buffs) {
-  LOG(INFO) << __func__
-            << " num_buffs = " << num_buffs;
   CHECK(num_pending_prefetch_requests_ > 0);
   for (size_t i = 0; i < num_buffs; i++) {
     auto *buff = buff_vec[i];
@@ -577,14 +829,246 @@ AbstractExecForLoop::CachePrefetchDistArrayValues(
 }
 
 void
-AbstractExecForLoop::PrepareDistArrayCachePartitions() {
-  if (dist_array_cache_prepared_) return;
-  for (auto& dist_array_pair : global_indexed_dist_arrays_) {
+AbstractExecForLoop::InitPartitionToExec() {
+  skipped_ = false;
+  curr_partition_num_elements_executed_ = 0;
+  if (curr_partition_ != nullptr) {
+    curr_partition_length_ = curr_partition_->GetLength();
+  } else {
+    curr_partition_length_ = 0;
+  }
+}
+
+void
+AbstractExecForLoop::UpdateDistArrayBufferDelayInfo(size_t num_elements_executed,
+                                                    bool end_of_partition,
+                                                    bool last_partition) {
+  for (auto &delay_info_pair : dist_array_buffer_delay_info_) {
+    auto dist_array_buffer_id = delay_info_pair.first;
+    auto &delay_info = delay_info_pair.second;
+    if (delay_info.kDelayMode == DistArrayBufferDelayMode::kMaxDelay) {
+      delay_info.delay += num_elements_executed;
+    }
+
+    if (
+            (delay_info.kDelayMode == DistArrayBufferDelayMode::kMaxDelay &&
+             (delay_info.delay >= delay_info.kMaxDelay ||
+              (end_of_partition && last_partition)
+              )
+         ) ||
+            (delay_info.kDelayMode == DistArrayBufferDelayMode::kDefault
+             && end_of_partition)
+        ) {
+      auto& to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_buffer_id);
+      to_create_accessor = true;
+      auto& dist_array_buffer_info = kDistArrayBufferInfoMap.at(dist_array_buffer_id);
+      auto dist_array_id = dist_array_buffer_info.kDistArrayId;
+      auto dist_array_to_create_accessor_iter = dist_array_cache_buffer_to_create_accessor_.find(dist_array_id);
+      if (dist_array_to_create_accessor_iter != dist_array_cache_buffer_to_create_accessor_.end()) {
+        auto& dist_array_to_create_accessor = dist_array_to_create_accessor_iter->second;
+        dist_array_to_create_accessor = true;
+      }
+      for (auto curr_id : dist_array_buffer_info.kHelperDistArrayIds) {
+        auto curr_to_create_accessor_iter = dist_array_cache_buffer_to_create_accessor_.find(curr_id);
+        if (curr_to_create_accessor_iter == dist_array_cache_buffer_to_create_accessor_.end()) continue;
+        auto& curr_to_create_accessor = curr_to_create_accessor_iter->second;
+        curr_to_create_accessor = true;
+      }
+      for (auto curr_id : dist_array_buffer_info.kHelperDistArrayBufferIds) {
+        auto& curr_to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(curr_id);
+        curr_to_create_accessor = true;
+      }
+    }
+  }
+
+  if (end_of_partition) {
+    for (auto& to_create_accessor_pair : dist_array_cache_buffer_to_create_accessor_) {
+      auto dist_array_id = to_create_accessor_pair.first;
+      if (written_dist_array_ids_.count(dist_array_id) == 1) {
+        to_create_accessor_pair.second = true;
+      }
+    }
+
+    for (auto& dist_array_id : read_only_global_indexed_dist_array_ids_) {
+      auto& to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_id);
+      to_create_accessor = true;
+    }
+  }
+
+  for (auto &delay_info_pair : dist_array_buffer_delay_info_) {
+    auto dist_array_buffer_id = delay_info_pair.first;
+    auto& dist_array_to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_buffer_id);
+    if (dist_array_to_create_accessor) {
+      delay_info_pair.second.delay = 0;
+    }
+  }
+}
+
+void
+AbstractExecForLoop::UpdateDistArrayBufferDelayInfoWhenSkipLastPartition() {
+  for (auto& to_create_accessor_pair : dist_array_cache_buffer_to_create_accessor_) {
+    auto dist_array_id = to_create_accessor_pair.first;
+    if (written_dist_array_ids_.count(dist_array_id) == 1) {
+      to_create_accessor_pair.second = false;
+    }
+  }
+
+  for (auto& dist_array_id : read_only_global_indexed_dist_array_ids_) {
+    auto& to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_id);
+    to_create_accessor = false;
+  }
+
+  for (auto &delay_info_pair : dist_array_buffer_delay_info_) {
+    auto dist_array_buffer_id = delay_info_pair.first;
+    auto &delay_info = delay_info_pair.second;
+    if (delay_info.kDelayMode == DistArrayBufferDelayMode::kMaxDelay) {
+      if (delay_info.delay > 0) {
+        auto& to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_buffer_id);
+        to_create_accessor = true;
+        auto& dist_array_buffer_info = kDistArrayBufferInfoMap.at(dist_array_buffer_id);
+        auto dist_array_id = dist_array_buffer_info.kDistArrayId;
+        auto dist_array_to_create_accessor_iter = dist_array_cache_buffer_to_create_accessor_.find(dist_array_id);
+        if (dist_array_to_create_accessor_iter != dist_array_cache_buffer_to_create_accessor_.end()) {
+          auto& dist_array_to_create_accessor = dist_array_to_create_accessor_iter->second;
+          dist_array_to_create_accessor = true;
+        }
+        for (auto curr_id : dist_array_buffer_info.kHelperDistArrayIds) {
+          auto curr_to_create_accessor_iter = dist_array_cache_buffer_to_create_accessor_.find(curr_id);
+          if (curr_to_create_accessor_iter == dist_array_cache_buffer_to_create_accessor_.end()) continue;
+          auto& curr_to_create_accessor = curr_to_create_accessor_iter->second;
+          curr_to_create_accessor = true;
+        }
+        for (auto curr_id : dist_array_buffer_info.kHelperDistArrayBufferIds) {
+          auto& curr_to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(curr_id);
+          curr_to_create_accessor = true;
+        }
+      } else {
+        auto& to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_buffer_id);
+        to_create_accessor = false;
+        auto& dist_array_buffer_info = kDistArrayBufferInfoMap.at(dist_array_buffer_id);
+        auto dist_array_id = dist_array_buffer_info.kDistArrayId;
+        auto dist_array_to_create_accessor_iter = dist_array_cache_buffer_to_create_accessor_.find(dist_array_id);
+        if (dist_array_to_create_accessor_iter != dist_array_cache_buffer_to_create_accessor_.end()) {
+          auto& dist_array_to_create_accessor = dist_array_to_create_accessor_iter->second;
+          dist_array_to_create_accessor = false;
+        }
+        for (auto curr_id : dist_array_buffer_info.kHelperDistArrayIds) {
+          auto curr_to_create_accessor_iter = dist_array_cache_buffer_to_create_accessor_.find(curr_id);
+          if (curr_to_create_accessor_iter == dist_array_cache_buffer_to_create_accessor_.end()) continue;
+          auto& curr_to_create_accessor = curr_to_create_accessor_iter->second;
+          curr_to_create_accessor = false;
+        }
+        for (auto curr_id : dist_array_buffer_info.kHelperDistArrayBufferIds) {
+          auto& curr_to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(curr_id);
+          curr_to_create_accessor = false;
+        }
+      }
+    } else {
+      auto& to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_buffer_id);
+      to_create_accessor = false;
+    }
+  }
+
+  for (auto &delay_info_pair : dist_array_buffer_delay_info_) {
+    auto dist_array_buffer_id = delay_info_pair.first;
+    auto& dist_array_to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_buffer_id);
+    if (dist_array_to_create_accessor) {
+      delay_info_pair.second.delay = 0;
+    }
+  }
+}
+
+void
+AbstractExecForLoop::PrepareSpaceDistArrayPartitions() {
+  int32_t space_partition_id = GetCurrSpacePartitionId();
+  for (auto& dist_array_pair : space_partitioned_dist_arrays_) {
+    auto* dist_array = dist_array_pair.second;
+    auto *access_partition = dist_array->GetLocalPartition(space_partition_id);
+    access_partition->CreateAccessor();
+  }
+}
+
+void
+AbstractExecForLoop::PrepareTimeDistArrayPartitions() {
+  if (time_partitions_cleared_) {
+    int32_t time_partition_id = GetCurrTimePartitionId();
+    for (auto& dist_array_pair : time_partitioned_dist_arrays_) {
+      auto* dist_array = dist_array_pair.second;
+      auto *access_partition = dist_array->GetLocalPartition(time_partition_id);
+      CHECK(access_partition != nullptr);
+      access_partition->CreateAccessor();
+    }
+    time_partitions_cleared_ = false;
+  }
+}
+
+void
+AbstractExecForLoop::PrepareDistArrayCacheBufferPartitions() {
+  for (auto& dist_array_pair : accessed_global_indexed_dist_arrays_) {
     auto dist_array_id = dist_array_pair.first;
+    auto& to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_id);
+    if (!to_create_accessor) continue;
+    to_create_accessor = false;
+
     auto *cache_partition = dist_array_cache_.at(dist_array_id).get();
     cache_partition->CreateCacheAccessor();
   }
-  dist_array_cache_prepared_ = true;
+  for (auto& buffer_pair : dist_array_buffers_) {
+    auto buffer_id = buffer_pair.first;
+    auto &to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(buffer_id);
+    if (!to_create_accessor) continue;
+    to_create_accessor = false;
+
+    auto* dist_array_buffer = buffer_pair.second;
+    auto *buffer_partition = dist_array_buffer->GetBufferPartition();
+    buffer_partition->CreateBufferAccessor();
+  }
+}
+
+void
+AbstractExecForLoop::ClearSpaceDistArrayPartitions() {
+  int32_t space_partition_id = GetCurrSpacePartitionId();
+  for (auto& dist_array_pair : space_partitioned_dist_arrays_) {
+    auto* dist_array = dist_array_pair.second;
+    auto *access_partition = dist_array->GetLocalPartition(space_partition_id);
+    access_partition->ClearAccessor();
+  }
+}
+
+void
+AbstractExecForLoop::ClearTimeDistArrayPartitions() {
+  if (ToClearTimePartition() && !time_partitions_cleared_) {
+    int32_t time_partition_id = GetCurrTimePartitionId();
+    for (auto& dist_array_pair : time_partitioned_dist_arrays_) {
+      auto* dist_array = dist_array_pair.second;
+      auto *access_partition = dist_array->GetLocalPartition(time_partition_id);
+      access_partition->ClearAccessor();
+    }
+    time_partitions_cleared_ = true;
+  }
+}
+
+void
+AbstractExecForLoop::ClearDistArrayCacheBufferPartitions() {
+  for (auto& buffer_pair : dist_array_buffers_) {
+    auto dist_array_id = buffer_pair.first;
+    auto &to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_id);
+    if (!to_create_accessor) continue;
+    auto* dist_array_buffer = buffer_pair.second;
+    auto *buffer_partition = dist_array_buffer->GetBufferPartition();
+    buffer_partition->ClearBufferAccessor();
+  }
+
+  for (auto& dist_array_pair : accessed_global_indexed_dist_arrays_) {
+    auto dist_array_id = dist_array_pair.first;
+    auto& to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(dist_array_id);
+    if (!to_create_accessor) continue;
+    auto *cache_partition = dist_array_cache_.at(dist_array_id).get();
+    cache_partition->ClearCacheAccessor();
+  }
+
+  prefetch_status_ = SkipPrefetch() ? PrefetchStatus::kSkipPrefetch :
+                     PrefetchStatus::kNotPrefetched;
 }
 
 }

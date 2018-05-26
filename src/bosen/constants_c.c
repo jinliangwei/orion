@@ -3,6 +3,7 @@
 #include <orion/bosen/type.hpp>
 #include <orion/bosen/julia_module.hpp>
 #include <orion/bosen/dist_array_meta.hpp>
+#include <orion/bosen/dist_array_buffer_info.hpp>
 
 extern "C" {
   const int32_t ORION_TYPE_VOID = static_cast<int32_t>(orion::bosen::type::PrimitiveType::kVoid);
@@ -72,5 +73,12 @@ extern "C" {
   = static_cast<int32_t>(orion::bosen::ForLoopParallelScheme::k1D);
   const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_SPACE_TIME
   = static_cast<int32_t>(orion::bosen::ForLoopParallelScheme::kSpaceTime);
+
+  const int32_t ORION_DIST_ARRAY_BUFFER_DELAY_MODE_DEFAULT
+  = static_cast<int32_t>(orion::bosen::DistArrayBufferDelayMode::kDefault);
+  const int32_t ORION_DIST_ARRAY_BUFFER_DELAY_MODE_MAX_DELAY
+  = static_cast<int32_t>(orion::bosen::DistArrayBufferDelayMode::kMaxDelay);
+  const int32_t ORION_DIST_ARRAY_BUFFER_DELAY_MODE_AUTO
+  = static_cast<int32_t>(orion::bosen::DistArrayBufferDelayMode::kAuto);
 
 }

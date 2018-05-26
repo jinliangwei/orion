@@ -24,7 +24,9 @@ DistArrayPartition<void>::~DistArrayPartition() {
 
 void
 DistArrayPartition<void>::CreateAccessor() {
-  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer)
+      << " storage_type = " << static_cast<int>(storage_type_)
+      << " dist_array_id = " << dist_array_->kId;
   jl_value_t *key_begin_jl = nullptr;
   jl_value_t *keys_array_type_jl = nullptr;
   jl_value_t *keys_array_jl = nullptr;
@@ -134,7 +136,9 @@ DistArrayPartition<void>::CreateBufferAccessor() {
 
 void
 DistArrayPartition<void>::ClearCacheAccessor() {
-  CHECK(storage_type_ == DistArrayPartitionStorageType::kAccessor);
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kAccessor)
+      << " dist_array_id = " << dist_array_->kId;
+  LOG(INFO) << __func__ << " dist_array_id = " << dist_array_->kId;
   jl_value_t* tuple_jl = nullptr;
   jl_value_t* keys_array_jl = nullptr;
   jl_value_t* values_array_jl = nullptr;
@@ -238,7 +242,8 @@ DistArrayPartition<void>::BuildSparseIndex() {
     int64_t key = keys_[i];
     sparse_index_[key] = i;
   }
-  keys_.clear();
+  std::vector<int64_t> empty_buff;
+  keys_.swap(empty_buff);
   storage_type_ = DistArrayPartitionStorageType::kSparseIndex;
 }
 
@@ -708,7 +713,8 @@ DistArrayPartition<void>::DeserializeAndOverwrite(
 void
 DistArrayPartition<void>::Clear() {
   CHECK(storage_type_ != DistArrayPartitionStorageType::kAccessor);
-  keys_.clear();
+  std::vector<int64_t> empty_buff;
+  keys_.swap(empty_buff);
   sparse_index_.clear();
   key_start_ = -1;
   JuliaEvaluator::ClearDistArrayPartition(dist_array_, ptr_str_);
@@ -793,6 +799,11 @@ DistArrayPartition<void>::AppendJuliaValueArray(jl_value_t *value) {
   }
   JL_GC_POP();
   sorted_ = false;
+}
+
+void
+DistArrayPartition<void>::ShrinkValueVecToFit() {
+  JuliaEvaluator::ShrinkDistArrayPartitionToFit(dist_array_, ptr_str_);
 }
 
 }

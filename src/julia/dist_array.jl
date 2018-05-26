@@ -107,7 +107,7 @@ end
 
 struct DistArrayInitInfo
     init_type::DistArrayInitType
-    random_init_type::DataType
+    random_init_type
 end
 
 abstract type AbstractDistArray{T, N} <: AbstractArray{T, N}
@@ -630,6 +630,13 @@ function materialize{T, N}(dist_array::DistArray{T, N})
     end
 end
 
+function delete_dist_array(dist_array::DistArray)
+    println("delete dist_array")
+    ccall((:orion_delete_dist_array, lib_path),
+          Void, (Int32,),
+          dist_array.id)
+end
+
 function process_dist_array_map{T, N}(dist_array::DistArray{T, N})::DistArray{T, N}
     @assert dist_array.parent_type == DistArrayParentType_dist_array
     processed_dist_array = copy(dist_array)
@@ -1041,16 +1048,25 @@ function dist_array_delete_partition(dist_array::AbstractDistArray,
     delete!(dist_array.partitions, ptr_str)
 end
 
-function dist_array_clear_partition(dist_array::AbstractDistArray,
-                                    ptr_str::String)
+function dist_array_clear_partition{T, N}(dist_array::AbstractDistArray{T, N},
+                                          ptr_str::String)
     @assert ptr_str in keys(dist_array.partitions)
-    resize!(dist_array.partitions[ptr_str], 0)
+    dist_array.partitions[ptr_str] = Vector{T}()
 end
 
 function dist_array_set_partition{T, N}(dist_array::AbstractDistArray{T, N},
                                         ptr_str::String,
                                         partition::Vector{T})
     dist_array.partitions[ptr_str] = partition
+end
+
+function dist_array_shrink_partition_to_fit{T, N}(dist_array::AbstractDistArray{T, N},
+                                                  ptr_str::String)
+    @assert ptr_str in keys(dist_array.partitions)
+    partition = dist_array.partitions[ptr_str]
+    new_partition = Vector{T}(length(partition))
+    new_partition .= partition
+    dist_array.partitions[ptr_str] = new_partition
 end
 
 struct DistArrayAccessSetRecorder{N} <: AbstractArray{Int32, N}

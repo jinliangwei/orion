@@ -77,12 +77,14 @@ class MasterThread {
     kNone = 0,
       kExit = 1,
       kExecutorConnectToPeers = 2,
-      kForwardDriverMsgToAllExecutors = 3,
-      kForwardDriverMsgToAllExecutorsAndServers = 4,
-      kCreateDistArray = 6,
-      kRespondToDriver = 7,
-      kCreateDistArrayBuffer = 8,
-      kWaitingExecutorResponse = 40
+      kForwardDriverMsgAndNextToAllExecutors = 3,
+      kForwardDriverMsgAndNextToAllExecutorsAndServers = 4,
+      kForwardDriverMsgToAllExecutors = 5,
+      kForwardDriverMsgToAllExecutorsAndServers = 6,
+      kCreateDistArray = 7,
+      kRespondToDriver = 8,
+      kCreateDistArrayBuffer = 9,
+      kWaitingExecutorResponse = 10
   };
 
   const size_t kNumExecutors;
@@ -336,7 +338,7 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           action_ = Action::kWaitingExecutorResponse;
         }
         break;
-      case Action::kForwardDriverMsgToAllExecutorsAndServers:
+      case Action::kForwardDriverMsgAndNextToAllExecutorsAndServers:
         {
           send_buff_.Copy(driver_poll_conn_.conn->recv_buff);
           send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
@@ -348,11 +350,31 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           action_ = Action::kWaitingExecutorResponse;
         }
         break;
-      case Action::kForwardDriverMsgToAllExecutors:
+      case Action::kForwardDriverMsgAndNextToAllExecutors:
         {
           send_buff_.Copy(driver_poll_conn_.conn->recv_buff);
           send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
                                       driver_recv_byte_buff_.GetSize());
+          BroadcastToAllExecutors();
+          send_buff_.clear_to_send();
+          num_expected_executor_acks_ = kNumExecutors;
+          num_recved_executor_acks_ = 0;
+          action_ = Action::kWaitingExecutorResponse;
+        }
+        break;
+      case Action::kForwardDriverMsgToAllExecutorsAndServers:
+        {
+          send_buff_.Copy(driver_poll_conn_.conn->recv_buff);
+          BroadcastToAllExecutorsAndServers();
+          send_buff_.clear_to_send();
+          num_expected_executor_acks_ = kNumExecutors + kNumServers;
+          num_recved_executor_acks_ = 0;
+          action_ = Action::kWaitingExecutorResponse;
+        }
+        break;
+      case Action::kForwardDriverMsgToAllExecutors:
+        {
+          send_buff_.Copy(driver_poll_conn_.conn->recv_buff);
           BroadcastToAllExecutors();
           send_buff_.clear_to_send();
           num_expected_executor_acks_ = kNumExecutors;
@@ -456,7 +478,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         if (received_next_msg) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
+          action_ = Action::kForwardDriverMsgAndNextToAllExecutorsAndServers;
         } else ret = EventHandler<PollConn>::kNoAction;
 
       }
@@ -491,6 +513,20 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
+    case message::DriverMsgType::kDeleteDistArray:
+      {
+        LOG(INFO) << "DeleteDistArray";
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgDeleteDistArray>(recv_buff);
+        int32_t dist_array_id = msg->dist_array_id;
+        dist_array_metas_.erase(dist_array_id);
+        dist_array_buffer_metas_.erase(dist_array_id);
+        executor_in_action_ = -1;
+        ret = EventHandler<PollConn>::kClearOneMsg;
+        LOG(INFO) << " ForwardToAllExecutorsAndServers";
+        action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
+      }
+      break;
     case message::DriverMsgType::kRepartitionDistArray:
       {
         auto *msg = message::DriverMsgHelper::get_msg<
@@ -503,7 +539,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         if (received_next_msg) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
+          action_ = Action::kForwardDriverMsgAndNextToAllExecutorsAndServers;
 
           task::RepartitionDistArray repartition_task;
           std::string task_buff(
@@ -532,7 +568,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         if (received_next_msg) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
+          action_ = Action::kForwardDriverMsgAndNextToAllExecutorsAndServers;
 
           task::UpdateDistArrayIndex update_dist_array_index_task;
           std::string task_buff(
@@ -559,7 +595,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         if (received_next_msg) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
+          action_ = Action::kForwardDriverMsgAndNextToAllExecutorsAndServers;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -576,7 +612,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
           executor_in_action_ = -1;
           InitializeAccumulator();
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
+          action_ = Action::kForwardDriverMsgAndNextToAllExecutorsAndServers;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
@@ -592,7 +628,7 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         if (received_next_msg) {
           executor_in_action_ = -1;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
-          action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
+          action_ = Action::kForwardDriverMsgAndNextToAllExecutorsAndServers;
         } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;

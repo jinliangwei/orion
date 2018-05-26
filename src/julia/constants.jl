@@ -12,6 +12,7 @@ function load_constants()
     load_dist_array_partition_scheme_int32()
     load_dist_array_index_type_int32()
     load_for_loop_parallel_scheme_int32()
+    load_dist_array_buffer_delay_mode_int32()
 end
 
 function load_module_int32()
@@ -110,6 +111,15 @@ function load_for_loop_parallel_scheme_int32()
     global const for_loop_parallel_scheme_1d = unsafe_load(ptr_val)
     ptr_val = cglobal((:ORION_FOR_LOOP_PARALLEL_SCHEME_SPACE_TIME, lib_path), Int32)
     global const for_loop_parallel_scheme_space_time = unsafe_load(ptr_val)
+end
+
+function load_dist_array_buffer_delay_mode_int32()
+    ptr_val = cglobal((:ORION_DIST_ARRAY_BUFFER_DELAY_MODE_DEFAULT, lib_path), Int32)
+    global const dist_array_buffer_delay_mode_default = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_BUFFER_DELAY_MODE_MAX_DELAY, lib_path), Int32)
+    global const dist_array_buffer_delay_mode_max_delay = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_BUFFER_DELAY_MODE_AUTO, lib_path), Int32)
+    global const dist_array_buffer_delay_mode_auto = unsafe_load(ptr_val)
 end
 
 function dist_array_parent_type_to_int32(parent_type::DistArrayParentType)::Int32
@@ -212,7 +222,18 @@ function module_to_int32(m::Symbol)::Int32
     return -1
 end
 
-function data_type_to_int32(ResultType::DataType)::Int32
+function dist_array_buffer_delay_mode_to_int32(delay_mode::DistArrayBufferDelayMode)::Int32
+    if delay_mode == DistArrayBufferDelayMode_default
+        return dist_array_buffer_delay_mode_default
+    elseif delay_mode == DistArrayBufferDelayMode_max_delay
+        return dist_array_buffer_delay_mode_max_delay
+    elseif delay_mode == DistArrayBufferDelayMode_auto
+        return dist_array_buffer_delay_mode_auto
+    end
+    return -1
+end
+
+function data_type_to_int32(ResultType::Any)::Int32
     if ResultType == Void
         return type_void_int32
     elseif ResultType == Int8
@@ -242,7 +263,7 @@ function data_type_to_int32(ResultType::DataType)::Int32
     end
 end
 
-function int32_to_data_type(data_type::Int32)::DataType
+function int32_to_data_type(data_type::Int32)::Any
     if data_type == type_void_int32
         return Void
     elseif data_type == type_int8_int32

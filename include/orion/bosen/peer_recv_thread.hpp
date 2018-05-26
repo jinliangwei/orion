@@ -503,7 +503,6 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         send_buff_.Copy(recv_buff);
         SendToExecutor();
         send_buff_.clear_to_send();
-        send_buff_.reset_sent_sizes();
         ret = EventHandler<PollConn>::kClearOneMsg;
       }
       break;
@@ -524,7 +523,6 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
                                       recv_byte_buff.GetSize());
           SendToExecutor();
           send_buff_.clear_to_send();
-          send_buff_.reset_sent_sizes();
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
         } else {
           ret = EventHandler<PollConn>::kNoAction;
@@ -572,7 +570,6 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
             message::ExecuteMsgExecForLoopDistArrayCacheDataPtr>(&send_buff_, bytes);
           SendToExecutor();
           send_buff_.clear_to_send();
-          send_buff_.reset_sent_sizes();
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
         } else {
           ret = EventHandler<PollConn>::kNoAction;
@@ -596,7 +593,6 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
             message::ExecuteMsgExecForLoopDistArrayBufferDataPtr>(&send_buff_, bytes);
           SendToExecutor();
           send_buff_.clear_to_send();
-          send_buff_.reset_sent_sizes();
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
         } else {
           ret = EventHandler<PollConn>::kNoAction;
@@ -608,7 +604,6 @@ PeerRecvThread::HandleExecuteMsg(PollConn* poll_conn_ptr) {
         send_buff_.Copy(recv_buff);
         SendToExecutor();
         send_buff_.clear_to_send();
-        send_buff_.reset_sent_sizes();
         ret = EventHandler<PollConn>::kClearOneMsg;
       }
       break;
@@ -639,7 +634,6 @@ PeerRecvThread::ServePipelinedTimePartitionsRequest() {
   has_executor_requested_pipeline_time_partitions_ = false;
   SendToExecutor();
   send_buff_.clear_to_send();
-  send_buff_.reset_sent_sizes();
 }
 
 void
@@ -655,7 +649,6 @@ PeerRecvThread::ServeGlobalIndexedDistArrayDataRequest() {
   has_executor_requested_global_indexed_dist_array_data_ = false;
   SendToExecutor();
   send_buff_.clear_to_send();
-  send_buff_.reset_sent_sizes();
 }
 
 void
@@ -678,7 +671,6 @@ PeerRecvThread::ServeExecForLoopPredCompletion() {
   has_executor_requested_pred_completion_ = false;
   SendToExecutor();
   send_buff_.clear_to_send();
-  send_buff_.reset_sent_sizes();
   pred_completed_ = false;
 }
 
@@ -691,6 +683,7 @@ PeerRecvThread::SendToExecutor() {
     while (!sent) {
       sent = executor_->pipe.Send(&send_buff);
     }
+    event_handler_.SetToReadOnly(&executor_conn_);
     send_buff.clear_to_send();
   }
   bool sent = executor_->pipe.Send(&send_buff_);

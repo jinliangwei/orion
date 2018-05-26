@@ -45,22 +45,43 @@ class ExecForLoopSpaceTimeOrdered : public AbstractExecForLoop {
       const char* loop_batch_func_name,
       const char *prefetch_batch_func_name,
       std::unordered_map<int32_t, DistArray> *dist_arrays,
-      std::unordered_map<int32_t, DistArray> *dist_array_buffers);
+      std::unordered_map<int32_t, DistArray> *dist_array_buffers,
+      const std::unordered_map<int32_t, DistArrayBufferInfo> &dist_array_buffer_info_map,
+      bool is_repeated);
   virtual ~ExecForLoopSpaceTimeOrdered();
 
-  void FindNextToExecPartition();
-  AbstractExecForLoop::RunnableStatus GetCurrPartitionRunnableStatus();
-  int32_t GetTimePartitionIdToSend();
-  void ApplyPredecessorNotice(uint64_t clock);
-  int32_t GetPredecessor() { return (kExecutorId + kNumExecutors - 1) % kNumExecutors; }
+  int32_t GetPredecessor() {
+    return (kExecutorId + kNumExecutors - 1) % kNumExecutors;
+  }
   int32_t GetSuccessorToNotify() { return (kExecutorId + 1) % kNumExecutors; }
   uint64_t GetNoticeToSuccessor() {
-    return (static_cast<uint64_t>(clock_) << 32) | space_sub_clock_; }
-  void PrepareToExecCurrPartition();
-  void ClearCurrPartition();
+    return (static_cast<uint64_t>(clock_) << 32) | space_sub_clock_;
+  }
+
+  int32_t GetTimePartitionIdToSend();
 
  private:
+  void InitClocks();
+  bool IsCompleted() { return clock_ == kNumClocks; }
+  void AdvanceClock();
+  bool LastPartition();
+  bool ToClearTimePartition() { return true; }
   void ComputePartitionIdsAndFindPartitionToExecute();
+  void ApplyPredecessorNotice(uint64_t clock);
+  int32_t GetCurrSpacePartitionId() { return curr_space_partition_id_; }
+  int32_t GetCurrTimePartitionId() { return curr_time_partition_id_; }
+  bool SkipTimePartition() {
+    return curr_time_partition_id_ < 0;
+  }
+  bool AwaitPredecessorForGlobalIndexedDistArrays() {
+    return !(
+        (clock_ <= pred_clock_) ||
+        (
+            (clock_ == pred_clock_ + 1) &&
+            (space_sub_clock_ <= pred_space_sub_clock_)
+         )
+             );
+  }
 };
 
 }

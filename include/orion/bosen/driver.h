@@ -52,6 +52,9 @@ extern "C" {
       const uint8_t* value_type_bytes,
       size_t value_type_size);
 
+  void orion_delete_dist_array(
+      int32_t id);
+
   void orion_repartition_dist_array(
       int32_t id,
       const char *partition_func_name,
@@ -70,12 +73,15 @@ extern "C" {
       const int32_t *helper_buffer_ids,
       size_t num_helper_buffers,
       const int32_t *helper_dist_array_ids,
-      size_t num_helper_dist_arrays);
+      size_t num_helper_dist_arrays,
+      int32_t dist_array_buffer_delay_mode,
+      size_t max_delay);
 
   void orion_delete_dist_array_buffer_info(
       int32_t dist_array_buffer_id);
 
   void orion_exec_for_loop(
+      int32_t exec_for_loop_id,
       int32_t iteration_space_id,
       int32_t parallel_scheme,
       const int32_t *space_partitioned_dist_array_ids,
@@ -95,7 +101,8 @@ extern "C" {
       size_t num_accumulator_var_syms,
       const char *loop_batch_func_name,
       const char *prefetch_batch_func_name,
-      bool is_ordered);
+      bool is_ordered,
+      bool is_repeated);
 
   jl_value_t* orion_get_accumulator_value(
       const char *symbol,

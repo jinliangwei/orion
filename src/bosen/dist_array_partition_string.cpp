@@ -653,6 +653,11 @@ DistArrayPartition<std::string>::AppendJuliaValueArray(jl_value_t *value) {
   JL_GC_POP();
   sorted_ = false;
 }
+
+void
+DistArrayPartition<std::string>::ShrinkValueVecToFit() {
+}
+
 }
 
 }

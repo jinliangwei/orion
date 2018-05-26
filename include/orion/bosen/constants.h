@@ -48,5 +48,10 @@ extern "C" {
 
   extern const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_1D;
   extern const int32_t ORION_FOR_LOOP_PARALLEL_SCHEME_SPACE_TIME;
+
+  extern const int32_t ORION_DIST_ARRAY_BUFFER_DELAY_MODE_DEFAULT;
+  extern const int32_t ORION_DIST_ARRAY_BUFFER_DELAY_MODE_MAX_DELAY;
+  extern const int32_t ORION_DIST_ARRAY_BUFFER_DELAY_MODE_AUTO;
+
 }
 #endif

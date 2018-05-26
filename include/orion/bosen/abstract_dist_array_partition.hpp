@@ -58,6 +58,9 @@ class AbstractDistArrayPartition {
 
   const std::vector<int64_t>& GetDims() const;
   const std::string &GetDistArraySymbol();
+  size_t GetLength() const;
+  void ComputeKeyDiffs(const std::vector<int64_t> &target_keys,
+                       std::vector<int64_t> *diff_keys) const;
 
   // loading from text files
   bool LoadTextFile(const std::string &path, int32_t partition_id);
@@ -72,13 +75,17 @@ class AbstractDistArrayPartition {
                const std::vector<jl_value_t*> &accessed_dist_arrays,
                const std::vector<jl_value_t*> &accessed_dist_array_buffers,
                const std::vector<jl_value_t*> &global_read_only_var_vals,
-               const std::vector<std::string> &accumulator_var_syms);
+               const std::vector<std::string> &accumulator_var_syms,
+               size_t offset,
+               size_t num_elements);
   void ComputePrefetchIndices(const std::string &prefetch_batch_func_name,
                               const std::vector<int32_t> &dist_array_ids_vec,
                               const std::unordered_map<int32_t, DistArray*> &global_indexed_dist_arrays,
                               const std::vector<jl_value_t*> &global_read_only_var_vals,
                               const std::vector<std::string> &accumulator_var_syms,
-                              PointQueryKeyDistArrayMap *point_key_vec_map);
+                              PointQueryKeyDistArrayMap *point_key_vec_map,
+                              size_t offset,
+                              size_t num_elements);
 
   // repartition
   void ComputeHashRepartitionIdsAndRepartition(size_t num_partitions);
@@ -153,6 +160,8 @@ class AbstractDistArrayPartition {
 
   virtual void BuildDenseIndex() = 0;
   virtual void BuildSparseIndex() = 0;
+
+  virtual void ShrinkValueVecToFit() = 0;
 };
 
 }

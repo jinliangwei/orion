@@ -69,7 +69,8 @@ function define_vars(var_set::Set{Symbol})
     end
 end
 
-function exec_for_loop(iteration_space_id::Integer,
+function exec_for_loop(exec_for_loop_id::Int32,
+                       iteration_space_id::Integer,
                        parallel_scheme::ForLoopParallelScheme,
                        space_partitioned_dist_array_ids::Vector{Int32},
                        time_partitioned_dist_array_ids::Vector{Int32},
@@ -81,7 +82,8 @@ function exec_for_loop(iteration_space_id::Integer,
                        accumulator_vars::Vector{Symbol},
                        loop_batch_func_name::AbstractString,
                        prefetch_batch_func_name::AbstractString,
-                       is_ordered::Bool)
+                       is_ordered::Bool,
+                       is_repeated::Bool)
     println("exec_for_loop for ", iteration_space_id, " ", parallel_scheme)
     global_read_only_var_vals = Vector{Vector{UInt8}}(length(global_read_only_vars))
     index = 1
@@ -105,6 +107,7 @@ function exec_for_loop(iteration_space_id::Integer,
     ccall((:orion_exec_for_loop, lib_path),
           Void, (Int32,
                  Int32,
+                 Int32,
                  Ref{Int32}, UInt64,
                  Ref{Int32}, UInt64,
                  Ref{Int32}, UInt64,
@@ -113,7 +116,8 @@ function exec_for_loop(iteration_space_id::Integer,
                  Ref{Int32}, UInt64,
                  Any,
                  Ref{Cstring}, UInt64,
-                 Cstring, Cstring, Bool),
+                 Cstring, Cstring, Bool, Bool),
+          exec_for_loop_id,
           iteration_space_id,
           for_loop_parallel_scheme_to_int32(parallel_scheme),
           space_partitioned_dist_array_ids, length(space_partitioned_dist_array_ids),
@@ -124,7 +128,7 @@ function exec_for_loop(iteration_space_id::Integer,
           accessed_dist_array_ids, length(accessed_dist_array_ids),
           global_read_only_var_vals,
           accumulator_var_syms, length(accumulator_var_syms),
-          loop_batch_func_name, prefetch_batch_func_name, is_ordered)
+          loop_batch_func_name, prefetch_batch_func_name, is_ordered, is_repeated)
 end
 
 function get_aggregated_value(var_sym::Symbol, combiner_func::Symbol)
@@ -151,12 +155,18 @@ type DistArrayBufferInfo
     apply_buffer_func_name::Symbol
     helper_dist_array_buffer_ids::Vector{Int32}
     helper_dist_array_ids::Vector{Int32}
+    delay_mode::DistArrayBufferDelayMode
+    max_delay::UInt64
     DistArrayBufferInfo(dist_array_id::Int32,
-                        apply_buffer_func_name::Symbol) =
+                        apply_buffer_func_name::Symbol,
+                        delay_mode::DistArrayBufferDelayMode,
+                        max_delay::UInt64) =
                             new(dist_array_id,
                                 apply_buffer_func_name,
                                 Vector{Int32}(),
-                                Vector{Int32}())
+                                Vector{Int32}(),
+                                delay_mode,
+                                max_delay)
 end
 
 dist_array_buffer_map = Dict{Int32, DistArrayBufferInfo}()
@@ -164,12 +174,23 @@ dist_array_buffer_map = Dict{Int32, DistArrayBufferInfo}()
 function set_write_buffer(dist_array_buffer::DistArrayBuffer,
                           dist_array::DistArray,
                           apply_func::Function,
-                          helpers...)
+                          helpers...;
+                          max_delay::Integer = UInt64(0),
+                          auto_delay::Bool = false)
     apply_func_name = Base.function_name(apply_func)
     apply_updates_batch_func_name = gen_unique_symbol()
 
+    delay_mode::DistArrayBufferDelayMode = DistArrayBufferDelayMode_default
+    if auto_delay
+        delay_mode = DistArrayBufferDelayMode_auto
+    elseif max_delay > 0
+        delay_mode = DistArrayBufferDelayMode_max_delay
+    end
     buffer_info = DistArrayBufferInfo(dist_array.id,
-                                      apply_updates_batch_func_name)
+                                      apply_updates_batch_func_name,
+                                      delay_mode,
+                                      UInt64(max_delay))
+    println(buffer_info)
     for helper in helpers
         if isa(helper, DistArrayBuffer)
             push!(buffer_info.helper_dist_array_buffer_ids, helper.id)
@@ -181,14 +202,18 @@ function set_write_buffer(dist_array_buffer::DistArrayBuffer,
     ccall((:orion_set_dist_array_buffer_info, lib_path),
           Void, (Int32, Int32, Cstring,
                  Ptr{Int32}, UInt64,
-                 Ptr{Int32}, UInt64),
+                 Ptr{Int32}, UInt64,
+                 Int32, UInt64),
           dist_array_buffer.id,
           buffer_info.dist_array_id,
           string(buffer_info.apply_buffer_func_name),
           buffer_info.helper_dist_array_buffer_ids,
           length(buffer_info.helper_dist_array_buffer_ids),
           buffer_info.helper_dist_array_ids,
-          length(buffer_info.helper_dist_array_ids))
+          length(buffer_info.helper_dist_array_ids),
+          dist_array_buffer_delay_mode_to_int32(buffer_info.delay_mode),
+          buffer_info.max_delay)
+
     num_helper_dist_arrays = length(buffer_info.helper_dist_array_ids)
     num_helper_dist_array_buffers = length(buffer_info.helper_dist_array_buffer_ids)
 
@@ -197,7 +222,6 @@ function set_write_buffer(dist_array_buffer::DistArrayBuffer,
         apply_func_name,
         num_helper_dist_arrays,
         num_helper_dist_array_buffers)
-    println(apply_updates_batch_func)
     eval_expr_on_all(apply_updates_batch_func, :Main)
 end
 

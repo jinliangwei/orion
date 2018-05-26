@@ -6,6 +6,8 @@
     2 DepVecValue_none =
     3
 
+exec_for_loop_count = Int32(0)
+
 function get_1d_tile_size(iteration_space_partition_dim::Int64,
                           iteration_space_dist_array::DistArray)::Int64
     partition_dim_size = get(iteration_space_dist_array.iterate_dims)[iteration_space_partition_dim]
@@ -193,6 +195,7 @@ function parallelize_naive(iteration_space::Symbol,
                            accumulator_vars::Vector{Symbol},
                            loop_body::Expr,
                            is_ordered::Bool,
+                           is_repeated::Bool,
                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                            flow_graph::BasicBlock,
                            dist_array_access_context::DistArrayAccessContext)
@@ -215,6 +218,7 @@ function parallelize_naive(iteration_space::Symbol,
                               accumulator_vars,
                               loop_body,
                               is_ordered,
+                              is_repeated,
                               [partition_dim],
                               ssa_defs,
                               flow_graph,
@@ -228,6 +232,7 @@ function parallelize_naive(iteration_space::Symbol,
                               accumulator_vars,
                               loop_body,
                               is_ordered,
+                              is_repeated,
                               [get(iteration_space_partition_info.partition_dims)[1]],
                               ssa_defs,
                               flow_graph,
@@ -241,6 +246,7 @@ function parallelize_naive(iteration_space::Symbol,
                               accumulator_vars,
                               loop_body,
                               is_ordered,
+                              is_repeated,
                               [get(iteration_space_partition_info.partition_dims)],
                               ssa_defs,
                               flow_graph,
@@ -254,6 +260,7 @@ function parallelize_naive(iteration_space::Symbol,
                                       accumulator_vars,
                                       loop_body,
                                       is_ordered,
+                                      is_repeated,
                                       [get(iteration_space_partition_info.partition_dims)...],
                                       ssa_defs,
                                       flow_graph,
@@ -294,6 +301,7 @@ function parallelize_1d(iteration_space::Symbol,
                         accumulator_vars::Vector{Symbol},
                         loop_body::Expr,
                         is_ordered::Bool,
+                        is_repeated::Bool,
                         par_dims::Vector{Int64},
                         ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                         flow_graph::BasicBlock,
@@ -498,8 +506,11 @@ function parallelize_1d(iteration_space::Symbol,
 
     loop_batch_func_name_str = string(loop_batch_func_name)
     prefetch_batch_func_name_str = prefetch ? string(prefetch_batch_func_name) : ""
-
-    exec_loop_stmt = :(Orion.exec_for_loop($(iteration_space_dist_array.id),
+    global exec_for_loop_count
+    exec_for_loop_id = exec_for_loop_count
+    exec_for_loop_count += 1
+    exec_loop_stmt = :(Orion.exec_for_loop(Int32($(exec_for_loop_id)),
+                                           $(iteration_space_dist_array.id),
                                            Orion.ForLoopParallelScheme_1d,
                                            $(space_partitioned_dist_array_id_vec),
                                            Vector{Int32}(),
@@ -511,7 +522,8 @@ function parallelize_1d(iteration_space::Symbol,
                                            $(accumulator_vars),
                                            $loop_batch_func_name_str,
                                            $prefetch_batch_func_name_str,
-                                           $(is_ordered)))
+                                           $(is_ordered),
+                                           $(is_repeated)))
     push!(parallelized_loop.args, exec_loop_stmt)
     return parallelized_loop
 end
@@ -524,6 +536,7 @@ function parallelize_2d(iteration_space::Symbol,
                         accumulator_vars::Vector{Symbol},
                         loop_body::Expr,
                         is_ordered::Bool,
+                        is_repeated::Bool,
                         par_dims::Vector{Tuple{Int64, Int64}},
                         ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                         flow_graph::BasicBlock,
@@ -740,7 +753,11 @@ function parallelize_2d(iteration_space::Symbol,
     loop_batch_func_name_str = string(loop_batch_func_name)
     prefetch_batch_func_name_str = prefetch ? string(prefetch_batch_func_name) : ""
 
-    exec_loop_stmt = :(Orion.exec_for_loop($(iteration_space_dist_array.id),
+    global exec_for_loop_count
+    exec_for_loop_id = exec_for_loop_count
+    exec_for_loop_count += 1
+    exec_loop_stmt = :(Orion.exec_for_loop(Int32($(exec_for_loop_id)),
+                                           $(iteration_space_dist_array.id),
                                            Orion.ForLoopParallelScheme_2d,
                                            $(space_partitioned_dist_array_id_vec),
                                            $(time_partitioned_dist_array_id_vec),
@@ -752,7 +769,8 @@ function parallelize_2d(iteration_space::Symbol,
                                            $(accumulator_vars),
                                            $loop_batch_func_name_str,
                                            $prefetch_batch_func_name_str,
-                                           $(is_ordered)))
+                                           $(is_ordered),
+                                           $(is_repeated)))
 
     push!(parallelized_loop.args, exec_loop_stmt)
     println(iteration_space_dist_array.partition_info.partition_type)
@@ -766,6 +784,7 @@ function parallelize_unimodular(iteration_space::Symbol,
                                 accumulator_vars::Vector{Symbol},
                                 loop_body::Expr,
                                 is_ordered::Bool,
+                                is_repeated::Bool,
                                 par_dims::Vector{Int64},
                                 ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                                 flow_graph::BasicBlock,
@@ -826,6 +845,7 @@ function static_parallelize(iteration_space::Symbol,
                             accumulator_vars::Vector{Symbol},
                             loop_body::Expr,
                             is_ordered::Bool,
+                            is_repeated::Bool,
                             ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                             flow_graph::BasicBlock)
     iteration_space = iteration_space
@@ -845,6 +865,7 @@ function static_parallelize(iteration_space::Symbol,
                                  accumulator_vars,
                                  loop_body,
                                  is_ordered,
+                                 is_repeated,
                                  ssa_defs,
                                  flow_graph,
                                  dist_array_access_context)
@@ -858,6 +879,7 @@ function static_parallelize(iteration_space::Symbol,
                               accumulator_vars,
                               loop_body,
                               is_ordered,
+                              is_repeated,
                               par_scheme[2],
                               ssa_defs,
                               flow_graph,
@@ -872,6 +894,7 @@ function static_parallelize(iteration_space::Symbol,
                               accumulator_vars,
                               loop_body,
                               is_ordered,
+                              is_repeated,
                               par_scheme[2],
                               ssa_defs,
                               flow_graph,
@@ -886,6 +909,7 @@ function static_parallelize(iteration_space::Symbol,
                                       accumulator_vars,
                                       loop_body,
                                       is_ordered,
+                                      is_repeated,
                                       par_scheme[2],
                                       ssa_defs,
                                       flow_graph,

@@ -56,22 +56,26 @@ message SetDistArrayBufferInfo {
   required string apply_buffer_func_name = 3;
   repeated int32 helper_dist_array_ids = 4;
   repeated int32 helper_dist_array_buffer_ids = 5;
+  required int32 delay_mode = 6;
+  required uint64 max_delay = 7;
 }
 
 message ExecForLoop {
-  required int32 iteration_space_id = 1;
-  required int32 parallel_scheme = 2;
-  repeated int32 space_partitioned_dist_array_ids = 3;
-  repeated int32 time_partitioned_dist_array_ids = 4;
-  repeated int32 global_indexed_dist_array_ids = 5;
-  repeated int32 dist_array_buffer_ids = 6;
-  repeated int32 written_dist_array_ids = 7;
-  repeated int32 accessed_dist_array_ids = 8;
-  repeated bytes global_read_only_var_vals = 9;
-  repeated string accumulator_var_syms = 10;
-  required string loop_batch_func_name = 11;
-  optional string prefetch_batch_func_name = 12;
-  required bool is_ordered = 13;
+  required int32 exec_for_loop_id = 1;
+  required int32 iteration_space_id = 2;
+  required int32 parallel_scheme = 3;
+  repeated int32 space_partitioned_dist_array_ids = 4;
+  repeated int32 time_partitioned_dist_array_ids = 5;
+  repeated int32 global_indexed_dist_array_ids = 6;
+  repeated int32 dist_array_buffer_ids = 7;
+  repeated int32 written_dist_array_ids = 8;
+  repeated int32 accessed_dist_array_ids = 9;
+  repeated bytes global_read_only_var_vals = 10;
+  repeated string accumulator_var_syms = 11;
+  required string loop_batch_func_name = 12;
+  optional string prefetch_batch_func_name = 13;
+  required bool is_ordered = 14;
+  required bool is_repeated = 15;
 }
 
 message GetAccumulatorValue {

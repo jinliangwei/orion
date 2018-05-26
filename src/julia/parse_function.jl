@@ -11,7 +11,7 @@ function parse_map_new_keys_function(
     func::Function,
     arg_types::Tuple, # may have multiple methods for this function
     flatten::Bool
-)::Tuple{DataType, Int64}
+)::Tuple{Any, Int64}
     rettype_array = Base.return_types(func, arg_types)
     if length(rettype_array) == 0
         return (Any, 0)
@@ -37,7 +37,7 @@ function parse_map_fixed_keys_function(
     func::Function,
     arg_types::Tuple, # may have multiple methods for this function
     flatten::Bool
-)::DataType
+)::Any
     rettype_array = Base.return_types(func, arg_types)
     if length(rettype_array) == 0
         return Any

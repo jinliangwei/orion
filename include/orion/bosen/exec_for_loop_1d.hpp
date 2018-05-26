@@ -35,21 +35,28 @@ class ExecForLoop1D : public AbstractExecForLoop {
       const char* loop_batch_func_name,
       const char *prefetch_batch_func_name,
       std::unordered_map<int32_t, DistArray> *dist_arrays,
-      std::unordered_map<int32_t, DistArray> *dist_array_buffers);
+      std::unordered_map<int32_t, DistArray> *dist_array_buffers,
+      const std::unordered_map<int32_t, DistArrayBufferInfo> &dist_array_buffer_info_map,
+      bool is_repeated);
   virtual ~ExecForLoop1D();
 
-  void FindNextToExecPartition();
-  AbstractExecForLoop::RunnableStatus GetCurrPartitionRunnableStatus();
-  int32_t GetTimePartitionIdToSend() { return -1; }
-  void ApplyPredecessorNotice(uint64_t clock) { }
   int32_t GetPredecessor() { return -1; }
   int32_t GetSuccessorToNotify() { return -1; }
   uint64_t GetNoticeToSuccessor() { return 0; }
-  void PrepareToExecCurrPartition();
-  void ClearCurrPartition();
+  int32_t GetTimePartitionIdToSend() { return -1; }
 
  private:
+  void InitClocks();
+  bool IsCompleted() { return clock_ == kNumClocks; }
+  void AdvanceClock();
+  bool LastPartition();
+  bool ToClearTimePartition() { return false; }
   void ComputePartitionIdsAndFindPartitionToExecute();
+  void ApplyPredecessorNotice(uint64_t clock) { }
+  int32_t GetCurrSpacePartitionId() { return curr_partition_id_; }
+  int32_t GetCurrTimePartitionId() { return 0; }
+  bool SkipTimePartition() { return false; }
+  bool AwaitPredecessorForGlobalIndexedDistArrays() { return false; }
 };
 
 }

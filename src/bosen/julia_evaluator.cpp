@@ -435,8 +435,8 @@ JuliaEvaluator::ParseStringWithLineNumberFlatten(
   str_jl = jl_cstr_to_string(str);
   CHECK(jl_is_string(str_jl));
   ret_array = jl_call2(parser_func, line_number_jl, str_jl);
-  CHECK(jl_is_array(ret_array));
   AbortIfException();
+  CHECK(jl_is_array(ret_array));
   value_array_type = jl_apply_array_type(value_type, 1);
 
   size_t num_output_values = jl_array_len(ret_array);
@@ -873,14 +873,10 @@ JuliaEvaluator::RunMapValues(
       jl_ptr_to_array_1d(key_array_type, temp_child_dims.data(), temp_child_dims.size(), 0));
   jl_function_t *mapper_func = GetFunction(
       GetJlModule(mapper_func_module), mapper_func_name.c_str());
-  LOG(INFO) << __func__ << " calling mapper "
-            << " dim_array_jl = " << (void*) dim_array_jl
-            << " input_values = " << (void*) input_values;
   output_tuple_jl = jl_call3(mapper_func, dim_array_jl, input_values,
                              reinterpret_cast<jl_value_t*>(output_value_type));
   JuliaEvaluator::AbortIfException();
   CHECK(jl_is_tuple(output_tuple_jl));
-  LOG(INFO) << "calling mapper done!";
   *output_values_ptr = jl_get_nth_field(output_tuple_jl, 1);
   CHECK(jl_is_array(*output_values_ptr));
   JL_GC_POP();
@@ -1234,6 +1230,7 @@ JuliaEvaluator::SetDistArrayPartition(DistArray *dist_array,
   jl_call3(set_partition_func, dist_array_jl, ptr_str_jl,
            partition);
   JL_GC_POP();
+  AbortIfException();
 }
 
 void
@@ -1248,6 +1245,23 @@ JuliaEvaluator::ClearDistArrayPartition(DistArray *dist_array,
 
   jl_call2(clear_partition_func, dist_array_jl, ptr_str_jl);
   JL_GC_POP();
+  AbortIfException();
+}
+
+void
+JuliaEvaluator::ShrinkDistArrayPartitionToFit(DistArray *dist_array,
+                                              const std::string &partition_ptr_str) {
+  jl_value_t* ptr_str_jl = nullptr;
+  JL_GC_PUSH1(&ptr_str_jl);
+  ptr_str_jl = jl_cstr_to_string(partition_ptr_str.c_str());
+  jl_value_t *dist_array_jl = dist_array->GetJuliaDistArray();
+  auto *clear_partition_func = GetOrionWorkerFunction(
+      "dist_array_shrink_partition_to_fit");
+
+  jl_call2(clear_partition_func, dist_array_jl, ptr_str_jl);
+  JL_GC_POP();
+  AbortIfException();
+
 }
 
 void
@@ -1255,6 +1269,14 @@ JuliaEvaluator::DeleteAllDistArrays(std::unordered_map<int32_t, DistArray> *dist
                                    std::unordered_map<int32_t, DistArray> *dist_array_buffers) {
   dist_arrays->clear();
   dist_array_buffers->clear();
+}
+
+void
+JuliaEvaluator::DeleteDistArray(int32_t dist_array_id,
+                                std::unordered_map<int32_t, DistArray> *dist_arrays,
+                                std::unordered_map<int32_t, DistArray> *dist_array_buffers) {
+  dist_arrays->erase(dist_array_id);
+  dist_array_buffers->erase(dist_array_id);
 }
 
 }

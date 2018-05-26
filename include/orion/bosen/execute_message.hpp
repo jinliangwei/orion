@@ -395,22 +395,30 @@ struct ExecuteMsgReplyExecForLoopPredecessorCompletion {
 };
 
 struct ExecuteMsgExecForLoopAck {
+ public:
+  int32_t executor_id;
  private:
   ExecuteMsgExecForLoopAck() = default;
   friend class DefaultMsgCreator;
  public:
-  void Init() { }
+  void Init(int32_t _executor_id) {
+    executor_id = _executor_id;
+  }
   static constexpr ExecuteMsgType get_type() {
     return ExecuteMsgType::kExecForLoopAck;
   }
 };
 
 struct ExecuteMsgExecForLoopDone {
+ public:
+  int32_t executor_id;
  private:
   ExecuteMsgExecForLoopDone() = default;
   friend class DefaultMsgCreator;
  public:
-  void Init() { }
+  void Init(int32_t _executor_id) {
+    executor_id = _executor_id;
+  }
   static constexpr ExecuteMsgType get_type() {
     return ExecuteMsgType::kExecForLoopDone;
   }

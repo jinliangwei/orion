@@ -45,6 +45,20 @@ struct DriverMsgCreateDistArray {
   }
 };
 
+struct DriverMsgDeleteDistArray {
+  int32_t dist_array_id;
+ private:
+  DriverMsgDeleteDistArray() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(int32_t _dist_array_id) {
+    dist_array_id = _dist_array_id;
+  }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kDeleteDistArray;
+  }
+};
+
 struct DriverMsgEvalExpr {
   size_t ast_size;
  private:

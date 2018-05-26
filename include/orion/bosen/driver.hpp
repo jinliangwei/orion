@@ -169,6 +169,9 @@ class Driver {
       const uint8_t* value_type_bytes,
       size_t value_type_size);
 
+  void DeleteDistArray(
+      int32_t id);
+
   void SetDistArrayBufferInfo(
       int32_t dist_array_buffer_id,
       int32_t dist_array_id,
@@ -176,12 +179,15 @@ class Driver {
       const int32_t *helper_buffer_ids,
       size_t num_helper_buffers,
       const int32_t *helper_dist_array_ids,
-      size_t num_helper_dist_arrays);
+      size_t num_helper_dist_arrays,
+      int32_t dist_array_buffer_delay_mode,
+      size_t max_delay);
 
   void DeleteDistArrayBufferInfo(
       int32_t dist_array_buffer_id);
 
   void ExecForLoop(
+      int32_t exec_for_loop_id,
       int32_t iteration_space_id,
       int32_t parallel_scheme,
       const int32_t *space_partitioned_dist_array_ids,
@@ -201,7 +207,8 @@ class Driver {
       size_t num_accumulator_var_syms,
       const char* loop_batch_func_name,
       const char *prefetch_batch_func_name,
-      bool is_ordered);
+      bool is_ordered,
+      bool is_repeated);
 
   jl_value_t* GetAccumulatorValue(
       const char *symbol,
@@ -430,7 +437,8 @@ Driver::CreateDistArray(
       break;
     default:
       LOG(FATAL) << "unrecognized parent type = "
-                 << static_cast<int>(parent_type);
+                 << static_cast<int>(parent_type)
+                 << " id = " << id;
   }
   create_dist_array.set_map_type(map_type);
   create_dist_array.set_partition_scheme(partition_scheme);
@@ -604,6 +612,23 @@ Driver::CreateDistArrayBuffer(
 }
 
 void
+Driver::DeleteDistArray(
+    int32_t id) {
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgDeleteDistArray>(
+      &master_.send_buff, id);
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  received_from_master_ = false;
+  BlockRecvFromMaster();
+
+  message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  master_recv_temp_buff_.ClearOneMsg();
+}
+
+void
 Driver::SetDistArrayBufferInfo(
     int32_t dist_array_buffer_id,
     int32_t dist_array_id,
@@ -611,7 +636,9 @@ Driver::SetDistArrayBufferInfo(
     const int32_t *helper_buffer_ids,
     size_t num_helper_buffers,
     const int32_t *helper_dist_array_ids,
-    size_t num_helper_dist_arrays) {
+    size_t num_helper_dist_arrays,
+    int32_t dist_array_buffer_delay_mode,
+    size_t max_delay) {
   task::SetDistArrayBufferInfo set_dist_array_buffer_info;
   set_dist_array_buffer_info.set_dist_array_buffer_id(dist_array_buffer_id);
   set_dist_array_buffer_info.set_dist_array_id(dist_array_id);
@@ -622,7 +649,8 @@ Driver::SetDistArrayBufferInfo(
   for (auto i = 0; i < num_helper_dist_arrays; i++) {
     set_dist_array_buffer_info.add_helper_dist_array_ids(helper_dist_array_ids[i]);
   }
-
+  set_dist_array_buffer_info.set_delay_mode(dist_array_buffer_delay_mode);
+  set_dist_array_buffer_info.set_max_delay(max_delay);
   set_dist_array_buffer_info.SerializeToString(&msg_buff_);
 
   message::DriverMsgHelper::CreateMsg<message::DriverMsgSetDistArrayBufferInfo>(
@@ -658,6 +686,7 @@ Driver::DeleteDistArrayBufferInfo(
 
 void
 Driver::ExecForLoop(
+    int32_t exec_for_loop_id,
     int32_t iteration_space_id,
     int32_t parallel_scheme,
     const int32_t *space_partitioned_dist_array_ids,
@@ -677,9 +706,11 @@ Driver::ExecForLoop(
     size_t num_accumulator_var_syms,
     const char *loop_batch_func_name,
     const char *prefetch_batch_func_name,
-    bool is_ordered) {
+    bool is_ordered,
+    bool is_repeated) {
   LOG(INFO) << __func__;
   task::ExecForLoop exec_for_loop_task;
+  exec_for_loop_task.set_exec_for_loop_id(exec_for_loop_id);
   exec_for_loop_task.set_iteration_space_id(iteration_space_id);
   exec_for_loop_task.set_parallel_scheme(parallel_scheme);
   for (size_t i = 0; i < num_space_partitioned_dist_arrays; i++) {
@@ -728,6 +759,7 @@ Driver::ExecForLoop(
   if (prefetch_batch_func_name != nullptr)
     exec_for_loop_task.set_prefetch_batch_func_name(prefetch_batch_func_name);
   exec_for_loop_task.set_is_ordered(is_ordered);
+  exec_for_loop_task.set_is_repeated(is_repeated);
 
   exec_for_loop_task.SerializeToString(&msg_buff_);
   message::DriverMsgHelper::CreateMsg<message::DriverMsgExecForLoop>(

@@ -230,9 +230,14 @@ class JuliaEvaluator {
                                     jl_value_t* partition);
   static void ClearDistArrayPartition(DistArray *dist_array,
                                       const std::string &partition_ptr_str);
-
+  static void ShrinkDistArrayPartitionToFit(DistArray *dist_array,
+                                     const std::string &partition_ptr_str);
   static void DeleteAllDistArrays(std::unordered_map<int32_t, DistArray> *dist_arrays,
                                   std::unordered_map<int32_t, DistArray> *dist_array_buffers);
+
+  static void DeleteDistArray(int32_t dist_array_id,
+                              std::unordered_map<int32_t, DistArray> *dist_arrays,
+                              std::unordered_map<int32_t, DistArray> *dist_array_buffers);
 };
 
 }
