@@ -193,8 +193,10 @@ AbstractDistArrayPartition::ParseText(Blob *max_key,
     default:
       LOG(FATAL) << "shouldn't happend";
   }
-  std::vector<char> empty_buff;
-  char_buff_.swap(empty_buff);
+  {
+    std::vector<char> empty_buff;
+    char_buff_.swap(empty_buff);
+  }
   ShrinkValueVecToFit();
   JL_GC_POP();
 }
@@ -515,7 +517,6 @@ AbstractDistArrayPartition::ComputeHashRepartitionIdsAndRepartition(size_t num_p
 void
 AbstractDistArrayPartition::ComputeRepartitionIdsAndRepartition(
     const std::string &repartition_func_name) {
-  LOG(INFO) << __func__;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   jl_value_t *array_type = nullptr,
             *keys_vec_jl = nullptr,

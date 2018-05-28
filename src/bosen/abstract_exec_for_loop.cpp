@@ -499,6 +499,7 @@ AbstractExecForLoop::Skip() {
   skipped_ = true;
   if (LastPartition())
     UpdateDistArrayBufferDelayInfoWhenSkipLastPartition();
+  LOG(INFO) << __func__ << " to ClearTimeDistArrayPartitions";
   ClearTimeDistArrayPartitions();
   if (LastPartition())
     ClearDistArrayCacheBufferPartitions();
@@ -676,6 +677,7 @@ AbstractExecForLoop::GetAndClearDistArrayCacheSendMap(
 
 void
 AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
+  CHECK(time_partitions_cleared_);
   time_partitions_serialized_bytes_ = nullptr;
   time_partitions_serialized_size_ = 0;
   int32_t time_partition_id_to_send = GetTimePartitionIdToSend();

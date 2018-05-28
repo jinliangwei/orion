@@ -429,7 +429,8 @@ DistArrayPartition<void>::Repartition1D(
 
 SendDataBuffer
 DistArrayPartition<void>::Serialize() {
-  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer)
+      << " storage_type = " << static_cast<int>(storage_type_);
   jl_value_t* buff_jl = nullptr;
   jl_value_t* serialized_value_array = nullptr;
   jl_value_t* value_jl = nullptr;
@@ -713,8 +714,10 @@ DistArrayPartition<void>::DeserializeAndOverwrite(
 void
 DistArrayPartition<void>::Clear() {
   CHECK(storage_type_ != DistArrayPartitionStorageType::kAccessor);
-  std::vector<int64_t> empty_buff;
-  keys_.swap(empty_buff);
+  {
+    std::vector<int64_t> empty_buff;
+    keys_.swap(empty_buff);
+  }
   sparse_index_.clear();
   key_start_ = -1;
   JuliaEvaluator::ClearDistArrayPartition(dist_array_, ptr_str_);

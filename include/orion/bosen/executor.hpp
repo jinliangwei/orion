@@ -1553,8 +1553,6 @@ Executor::HandleDriverMsg() {
           message::DriverMsgDeleteDistArray>(recv_buff);
         int32_t dist_array_id = msg->dist_array_id;
 
-        LOG(INFO) << "DeleteDistArray, id = "
-                  << dist_array_id;
         ret = EventHandler<PollConn>::kClearOneMsg;
         auto cpp_func = std::bind(
             JuliaEvaluator::DeleteDistArray,
@@ -1564,7 +1562,7 @@ Executor::HandleDriverMsg() {
         exec_cpp_func_task_.func = cpp_func;
         exec_cpp_func_task_.label = TaskLabel::kDeleteDistArray;
         julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
-        action_ = Action::kExecutorAck;
+        action_ = Action::kNone;
       }
       break;
     default:
@@ -1788,6 +1786,7 @@ Executor::CreateDistArray() {
         auto &parent_dist_array = dist_arrays_.at(parent_id);
         auto &parent_dist_array_meta = parent_dist_array.GetMeta();
         auto &child_dist_array_meta = dist_array.GetMeta();
+        child_dist_array_meta.SetMaxPartitionIds(parent_dist_array_meta.GetMaxPartitionIds());
         auto map_type = child_dist_array_meta.GetMapType();
         if (parent_dist_array_meta.IsContiguousPartitions() &&
             (map_type == DistArrayMapType::kMapFixedKeys || map_type == DistArrayMapType::kMapValues)) {
@@ -1802,6 +1801,7 @@ Executor::CreateDistArray() {
     case DistArrayParentType::kInit:
       {
         auto &dist_array_meta = dist_array.GetMeta();
+        dist_array_meta.SetMaxPartitionIds(kConfig.kNumExecutors - 1);
         auto init_type = dist_array_meta.GetInitType();
         if (init_type == DistArrayInitType::kUniformRandom ||
             init_type == DistArrayInitType::kNormalRandom ||

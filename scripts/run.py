@@ -249,7 +249,7 @@ if __name__ == "__main__":
                                                 ssh_cmd_worker],
                                                shell=False)
                 if (i + 1) % 8 == 0:
-                    time.sleep(1)
+                    time.sleep(0.5)
             worker_id += 1
     while True:
         line = master_proc.stdout.readline().decode("utf-8").strip()

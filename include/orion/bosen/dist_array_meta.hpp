@@ -107,6 +107,8 @@ class DistArrayMeta {
   void SetMaxPartitionIds(int32_t space_id, int32_t time_id);
   void SetMaxPartitionIds(int32_t partition_id);
   void SetMaxPartitionIds(const int32_t* max_ids, size_t num_dims);
+  void SetMaxPartitionIds(const std::vector<int32_t> &max_partition_ids) { max_partition_ids_ = max_partition_ids; }
+
   void ResetMaxPartitionIds();
   void AccumMaxPartitionIds(const int32_t *max_ids, size_t num_dims);
   const std::vector<int32_t> &GetMaxPartitionIds() { return max_partition_ids_; }

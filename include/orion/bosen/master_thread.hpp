@@ -515,7 +515,6 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
       break;
     case message::DriverMsgType::kDeleteDistArray:
       {
-        LOG(INFO) << "DeleteDistArray";
         auto *msg = message::DriverMsgHelper::get_msg<
           message::DriverMsgDeleteDistArray>(recv_buff);
         int32_t dist_array_id = msg->dist_array_id;
@@ -523,7 +522,6 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         dist_array_buffer_metas_.erase(dist_array_id);
         executor_in_action_ = -1;
         ret = EventHandler<PollConn>::kClearOneMsg;
-        LOG(INFO) << " ForwardToAllExecutorsAndServers";
         action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
       }
       break;
@@ -758,7 +756,9 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
           }
         } else {
           if (num_recved_executor_acks_ > 0)
-            CHECK_EQ(accum_result_size_, 0);
+            CHECK_EQ(accum_result_size_, 0) << " num_recved_executor_acks = "
+                                            << num_recved_executor_acks_
+                                            << " executor_id = " << executor_id;
           num_recved_executor_acks_++;
           ret = EventHandler<PollConn>::kClearOneMsg;
           accum_result_size_ = 0;
@@ -994,13 +994,11 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         if (received_next_msg) {
           const auto &symbol = accumulator_.symbol;
           if (accumulator_.num_accumulated == 0) {
-            LOG(INFO) << "SetVarValue";
             JuliaEvaluator::SetVarValue(symbol,
                                         result_byte_buff.GetBytes(),
                                         result_byte_buff.GetSize());
 
           } else {
-            LOG(INFO) << "CombineVarValue";
             JuliaEvaluator::CombineVarValue(symbol,
                                             result_byte_buff.GetBytes(),
                                             result_byte_buff.GetSize(),

@@ -1066,6 +1066,7 @@ function dist_array_shrink_partition_to_fit{T, N}(dist_array::AbstractDistArray{
     partition = dist_array.partitions[ptr_str]
     new_partition = Vector{T}(length(partition))
     new_partition .= partition
+    delete!(dist_array.partitions, ptr_str)
     dist_array.partitions[ptr_str] = new_partition
 end
 

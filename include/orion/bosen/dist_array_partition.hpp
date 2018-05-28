@@ -356,10 +356,14 @@ DistArrayPartition<ValueType>::BuildSparseIndex() {
     auto value = values_[i];
     sparse_index_[key] = value;
   }
-  std::vector<int64_t> empty_buff;
-  keys_.swap(empty_buff);
-  std::vector<ValueType> empty_value_buff;
-  values_.swap(empty_value_buff);
+  {
+    std::vector<int64_t> empty_buff;
+    keys_.swap(empty_buff);
+  }
+  {
+    std::vector<ValueType> empty_value_buff;
+    values_.swap(empty_value_buff);
+  }
   storage_type_ = DistArrayPartitionStorageType::kSparseIndex;
 }
 
@@ -440,17 +444,24 @@ DistArrayPartition<ValueType>::Sort() {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::ShrinkValueVecToFit() {
-
+  std::vector<ValueType> temp_values;
+  values_.swap(temp_values);
+  values_.resize(temp_values.size());
+  memcpy(values_.data(), temp_values.data(), temp_values.size() * sizeof(ValueType));
 }
 
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::Clear() {
   CHECK(storage_type_ != DistArrayPartitionStorageType::kAccessor);
-  std::vector<int64_t> empty_buff;
-  keys_.swap(empty_buff);
-  std::vector<ValueType> empty_value_buff;
-  values_.swap(empty_value_buff);
+  {
+    std::vector<int64_t> empty_buff;
+    keys_.swap(empty_buff);
+  }
+  {
+    std::vector<ValueType> empty_value_buff;
+    values_.swap(empty_value_buff);
+  }
   sparse_index_.clear();
   key_start_ = -1;
   storage_type_ = DistArrayPartitionStorageType::kKeyValueBuffer;

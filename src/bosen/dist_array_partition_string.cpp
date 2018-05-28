@@ -306,8 +306,14 @@ DistArrayPartition<std::string>::BuildSparseIndex() {
     const auto& value = values_[i];
     sparse_index_[key] = value;
   }
-  keys_.clear();
-  values_.clear();
+  {
+    std::vector<int64_t> empty_buff;
+    keys_.swap(empty_buff);
+  }
+  {
+    std::vector<std::string> empty_value_buff;
+    values_.swap(empty_value_buff);
+  }
   storage_type_ = DistArrayPartitionStorageType::kSparseIndex;
 }
 
@@ -389,8 +395,14 @@ DistArrayPartition<std::string>::Sort() {
 void
 DistArrayPartition<std::string>::Clear() {
   CHECK(storage_type_ != DistArrayPartitionStorageType::kAccessor);
-  keys_.clear();
-  values_.clear();
+  {
+    std::vector<int64_t> empty_buff;
+    keys_.swap(empty_buff);
+  }
+  {
+    std::vector<std::string> empty_value_buff;
+    values_.swap(empty_value_buff);
+  }
   sparse_index_.clear();
   key_start_ = -1;
   storage_type_ = DistArrayPartitionStorageType::kKeyValueBuffer;
@@ -656,6 +668,12 @@ DistArrayPartition<std::string>::AppendJuliaValueArray(jl_value_t *value) {
 
 void
 DistArrayPartition<std::string>::ShrinkValueVecToFit() {
+  std::vector<std::string> temp_values;
+  values_.swap(temp_values);
+  values_.resize(temp_values.size());
+  for (size_t i = 0; i < temp_values.size(); i++) {
+    values_[i] = temp_values[i];
+  }
 }
 
 }

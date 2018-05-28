@@ -84,7 +84,8 @@ ExecForLoopSpaceTimeUnordered::ApplyPredecessorNotice(uint64_t clock) {
 
 int32_t
 ExecForLoopSpaceTimeUnordered::GetTimePartitionIdToSend() {
-  if (space_sub_clock_ == kNumSpaceSubClocks - 1) {
+  if ((curr_partition_num_elements_executed_ == curr_partition_length_)
+      && (space_sub_clock_ == (kNumSpaceSubClocks - 1))) {
     return curr_time_partition_id_;
   }
   return -1;

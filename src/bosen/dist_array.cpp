@@ -158,6 +158,7 @@ DistArray::LoadPartitionsFromTextFile(std::string file_path) {
       partitions_.emplace(partition_id, dist_array_partition);
     partition_id += kConfig.kNumExecutors;
   }
+  LOG(INFO) << __func__ << " done num_partitoins = " << partitions_.size();
 }
 
 void
@@ -729,7 +730,6 @@ DistArray::DeletePartition(int32_t partition_id) {
 
 void
 DistArray::ComputeMaxPartitionIds() {
-  LOG(INFO) << __func__ << " dist_array id = " << kId;
   if (meta_.GetPartitionScheme() == DistArrayPartitionScheme::kSpaceTime) {
     ComputeMaxPartitionIdsSpaceTime();
   } else {

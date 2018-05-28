@@ -79,7 +79,8 @@ ExecForLoopSpaceTimeOrdered::InitClocks() {
 
 int32_t
 ExecForLoopSpaceTimeOrdered::GetTimePartitionIdToSend() {
-  if (space_sub_clock_ == kNumSpaceSubClocks - 1) {
+  if ((curr_partition_num_elements_executed_ == curr_partition_length_) &&
+      (space_sub_clock_ == kNumSpaceSubClocks - 1)) {
     return curr_time_partition_id_;
   }
   return -1;
