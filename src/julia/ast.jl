@@ -86,6 +86,8 @@ end
             for var in assigned_to.args
                 assigned_to_get_mutated_var_vec(var, var_mutated_vec)
             end
+        elseif assigned_to.head == :(::)
+            assigned_to_get_mutated_var_vec(assigned_to.args[1], var_mutated_vec)
         else
             @assert is_ref(assigned_to) || is_dot(assigned_to)
             var_mutated = ref_dot_get_mutated_var(assigned_to)

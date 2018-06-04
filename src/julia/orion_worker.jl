@@ -3,6 +3,7 @@ module OrionWorker
 include("src/julia/dist_array_accessor.jl")
 include("src/julia/dist_array.jl")
 include("src/julia/dist_array_buffer.jl")
+include("src/julia/dist_array_partition.jl")
 include("src/julia/constants.jl")
 
 function worker_init(_num_executors::Integer,

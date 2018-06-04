@@ -551,7 +551,7 @@ DistArray::RepartitionDeserialize(
 
 void
 DistArray::RepartitionDeserializeInternal(
-    const uint8_t *mem, size_t mem_size) {
+    uint8_t *mem, size_t mem_size) {
   if (meta_.GetPartitionScheme() == DistArrayPartitionScheme::kSpaceTime) {
     RepartitionDeserializeSpaceTime(mem, mem_size);
   } else {
@@ -561,8 +561,8 @@ DistArray::RepartitionDeserializeInternal(
 
 void
 DistArray::RepartitionDeserializeSpaceTime(
-    const uint8_t *mem, size_t mem_size) {
-  const uint8_t *cursor = mem;
+    uint8_t *mem, size_t mem_size) {
+  uint8_t *cursor = mem;
   while (cursor - mem < mem_size) {
     int32_t space_id = *reinterpret_cast<const int32_t*>(cursor);
     cursor += sizeof(int32_t);
@@ -580,8 +580,8 @@ DistArray::RepartitionDeserializeSpaceTime(
 
 void
 DistArray::RepartitionDeserialize1D(
-    const uint8_t *mem, size_t mem_size) {
-  const uint8_t *cursor = mem;
+    uint8_t *mem, size_t mem_size) {
+  uint8_t *cursor = mem;
   while (cursor - mem < mem_size) {
     int32_t partition_id = *reinterpret_cast<const int32_t*>(cursor);
     cursor += sizeof(int32_t);
@@ -654,7 +654,7 @@ DistArray::GetAndSerializeValue(int64_t key, Blob *bytes_buff) {
 }
 
 void
-DistArray::GetAndSerializeValues(const int64_t *keys,
+DistArray::GetAndSerializeValues(int64_t *keys,
                                  size_t num_keys,
                                  Blob *bytes_buff) {
   auto iter = partitions_.begin();

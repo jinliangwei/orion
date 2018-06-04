@@ -111,15 +111,15 @@ class AbstractDistArrayPartition {
   virtual void BuildKeyValueBuffersFromSparseIndex() = 0;
 
   virtual void GetAndSerializeValue(int64_t key, Blob *bytes_buff) = 0;
-  virtual void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
+  virtual void GetAndSerializeValues(int64_t *keys, size_t num_keys,
                                      Blob *bytes_buff) = 0;
   virtual SendDataBuffer Serialize() = 0;
   virtual void HashSerialize(ExecutorDataBufferMap *data_buffer_map) = 0;
-  virtual const uint8_t* Deserialize(const uint8_t *buffer) = 0;
-  virtual const uint8_t* DeserializeAndAppend(const uint8_t *buffer) = 0;
+  virtual uint8_t* Deserialize(uint8_t *buffer) = 0;
+  virtual uint8_t* DeserializeAndAppend(uint8_t *buffer) = 0;
 
   // apply updates
-  virtual const uint8_t* DeserializeAndOverwrite(const uint8_t *buffer) = 0;
+  virtual uint8_t* DeserializeAndOverwrite(uint8_t *buffer) = 0;
   virtual void Clear() = 0;
   virtual void Sort() = 0;
  protected:
@@ -132,8 +132,8 @@ class AbstractDistArrayPartition {
   virtual void Repartition1D(const int32_t *repartition_ids) = 0;
 
   virtual void GetJuliaValueArray(jl_value_t **value) = 0;
-  virtual void GetJuliaValueArray(const std::vector<int64_t> &keys, jl_value_t **value) = 0;
-  virtual void SetJuliaValues(const std::vector<int64_t> &keys, jl_value_t *value) = 0;
+  virtual void GetJuliaValueArray(std::vector<int64_t> &keys, jl_value_t **value) = 0;
+  virtual void SetJuliaValues(std::vector<int64_t> &keys, jl_value_t *value) = 0;
 
   virtual void AppendJuliaValue(jl_value_t *value) = 0;
   virtual void AppendJuliaValueArray(jl_value_t *value) = 0;

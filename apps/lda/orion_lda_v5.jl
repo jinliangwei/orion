@@ -24,7 +24,7 @@ const num_topics = 1000
 
 Orion.@share const alpha = 0.1
 Orion.@share const beta = 0.1
-const num_iterations = 32
+const num_iterations = 128
 
 const alpha_beta = alpha * beta
 
@@ -84,22 +84,6 @@ Orion.@dist_array topic_summary_buff = Orion.create_dense_dist_array_buffer((1,)
                                                                             zeros(Int64, num_topics))
 Orion.materialize(topic_summary_buff)
 
-Orion.@share function apply_buffered_dict(dict_key,
-                                          value_dict::Dict{Int32, Int64},
-                                          update_dict::Dict{Int32, Int64})
-    for (key, val) in value_dict
-        if key in keys(value_dict)
-	    value_dict[key] += val
-            if value_dict[key] == 0
-                delete!(value_dict, key)
-            end
-        else
-            value_dict[key] = value
-        end
-    end
-    return value_dict
-end
-
 Orion.@share function apply_buffered_vec(vec_key,
                                          value_vec::Vector,
                                          update_vec::Vector)
@@ -127,7 +111,6 @@ Orion.@parallel_for for topic_assignment_pair in topic_assignments
     doc_topic_count = get(doc_topic_dict, topic, 0)
     doc_topic_dict[topic] = doc_topic_count + 1
     topic_summary_buff_vec[topic] += 1
-
     word_topic_table[word_id] = word_topic_dict
     doc_topic_table[doc_id] = doc_topic_dict
     topic_summary_buff[1] = topic_summary_buff_vec
@@ -156,7 +139,6 @@ Orion.@dist_array word_topic_vec_table = Orion.map(word_topic_table,
                                                    create_word_topic_vec,
                                                    map_values = true)
 Orion.materialize(word_topic_vec_table)
-
 Orion.delete_dist_array(word_topic_table)
 
 println("initializing s_sum")
@@ -261,7 +243,6 @@ last_time = start_time
         topic_summary_vec = topic_summary[1]
         doc_q_coeff = q_coeff[doc_id]
         s_sum_val = s_sum[1]
-        doc_old_topic_count = doc_topic_dict[old_topic]
 
         q_sum = 0.0
         num_nonzero_q_terms = 0
@@ -277,11 +258,10 @@ last_time = start_time
         denom = topic_summary_vec[old_topic] + beta_sum
         s_sum_buff[1] -= alpha_beta / denom
         s_sum_buff[1] += alpha_beta / (denom - 1)
-        r_sum[doc_id] -= (doc_old_topic_count * beta) / denom
-        r_sum[doc_id] += ((doc_old_topic_count - 1) * beta) / (denom - 1)
-        doc_q_coeff[old_topic] = (alpha + doc_old_topic_count - 1) / (denom - 1)
+        r_sum[doc_id] -= (doc_topic_dict[old_topic] * beta) / denom
+        r_sum[doc_id] += ((doc_topic_dict[old_topic] - 1) * beta) / (denom - 1)
+        doc_q_coeff[old_topic] = (alpha + doc_topic_dict[old_topic] - 1) / (denom - 1)
         doc_r_sum = r_sum[doc_id]
-        @assert old_topic in keys(doc_topic_dict)
         doc_topic_dict[old_topic] -= 1
         if doc_topic_dict[old_topic] == 0
             delete!(doc_topic_dict, old_topic)
@@ -344,7 +324,7 @@ last_time = start_time
         denom = topic_summary_vec[new_topic] + beta_sum
         s_sum_buff[1] -= alpha_beta / denom
         s_sum_buff[1] += alpha_beta / (denom + 1)
-        if new_topic in keys(doc_topic_dict)
+        if haskey(doc_topic_dict, new_topic)
             r_sum[doc_id] -= (doc_topic_dict[new_topic] * beta) / denom
             r_sum[doc_id] += ((doc_topic_dict[new_topic] + 1) * beta) / (denom + 1)
             doc_q_coeff[new_topic] = (alpha + doc_topic_dict[new_topic] + 1) / (denom + 1)
@@ -357,19 +337,12 @@ last_time = start_time
 
         new_topic_index = find_index(word_topic_vec, new_topic)
         if new_topic_index != -1
-            new_topic_count = word_topic_count_vec[new_topic_index]
-            word_topic_count_vec[new_topic_index] = new_topic_count + 1
-            q_sum -= q_term_val[new_topic_index][1]
+            new_topic_count = word_topic_count_vec[new_topic_index] + 1
+            word_topic_count_vec[new_topic_index] = new_topic_count
         else
-            new_topic_count = UInt64(1)
             push!(word_topic_vec, new_topic)
             push!(word_topic_count_vec, 1)
-            num_nonzero_q_terms += 1
-            new_topic_index = length(word_topic_vec)
-            q_term_topic[new_topic_index] = new_topic
         end
-        q_term_val[new_topic_index] = new_topic_count * doc_q_coeff[new_topic]
-        q_sum += q_term_val[new_topic_index]
         topic_summary_buff[1][new_topic] += 1
 
         doc_topic_table[doc_id] = doc_topic_dict
@@ -416,6 +389,7 @@ last_time = start_time
         Orion.@parallel_for for word_topic_pair in word_topic_vec_table
             word_topic_count_vec = word_topic_pair[2][1]
             word_topic_vec = word_topic_pair[2][2]
+            @assert length(word_topic_count_vec) == length(word_topic_vec)
             for idx in eachindex(word_topic_vec)
                 topic = word_topic_vec[idx]
                 count = word_topic_count_vec[idx]
@@ -465,7 +439,7 @@ println(word_llh_vec)
 println(llh_vec)
 Orion.stop()
 
-loss_fobj = open("lda.loss.nytimes.v5", "w")
+loss_fobj = open("lda.loss.nytimes.v5.test", "w")
 for idx in eachindex(time_vec)
     write(loss_fobj, string(idx) * "\t" * string(time_vec[idx]) * "\t" * string(llh_vec[idx]) * "\n")
 end

@@ -13,7 +13,6 @@ JuliaThreadRequester::RequestDistArrayData(
     type::PrimitiveType value_type,
     jl_value_t *value_vec) {
   request_replied_ = false;
-
   message::ExecuteMsgHelper::CreateMsg<
     message::ExecuteMsgRequestDistArrayValue>(&send_buff_, dist_array_id, key,
                                               kMyExecutorOrServerId,
@@ -64,7 +63,7 @@ JuliaThreadRequester::RequestDistArrayData(
   } else {
     JuliaEvaluator::BoxValue(value_type, requested_value_.data(), &value_jl);
   }
-  jl_array_ptr_1d_push(reinterpret_cast<jl_array_t*>(value_vec), value_jl);
+  jl_arrayset(reinterpret_cast<jl_array_t*>(value_vec), value_jl, 0);
   requested_value_.resize(0);
   JL_GC_POP();
 }

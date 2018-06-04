@@ -33,7 +33,7 @@ ServerExecForLoop::InitEachExecution() {
 void
 ServerExecForLoop::DeserializeAndApplyDistArrayCaches(
     uint8_t* bytes) {
-  const auto *cursor = bytes;
+  auto *cursor = bytes;
   size_t num_dist_arrays = *reinterpret_cast<const size_t*>(cursor);
   cursor += sizeof(size_t);
   for (size_t i = 0; i < num_dist_arrays; i++) {
@@ -54,7 +54,7 @@ ServerExecForLoop::DeserializeAndApplyDistArrayBuffers(
     uint8_t* bytes) {
   if (num_completed_executors_ > 0)
     LOG(INFO) << __func__;
-  const auto *cursor = bytes;
+  auto *cursor = bytes;
   size_t num_dist_arrays = *reinterpret_cast<const size_t*>(cursor);
   cursor += sizeof(size_t);
   std::unordered_map<int32_t, AbstractDistArrayPartition*> buffer_partition_map;

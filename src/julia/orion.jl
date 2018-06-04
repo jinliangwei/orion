@@ -9,6 +9,7 @@ include("scope_context.jl")
 include("dist_array_accessor.jl")
 include("dist_array.jl")
 include("dist_array_buffer.jl")
+include("dist_array_partition.jl")
 include("driver.jl")
 
 include("ast.jl")

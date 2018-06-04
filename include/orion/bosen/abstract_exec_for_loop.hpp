@@ -161,7 +161,7 @@ class AbstractExecForLoop {
   void GetAndClearDistArrayCacheSendMap(ExecutorSendBufferMap *cache_send_buffer_map);
 
   void SerializeAndClearPipelinedTimePartitions();
-  void DeserializePipelinedTimePartitions(const uint8_t *bytes);
+  void DeserializePipelinedTimePartitions(uint8_t *bytes);
   void DeserializePipelinedTimePartitionsBuffVec(PeerRecvPipelinedTimePartitionsBuffer** buff_vec,
                                                  size_t num_buffs);
   SendDataBuffer GetAndResetSerializedTimePartitions();

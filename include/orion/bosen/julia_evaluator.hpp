@@ -213,7 +213,7 @@ class JuliaEvaluator {
   static void GetAndSerializeValue(DistArray *dist_array,
                                    int64_t key, Blob *bytes_buff);
   static void GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *dist_arrays,
-                                    const uint8_t *request,
+                                    uint8_t *request,
                                     Blob *bytes_buff);
 
   static jl_value_t* GetDistArrayAccessor(jl_value_t *dist_array);

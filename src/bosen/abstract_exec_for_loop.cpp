@@ -152,7 +152,8 @@ AbstractExecForLoop::InitOnCreation() {
 
 void
 AbstractExecForLoop::InitEachExecution(bool is_first_time) {
-  LOG(INFO) << __func__ << " is_first_time = " << is_first_time;
+  LOG(INFO) << __func__ << " is_first_time = " << is_first_time_
+            << " prefetch status = " << static_cast<int>(prefetch_status_);
   for (auto global_indexed_dist_array_pair : accessed_global_indexed_dist_arrays_) {
     int32_t id = global_indexed_dist_array_pair.first;
     auto* dist_array_ptr = global_indexed_dist_array_pair.second;
@@ -209,7 +210,8 @@ AbstractExecForLoop::InitEachExecution(bool is_first_time) {
   is_first_time_ = is_first_time;
   num_elements_to_exec_ = num_elements_per_exec_;
   skipped_time_partitioned_dist_array_id_map_.clear();
-  prefetch_status_ = SkipPrefetch() ? PrefetchStatus::kSkipPrefetch :
+  prefetch_status_ = kPrefetchBatchFuncName.empty() ?
+                     PrefetchStatus::kSkipPrefetch :
                      PrefetchStatus::kNotPrefetched;
   InitClocks();
   ComputePartitionIdsAndFindPartitionToExecute();
@@ -362,7 +364,6 @@ void
 AbstractExecForLoop::ComputePrefetchIndices() {
   if (server_prefetch_info_list_iter_
       != server_prefetch_info_list_.end()) {
-    LOG(INFO) << __func__ << " reuse prefetch keys";
     server_prefetch_key_map_ptr_ = &(server_prefetch_info_list_iter_->kKeyMap);
     const auto& re_prefetch_dist_array_ids = server_prefetch_info_list_iter_->kRePrefetchDistArrayIds;
     server_prefetch_info_list_iter_++;
@@ -417,12 +418,11 @@ AbstractExecForLoop::ComputePrefetchIndices() {
       if (cache_iter == dist_array_cache_.end()) continue;
 
       auto *cache_partition = cache_iter->second.get();
-      cache_partition->ClearCacheAccessor();
       cache_partition->ComputeKeyDiffs(iter->second, &diff_keys);
       if (diff_keys.empty()) {
         point_prefetch_dist_array_map_.erase(iter);
-        cache_partition->CreateCacheAccessor();
       } else {
+        cache_partition->ClearCacheAccessor();
         iter->second = diff_keys;
         re_prefetch_dist_array_ids.emplace_back(dist_array_id);
         to_create_accessor_pair.second = true;
@@ -499,7 +499,6 @@ AbstractExecForLoop::Skip() {
   skipped_ = true;
   if (LastPartition())
     UpdateDistArrayBufferDelayInfoWhenSkipLastPartition();
-  LOG(INFO) << __func__ << " to ClearTimeDistArrayPartitions";
   ClearTimeDistArrayPartitions();
   if (LastPartition())
     ClearDistArrayCacheBufferPartitions();
@@ -677,6 +676,7 @@ AbstractExecForLoop::GetAndClearDistArrayCacheSendMap(
 
 void
 AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
+  LOG(INFO) << __func__ << "Start";
   CHECK(time_partitions_cleared_);
   time_partitions_serialized_bytes_ = nullptr;
   time_partitions_serialized_size_ = 0;
@@ -702,10 +702,6 @@ AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
     dist_array->DeletePartition(time_partition_id_to_send);
   }
   skipped_time_partitioned_dist_array_id_map_.erase(time_partition_id_to_send);
-  LOG(INFO) << __func__
-            << " erased skipped_time_partitioned_dist_array_id_map, time_partition_id_to_send = "
-            << time_partition_id_to_send;
-
   if (data_buffers.empty() && skipped_dist_array_id_vec.empty()) return;
   size_t total_size = sizeof(size_t) + sizeof(size_t) + sizeof(int32_t);
   for (auto &data_buff : data_buffers) {
@@ -736,11 +732,13 @@ AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
   cursor += sizeof(int32_t) * skipped_dist_array_id_vec.size();
   time_partitions_serialized_bytes_ = buffer_bytes;
   time_partitions_serialized_size_ = total_size;
+  LOG(INFO) << __func__ << "End";
 }
 
 void
-AbstractExecForLoop::DeserializePipelinedTimePartitions(const uint8_t* bytes) {
-  const uint8_t *cursor = bytes;
+AbstractExecForLoop::DeserializePipelinedTimePartitions(uint8_t* bytes) {
+  LOG(INFO) << __func__ << "Start";
+  uint8_t *cursor = bytes;
   size_t num_data_buffers = *reinterpret_cast<const size_t*>(cursor);
   cursor += sizeof(size_t);
   size_t num_skipped_dist_arrays = *reinterpret_cast<const size_t*>(cursor);
@@ -763,9 +761,7 @@ AbstractExecForLoop::DeserializePipelinedTimePartitions(const uint8_t* bytes) {
   }
 
   if (num_skipped_dist_arrays > 0) {
-    LOG(INFO) << "skipped_time_partitioned_dist_array_id_map emplace, time_partition_id = "
-              << time_partition_id;
-    auto skipped_set_pair = skipped_time_partitioned_dist_array_id_map_.emplace(
+     auto skipped_set_pair = skipped_time_partitioned_dist_array_id_map_.emplace(
         time_partition_id, std::set<int32_t>());
     CHECK(skipped_set_pair.second);
     auto &skipped_set = skipped_set_pair.first->second;
@@ -775,6 +771,7 @@ AbstractExecForLoop::DeserializePipelinedTimePartitions(const uint8_t* bytes) {
       skipped_set.insert(dist_array_id);
     }
   }
+  LOG(INFO) << __func__ << "End";
 }
 
 void
@@ -808,8 +805,8 @@ AbstractExecForLoop::CachePrefetchDistArrayValues(
   CHECK(num_pending_prefetch_requests_ > 0);
   for (size_t i = 0; i < num_buffs; i++) {
     auto *buff = buff_vec[i];
-    const auto *bytes = buff->byte_buff.data();
-    const auto *cursor = bytes;
+    auto *bytes = buff->byte_buff.data();
+    auto *cursor = bytes;
     size_t num_dist_arrays = *reinterpret_cast<const size_t*>(cursor);
     cursor += sizeof(size_t);
     for (size_t j = 0; j < num_dist_arrays; j++) {
@@ -1069,7 +1066,8 @@ AbstractExecForLoop::ClearDistArrayCacheBufferPartitions() {
     cache_partition->ClearCacheAccessor();
   }
 
-  prefetch_status_ = SkipPrefetch() ? PrefetchStatus::kSkipPrefetch :
+  prefetch_status_ = kPrefetchBatchFuncName.empty() ?
+                     PrefetchStatus::kSkipPrefetch :
                      PrefetchStatus::kNotPrefetched;
 }
 

@@ -330,7 +330,7 @@ DistArrayPartition<std::string>::GetAndSerializeValue(
 }
 
 void
-DistArrayPartition<std::string>::GetAndSerializeValues(const int64_t *keys,
+DistArrayPartition<std::string>::GetAndSerializeValues(int64_t *keys,
                                                        size_t num_keys,
                                                        Blob *bytes_buff) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
@@ -526,10 +526,10 @@ DistArrayPartition<std::string>::HashSerialize(
   }
 }
 
-const uint8_t*
-DistArrayPartition<std::string>::Deserialize(const uint8_t *buffer) {
+uint8_t*
+DistArrayPartition<std::string>::Deserialize(uint8_t *buffer) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
-  const uint8_t* cursor = buffer;
+  uint8_t* cursor = buffer;
   sorted_ = *(reinterpret_cast<const bool*>(cursor));
   cursor += sizeof(bool);
   size_t num_keys = *(reinterpret_cast<const size_t*>(cursor));
@@ -546,11 +546,11 @@ DistArrayPartition<std::string>::Deserialize(const uint8_t *buffer) {
   return cursor;
 }
 
-const uint8_t*
-DistArrayPartition<std::string>::DeserializeAndAppend(const uint8_t *buffer) {
+uint8_t*
+DistArrayPartition<std::string>::DeserializeAndAppend(uint8_t *buffer) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   sorted_ = false;
-  const uint8_t* cursor = buffer;
+  uint8_t* cursor = buffer;
   cursor += sizeof(bool);
   size_t num_keys = *(reinterpret_cast<const size_t*>(cursor));
   cursor += sizeof(size_t);
@@ -567,15 +567,15 @@ DistArrayPartition<std::string>::DeserializeAndAppend(const uint8_t *buffer) {
   return cursor;
 }
 
-const uint8_t*
-DistArrayPartition<std::string>::DeserializeAndOverwrite(const uint8_t *buffer) {
+uint8_t*
+DistArrayPartition<std::string>::DeserializeAndOverwrite(uint8_t *buffer) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
 
-  const uint8_t* cursor = buffer;
+  uint8_t* cursor = buffer;
   cursor += sizeof(bool);
   size_t num_keys = *(reinterpret_cast<const size_t*>(cursor));
   cursor += sizeof(size_t);
-  const uint8_t* value_cursor = cursor + sizeof(int64_t) * num_keys;
+  uint8_t* value_cursor = cursor + sizeof(int64_t) * num_keys;
   for (size_t i = 0; i < num_keys; i++) {
     auto key = *(reinterpret_cast<const int64_t*>(cursor));
     cursor += sizeof(int64_t);
@@ -602,8 +602,8 @@ DistArrayPartition<std::string>::GetJuliaValueArray(jl_value_t **value) {
 }
 
 void
-DistArrayPartition<std::string>::GetJuliaValueArray(const std::vector<int64_t> &keys,
-                                                  jl_value_t **value_array) {
+DistArrayPartition<std::string>::GetJuliaValueArray(std::vector<int64_t> &keys,
+                                                    jl_value_t **value_array) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
   jl_value_t* value_array_type = nullptr;
   jl_value_t* string_jl = nullptr;
@@ -629,7 +629,7 @@ DistArrayPartition<std::string>::GetJuliaValueArray(const std::vector<int64_t> &
 }
 
 void
-DistArrayPartition<std::string>::SetJuliaValues(const std::vector<int64_t> &keys,
+DistArrayPartition<std::string>::SetJuliaValues(std::vector<int64_t> &keys,
                                                 jl_value_t *values) {
 
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);

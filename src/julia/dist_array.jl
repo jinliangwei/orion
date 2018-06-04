@@ -168,6 +168,7 @@ mutable struct DenseDistArray{T, N} <: DistArray{T, N}
     dims::Vector{Int64}
     symbol::Nullable{Symbol}
     partitions::Dict{String, Vector{T}}
+    sparse_indexed_partitions::Dict{String, Dict{Int64, T}}
     is_materialized::Bool
     parent_type::DistArrayParentType
     file_path::Nullable{String}
@@ -188,6 +189,7 @@ mutable struct DenseDistArray{T, N} <: DistArray{T, N}
                              Vector{Int64}(N),
                              Nullable{Symbol}(),
                              Dict{String, Vector{T}}(),
+                             Dict{String, Dict{Int64, T}}(),
                              false,
                              parent_type,
                              Nullable{String}(),
@@ -210,6 +212,7 @@ mutable struct DenseDistArray{T, N} <: DistArray{T, N}
                              copy(dims),
                              Nullable{Symbol}(),
                              Dict{String, Vector{T}}(),
+                             Dict{String, Dict{Int64, T}}(),
                              false,
                              parent_type,
                              Nullable{String}(),
@@ -234,6 +237,7 @@ function copy{T, N}(dist_array::DenseDistArray{T, N})::DenseDistArray{T, N}
     new_dist_array.dims = copy(dist_array.dims)
     new_dist_array.symbol = dist_array.symbol
     new_dist_array.partitions = dist_array.partitions
+    new_dist_array.sparse_indexed_partitions = dist_array.sparse_indexed_partitions
     new_dist_array.is_materialized = dist_array.is_materialized
     new_dist_array.file_path = dist_array.file_path
     new_dist_array.map_type = dist_array.map_type
@@ -253,6 +257,7 @@ type SparseDistArray{T, N} <: DistArray{T, N}
     dims::Vector{Int64}
     symbol::Nullable{Symbol}
     partitions::Dict{String, Vector{T}}
+    sparse_indexed_partitions::Dict{String, Dict{Int64, T}}
     is_materialized::Bool
     parent_type::DistArrayParentType
     file_path::Nullable{String}
@@ -272,6 +277,7 @@ type SparseDistArray{T, N} <: DistArray{T, N}
                              Vector{Int64}(N),
                              Nullable{Symbol}(),
                              Dict{String, Vector{T}}(),
+                             Dict{String, Dict{Int64, T}}(),
                              false,
                              parent_type,
                              Nullable{String}(),
@@ -293,6 +299,7 @@ type SparseDistArray{T, N} <: DistArray{T, N}
                               copy(dims),
                               Nullable{Symbol}(),
                               Dict{String, Vector{T}}(),
+                              Dict{String, Dict{Int64, T}}(),
                               false,
                               parent_type,
                               Nullable{String}(),
@@ -315,6 +322,7 @@ function copy{T, N}(dist_array::SparseDistArray{T, N})::SparseDistArray{T, N}
     new_dist_array.dims = copy(dist_array.dims)
     new_dist_array.symbol = dist_array.symbol
     new_dist_array.partitions = dist_array.partitions
+    new_dist_array.sparse_indexed_partitions = dist_array.sparse_indexed_partitions
     new_dist_array.is_materialized = dist_array.is_materialized
     new_dist_array.file_path = dist_array.file_path
     new_dist_array.map_type = dist_array.map_type
@@ -1027,47 +1035,6 @@ end
 function dist_array_get_accessor(dist_array::AbstractDistArray)
     accessor = get(dist_array.accessor)
     return get(dist_array.accessor)
-end
-
-function dist_array_create_and_add_partition{T, N}(
-    dist_array::AbstractDistArray{T, N},
-    ptr_str::String)
-    partition = Vector{T}()
-    dist_array.partitions[ptr_str] = partition
-end
-
-function dist_array_get_partition(dist_array::AbstractDistArray,
-                                  ptr_str::String)
-    @assert ptr_str in keys(dist_array.partitions)
-    return dist_array.partitions[ptr_str]
-end
-
-function dist_array_delete_partition(dist_array::AbstractDistArray,
-                                     ptr_str::String)
-    @assert ptr_str in keys(dist_array.partitions)
-    delete!(dist_array.partitions, ptr_str)
-end
-
-function dist_array_clear_partition{T, N}(dist_array::AbstractDistArray{T, N},
-                                          ptr_str::String)
-    @assert ptr_str in keys(dist_array.partitions)
-    dist_array.partitions[ptr_str] = Vector{T}()
-end
-
-function dist_array_set_partition{T, N}(dist_array::AbstractDistArray{T, N},
-                                        ptr_str::String,
-                                        partition::Vector{T})
-    dist_array.partitions[ptr_str] = partition
-end
-
-function dist_array_shrink_partition_to_fit{T, N}(dist_array::AbstractDistArray{T, N},
-                                                  ptr_str::String)
-    @assert ptr_str in keys(dist_array.partitions)
-    partition = dist_array.partitions[ptr_str]
-    new_partition = Vector{T}(length(partition))
-    new_partition .= partition
-    delete!(dist_array.partitions, ptr_str)
-    dist_array.partitions[ptr_str] = new_partition
 end
 
 struct DistArrayAccessSetRecorder{N} <: AbstractArray{Int32, N}

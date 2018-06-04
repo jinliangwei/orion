@@ -36,12 +36,20 @@ AbstractDistArrayPartition::GetLength() const {
 void
 AbstractDistArrayPartition::ComputeKeyDiffs(const std::vector<int64_t> &target_keys,
                                             std::vector<int64_t> *diff_keys) const {
-  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer ||
+        storage_type_ == DistArrayPartitionStorageType::kAccessor);
   diff_keys->clear();
-  auto temp_keys = keys_;
-  std::sort(temp_keys.begin(), temp_keys.end());
+  const std::vector<int64_t> *keys_ptr = &keys_;
+  std::vector<int64_t> temp_keys;
+  if (!sorted_) {
+    temp_keys = keys_;
+    std::sort(temp_keys.begin(), temp_keys.end());
+    keys_ptr = &temp_keys;
+  }
+
   for (auto target_key : target_keys) {
-    bool found = std::binary_search(temp_keys.begin(), temp_keys.end(), target_key);
+    bool found = std::binary_search(keys_ptr->begin(), keys_ptr->end(),
+                                    target_key);
     if (!found) diff_keys->emplace_back(target_key);
   }
 }
@@ -660,10 +668,7 @@ AbstractDistArrayPartition::Execute(
     size_t offset,
     size_t num_elements) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
-  LOG(INFO) << __func__
-            << " dist_array_id = " << dist_array_->kId
-            << " partition_size = "
-            << keys_.size();
+  LOG(INFO) << __func__ << "Start " << num_elements;
 
   size_t num_args = accessed_dist_arrays.size() + accessed_dist_array_buffers.size()
                     + global_read_only_var_vals.size()
@@ -719,6 +724,7 @@ AbstractDistArrayPartition::Execute(
   jl_call(exec_loop_func, jl_values, num_args);
   JuliaEvaluator::AbortIfException();
   JL_GC_POP();
+  LOG(INFO) << __func__ << "End";
 }
 
 void

@@ -117,7 +117,7 @@ class DistArray {
   void CheckAndBuildIndex();
 
   void GetAndSerializeValue(int64_t key, Blob *bytes_buff);
-  void GetAndSerializeValues(const int64_t *keys,
+  void GetAndSerializeValues(int64_t *keys,
                              size_t num_keys,
                              Blob *bytes_buff);
 
@@ -131,9 +131,9 @@ class DistArray {
   void RepartitionSerializeAndClearSpaceTime(ExecutorSendBufferMap* send_buff_ptr);
   void RepartitionSerializeAndClear1D(ExecutorSendBufferMap* send_buff_ptr);
 
-  void RepartitionDeserializeInternal(const uint8_t *mem, size_t mem_size);
-  void RepartitionDeserializeSpaceTime(const uint8_t *mem, size_t mem_size);
-  void RepartitionDeserialize1D(const uint8_t *mem, size_t mem_size);
+  void RepartitionDeserializeInternal(uint8_t *mem, size_t mem_size);
+  void RepartitionDeserializeSpaceTime(uint8_t *mem, size_t mem_size);
+  void RepartitionDeserialize1D(uint8_t *mem, size_t mem_size);
   void GetMaxPartitionIdsSpaceTime(std::vector<int32_t>* ids);
   void GetMaxPartitionIds1D(std::vector<int32_t>* ids);
   void BuildPartitionIndices();

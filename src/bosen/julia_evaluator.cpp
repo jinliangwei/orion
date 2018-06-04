@@ -93,7 +93,7 @@ JuliaEvaluator::BoxValue(
       break;
     case type::PrimitiveType::kFloat64:
       {
-        *value_jl = jl_box_float32(*reinterpret_cast<const double*>(value));
+        *value_jl = jl_box_float64(*reinterpret_cast<const double*>(value));
       }
       break;
     case type::PrimitiveType::kString:
@@ -347,6 +347,7 @@ JuliaEvaluator::ParseStringFlatten(
   CHECK(jl_is_string(str_jl));
   ret_array = jl_call1(parser_func, str_jl);
   CHECK(jl_is_array(ret_array));
+  AbortIfException();
 
   value_array_type = jl_apply_array_type(value_type, 1);
 
@@ -839,17 +840,20 @@ JuliaEvaluator::RunMapFixedKeys(
       GetJlModule(mapper_func_module), mapper_func_name.c_str());
 
   {
-    jl_value_t *args[4];
+    jl_value_t *args[5];
     args[0] = dim_array_jl;
-    args[1] = key_array_jl;
-    args[2] = input_values;
-    args[3] = output_value_type;
-    output_tuple_jl = jl_call(mapper_func, args, 4);
+    args[1] = dim_array_jl;
+    args[2] = key_array_jl;
+    args[3] = input_values;
+    args[4] = output_value_type;
+    output_tuple_jl = jl_call(mapper_func, args, 5);
+    AbortIfException();
+    CHECK(jl_is_tuple(output_tuple_jl));
   }
+
   *output_values_ptr = jl_get_nth_field(output_tuple_jl, 1);
 
   JL_GC_POP();
-  AbortIfException();
 }
 
 void
@@ -914,6 +918,7 @@ JuliaEvaluator::RunMapValuesNewKeys(
 
   output_tuple_jl = jl_call3(mapper_func, dim_array_jl, input_values,
                              output_value_type);
+  AbortIfException();
   output_key_array_jl = jl_get_nth_field(output_tuple_jl, 0);
   *output_values_ptr = jl_get_nth_field(output_tuple_jl, 1);
 
@@ -922,7 +927,6 @@ JuliaEvaluator::RunMapValuesNewKeys(
   uint8_t *output_key_array = reinterpret_cast<uint8_t*>(jl_array_data(output_key_array_jl));
   memcpy(output_keys->data(), output_key_array, num_output_keys * sizeof(int64_t));
   JL_GC_POP();
-  AbortIfException();
 }
 
 void
@@ -945,11 +949,13 @@ JuliaEvaluator::GetVarValue(
       = GetFunction(jl_base_module, "IOBuffer");
   CHECK(io_buffer_func != nullptr);
   buff = jl_call0(io_buffer_func);
+  AbortIfException();
 
   jl_function_t *serialize_func
       = GetFunction(jl_base_module, "serialize");
   CHECK(serialize_func != nullptr);
   jl_call2(serialize_func, buff, value_jl);
+  AbortIfException();
 
   jl_function_t *takebuff_array_func
       = GetFunction(jl_base_module, "take!");
@@ -959,7 +965,6 @@ JuliaEvaluator::GetVarValue(
   result_buff->resize(result_array_length);
   memcpy(result_buff->data(), array_bytes, result_array_length);
   JL_GC_POP();
-  AbortIfException();
 }
 
 void
@@ -1122,9 +1127,9 @@ JuliaEvaluator::GetAndSerializeValue(DistArray *dist_array,
 
 void
 JuliaEvaluator::GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *dist_arrays,
-                                      const uint8_t *request,
+                                      uint8_t *request,
                                       Blob *bytes_buff) {
-  const auto *cursor = request;
+  auto *cursor = request;
   size_t num_dist_arrays = *(reinterpret_cast<const size_t*>(cursor));
   cursor += sizeof(size_t);
   std::vector<Blob> buff_vec(num_dist_arrays);
@@ -1135,7 +1140,7 @@ JuliaEvaluator::GetAndSerializeValues(std::unordered_map<int32_t, DistArray> *di
     cursor += sizeof(int32_t);
     size_t num_keys = *reinterpret_cast<const size_t*>(cursor);
     cursor += sizeof(size_t);
-    const int64_t *keys = reinterpret_cast<const int64_t*>(cursor);
+    int64_t *keys = reinterpret_cast<int64_t*>(cursor);
     cursor += sizeof(int64_t) * num_keys;
     auto dist_array_iter = dist_arrays->find(dist_array_id);
     CHECK(dist_array_iter != dist_arrays->end());

@@ -43,15 +43,15 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   void ClearBufferAccessor();
   void BuildKeyValueBuffersFromSparseIndex();
   void GetAndSerializeValue(int64_t key, Blob *bytes_buff);
-  void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
+  void GetAndSerializeValues(int64_t *keys, size_t num_keys,
                              Blob *bytes_buff);
 
   SendDataBuffer Serialize();
   void HashSerialize(ExecutorDataBufferMap *data_buffer_map);
-  const uint8_t* Deserialize(const uint8_t *buffer);
-  const uint8_t* DeserializeAndAppend(const uint8_t *buffer);
+  uint8_t* Deserialize(uint8_t *buffer);
+  uint8_t* DeserializeAndAppend(uint8_t *buffer);
 
-  const uint8_t* DeserializeAndOverwrite(const uint8_t *buffer);
+  uint8_t* DeserializeAndOverwrite(uint8_t *buffer);
   void ApplyBufferedUpdates(
       const AbstractDistArrayPartition* dist_array_buffer,
       const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
@@ -66,9 +66,9 @@ class DistArrayPartition : public AbstractDistArrayPartition {
   void Repartition1D(const int32_t *repartition_ids);
 
   void GetJuliaValueArray(jl_value_t **value);
-  void GetJuliaValueArray(const std::vector<int64_t> &keys,
+  void GetJuliaValueArray(std::vector<int64_t> &keys,
                           jl_value_t **value_array);
-  void SetJuliaValues(const std::vector<int64_t> &keys,
+  void SetJuliaValues(std::vector<int64_t> &keys,
                       jl_value_t *values);
   void AppendJuliaValue(jl_value_t *value);
   void AppendJuliaValueArray(jl_value_t *value);
@@ -321,10 +321,9 @@ DistArrayPartition<ValueType>::ClearBufferAccessor() {
 template<typename ValueType>
 void
 DistArrayPartition<ValueType>::BuildKeyValueBuffersFromSparseIndex() {
-  LOG(INFO) << __func__;
   if (storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer) return;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
-  if (!keys_.empty()) return;
+  CHECK(keys_.empty());
   keys_.resize(sparse_index_.size());
   values_.resize(sparse_index_.size());
   auto iter = sparse_index_.begin();
@@ -375,13 +374,15 @@ DistArrayPartition<ValueType>::GetAndSerializeValue(int64_t key,
   auto iter = sparse_index_.find(key);
   CHECK (iter != sparse_index_.end()) << __func__ << " key = " << key;
   auto value = iter->second;
+  LOG(INFO) << __func__ << " key = " << key
+            << " value = " << value;
   bytes_buff->resize(sizeof(ValueType));
   *(reinterpret_cast<ValueType*>(bytes_buff->data())) = value;
 }
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::GetAndSerializeValues(const int64_t *keys,
+DistArrayPartition<ValueType>::GetAndSerializeValues(int64_t *keys,
                                                      size_t num_keys,
                                                      Blob *bytes_buff) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
@@ -402,6 +403,8 @@ DistArrayPartition<ValueType>::GetAndSerializeValues(const int64_t *keys,
                                         << " key = " << key
                                         << " size = " << sparse_index_.size();
     auto value = iter->second;
+    LOG(INFO) << __func__ << " key = " << key
+              << " value = " << value;
     *reinterpret_cast<ValueType*>(cursor) = value;
     cursor += sizeof(ValueType);
   }
@@ -581,10 +584,10 @@ DistArrayPartition<ValueType>::HashSerialize(
 }
 
 template<typename ValueType>
-const uint8_t*
-DistArrayPartition<ValueType>::Deserialize(const uint8_t *buffer) {
+uint8_t*
+DistArrayPartition<ValueType>::Deserialize(uint8_t *buffer) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
-  const uint8_t* cursor = buffer;
+  uint8_t* cursor = buffer;
   sorted_ = *(reinterpret_cast<const bool*>(cursor));
   cursor += sizeof(bool);
   size_t num_keys = *(reinterpret_cast<const size_t*>(cursor));
@@ -601,11 +604,11 @@ DistArrayPartition<ValueType>::Deserialize(const uint8_t *buffer) {
 }
 
 template<typename ValueType>
-const uint8_t*
-DistArrayPartition<ValueType>::DeserializeAndAppend(const uint8_t *buffer) {
+uint8_t*
+DistArrayPartition<ValueType>::DeserializeAndAppend(uint8_t *buffer) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   sorted_ = false;
-  const uint8_t* cursor = buffer;
+  uint8_t* cursor = buffer;
   cursor += sizeof(bool);
   size_t num_keys = *(reinterpret_cast<const size_t*>(cursor));
   cursor += sizeof(size_t);
@@ -623,17 +626,17 @@ DistArrayPartition<ValueType>::DeserializeAndAppend(const uint8_t *buffer) {
 }
 
 template<typename ValueType>
-const uint8_t*
+uint8_t*
 DistArrayPartition<ValueType>::DeserializeAndOverwrite(
-    const uint8_t *buffer) {
+    uint8_t *buffer) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
 
-  const uint8_t* cursor = buffer;
+  uint8_t* cursor = buffer;
   cursor += sizeof(bool);
   size_t num_keys = *(reinterpret_cast<const size_t*>(cursor));
   cursor += sizeof(size_t);
 
-  const uint8_t* value_cursor = cursor + sizeof(int64_t) * num_keys;
+  uint8_t* value_cursor = cursor + sizeof(int64_t) * num_keys;
   for (size_t i = 0; i < num_keys; i++) {
     auto key = *(reinterpret_cast<const int64_t*>(cursor));
     cursor += sizeof(int64_t);
@@ -660,7 +663,7 @@ DistArrayPartition<ValueType>::GetJuliaValueArray(jl_value_t **value) {
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::GetJuliaValueArray(const std::vector<int64_t> &keys,
+DistArrayPartition<ValueType>::GetJuliaValueArray(std::vector<int64_t> &keys,
                                                   jl_value_t **value_array) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
   jl_value_t* value_array_type = nullptr;
@@ -688,7 +691,7 @@ DistArrayPartition<ValueType>::GetJuliaValueArray(const std::vector<int64_t> &ke
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::SetJuliaValues(const std::vector<int64_t> &keys,
+DistArrayPartition<ValueType>::SetJuliaValues(std::vector<int64_t> &keys,
                                               jl_value_t *values) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kSparseIndex);
   ValueType *values_mem = reinterpret_cast<ValueType*>(jl_array_data(reinterpret_cast<jl_array_t*>(values)));
@@ -741,15 +744,15 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
   void ClearBufferAccessor();
   void BuildKeyValueBuffersFromSparseIndex();
   void GetAndSerializeValue(int64_t key, Blob *bytes_buff);
-  void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
+  void GetAndSerializeValues(int64_t *keys, size_t num_keys,
                              Blob *bytes_buff);
 
   SendDataBuffer Serialize();
   void HashSerialize(ExecutorDataBufferMap *data_buffer_map);
-  const uint8_t* Deserialize(const uint8_t *buffer);
-  const uint8_t* DeserializeAndAppend(const uint8_t *buffer);
+  uint8_t* Deserialize(uint8_t *buffer);
+  uint8_t* DeserializeAndAppend(uint8_t *buffer);
 
-  const uint8_t* DeserializeAndOverwrite(const uint8_t *buffer);
+  uint8_t* DeserializeAndOverwrite(uint8_t *buffer);
   void ApplyBufferedUpdates(
       const AbstractDistArrayPartition* dist_array_buffer,
       const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
@@ -761,9 +764,9 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
   void AppendValue(const std::string &value);
  private:
   void GetJuliaValueArray(jl_value_t **value);
-  void GetJuliaValueArray(const std::vector<int64_t> &keys,
+  void GetJuliaValueArray(std::vector<int64_t> &keys,
                           jl_value_t **value_array);
-  void SetJuliaValues(const std::vector<int64_t> &keys,
+  void SetJuliaValues(std::vector<int64_t> &keys,
                       jl_value_t *values);
   void AppendJuliaValue(jl_value_t *value);
   void AppendJuliaValueArray(jl_value_t *value);
@@ -781,7 +784,6 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
 template<>
 class DistArrayPartition<void> : public AbstractDistArrayPartition {
  private:
-  stx::btree_map<int64_t, size_t> sparse_index_;
   std::string ptr_str_;
 
  public:
@@ -798,15 +800,15 @@ class DistArrayPartition<void> : public AbstractDistArrayPartition {
   void ClearBufferAccessor();
   void BuildKeyValueBuffersFromSparseIndex();
   void GetAndSerializeValue(int64_t key, Blob *bytes_buff);
-  void GetAndSerializeValues(const int64_t *keys, size_t num_keys,
+  void GetAndSerializeValues(int64_t *keys, size_t num_keys,
                              Blob *bytes_buff);
 
   SendDataBuffer Serialize();
   void HashSerialize(ExecutorDataBufferMap *data_buffer_map);
-  const uint8_t* Deserialize(const uint8_t *buffer);
-  const uint8_t* DeserializeAndAppend(const uint8_t *buffer);
+  uint8_t* Deserialize(uint8_t *buffer);
+  uint8_t* DeserializeAndAppend(uint8_t *buffer);
 
-  const uint8_t* DeserializeAndOverwrite(const uint8_t *buffer);
+  uint8_t* DeserializeAndOverwrite(uint8_t *buffer);
   void ApplyBufferedUpdates(
       const AbstractDistArrayPartition* dist_array_buffer,
       const std::vector<const AbstractDistArrayPartition*> &helper_dist_array_buffers,
@@ -816,9 +818,9 @@ class DistArrayPartition<void> : public AbstractDistArrayPartition {
 
  private:
   void GetJuliaValueArray(jl_value_t **value);
-  void GetJuliaValueArray(const std::vector<int64_t> &keys,
+  void GetJuliaValueArray(std::vector<int64_t> &keys,
                           jl_value_t **value_array);
-  void SetJuliaValues(const std::vector<int64_t> &keys,
+  void SetJuliaValues(std::vector<int64_t> &keys,
                       jl_value_t *values);
   void AppendJuliaValue(jl_value_t *value);
   void AppendJuliaValueArray(jl_value_t *value);

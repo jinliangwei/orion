@@ -1006,7 +1006,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
           CHECK_EQ(event_handler_ret, 0) << event_handler_ret;
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
           ret |= EventHandler<PollConn>::kExit;
-          const auto* request = prt_recv_byte_buff_.GetBytes();
+          auto* request = prt_recv_byte_buff_.GetBytes();
           auto cpp_func = std::bind(
               JuliaEvaluator::GetAndSerializeValues,
               &dist_arrays_,

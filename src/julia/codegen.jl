@@ -121,14 +121,18 @@ function gen_map_function(func_name::Symbol,
                           map_func_modules::Vector{Module},
                           map_types::Vector{DistArrayMapType},
                           map_flattens::Vector{Bool})
-    loop_stmt = quote
+
+
+
+    loop_stmt = :(for i = 1:length(keys)
+                      key = keys[i]
+                      value = values[i]
+                      OrionWorker.from_int64_to_keys(key, parent_dims, dim_keys_vec)
+                      dim_keys = tuple(dim_keys_vec...)
+                  end)
+    loop_stmt_block = quote
         dim_keys_vec = Vector{Int64}(length(parent_dims))
-        for i = 1:length(keys)
-            key = keys[i]
-            value = values[i]
-            OrionWorker.from_int64_to_keys(key, parent_dims, dims_keys_vec)
-            dim_keys = tuple(dim_keys_vec...)
-        end
+        $(loop_stmt)
     end
     stmt_array_to_append = loop_stmt.args[2].args
     key_sym_counter = 1
@@ -236,10 +240,12 @@ function gen_map_function(func_name::Symbol,
             output_value_type::DataType)::Tuple{Vector{Int64}, Vector{output_value_type}}
         output_keys = Vector{Int64}()
         output_values = Vector{output_value_type}()
-        $loop_stmt
+        $loop_stmt_block
         return (output_keys, output_values)
       end
     )
+    println(map_func)
+    return map_func
 end
 
 function gen_map_values_function(func_name::Symbol,
@@ -991,7 +997,6 @@ function gen_apply_batch_buffered_updates_func(batch_func_name::Symbol,
         for update_index in eachindex(buffered_updates_keys)
             update_key = buffered_updates_keys[update_index]
             update_val = buffered_updates_values[update_index]
-            #println(update_key)
         end
     )
 
