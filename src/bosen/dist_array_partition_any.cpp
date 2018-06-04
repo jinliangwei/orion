@@ -469,7 +469,7 @@ DistArrayPartition<void>::Serialize() {
 }
 
 void
-DistArrayPartition<void>::HashSerialize(
+DistArrayPartition<void>::ModuloSerialize(
     ExecutorDataBufferMap *data_buffer_map) {
   jl_value_t **jl_values;
   JL_GC_PUSHARGS(jl_values, 5);
@@ -480,7 +480,7 @@ DistArrayPartition<void>::HashSerialize(
   jl_value_t* &num_dests_jl = jl_values[4];
 
   jl_function_t* serialize_func
-      = JuliaEvaluator::GetOrionWorkerFunction("dist_array_hash_serialize_partition");
+      = JuliaEvaluator::GetOrionWorkerFunction("dist_array_modulo_serialize_partition");
   keys_array_type_jl = jl_apply_array_type(
       reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
   keys_array_jl = reinterpret_cast<jl_value_t*>(

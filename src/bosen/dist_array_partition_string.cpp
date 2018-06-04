@@ -478,7 +478,7 @@ DistArrayPartition<std::string>::Serialize() {
 }
 
 void
-DistArrayPartition<std::string>::HashSerialize(
+DistArrayPartition<std::string>::ModuloSerialize(
     ExecutorDataBufferMap *data_buffer_map) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   std::unordered_map<int32_t, size_t> server_accum_size;

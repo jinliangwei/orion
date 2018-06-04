@@ -241,13 +241,13 @@ DistArray::Map(DistArray* child_dist_array) {
 }
 
 void
-DistArray::ComputeHashRepartition(size_t num_partitions) {
+DistArray::ComputeModuloRepartition(size_t num_partitions) {
   std::vector<AbstractDistArrayPartition*> partition_buff;
   GetAndClearLocalPartitions(&partition_buff);
 
   for (auto dist_array_partition : partition_buff) {
     dist_array_partition->BuildKeyValueBuffersFromSparseIndex();
-    dist_array_partition->ComputeHashRepartitionIdsAndRepartition(num_partitions);
+    dist_array_partition->ComputeModuloRepartitionIdsAndRepartition(num_partitions);
     delete dist_array_partition;
   }
 }
@@ -263,8 +263,8 @@ DistArray::ComputeRepartition(const std::string &repartition_func_name) {
     delete dist_array_partition;
   }
 
-  bool from_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHashServer;
-  bool to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHashServer;
+  bool from_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
+  bool to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
 
   bool repartition_recv = true;
   if ((to_server && (!kIsServer || (from_server && kConfig.kNumServers == 1))) ||
@@ -480,7 +480,7 @@ DistArray::RepartitionSerializeAndClear1D(
     std::pair<int32_t, SendDataBuffer>
     > send_partition_buffs;
   std::unordered_map<int32_t, size_t> send_buff_sizes;
-  bool send_to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kHashServer;
+  bool send_to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
   auto iter = partitions_.begin();
   while (iter != partitions_.end()) {
     auto &partition_pair = *iter;

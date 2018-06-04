@@ -25,8 +25,8 @@ import Base: size, getindex, setindex!
     2 DistArrayPartitionType_2d =
     3 DistArrayPartitionType_2d_unimodular =
     4 DistArrayPartitionType_range =
-    5 DistArrayPartitionType_hash_server =
-    6 DistArrayPartitionType_hash_executor =
+    5 DistArrayPartitionType_modulo_server =
+    6 DistArrayPartitionType_modulo_executor =
     7
 
 @enum DistArrayIndexType DistArrayIndexType_none =
@@ -685,9 +685,9 @@ function process_dist_array_map{T, N}(dist_array::DistArray{T, N})::DistArray{T,
                              flatten_results,
                              Module(:Main),
                              string(map_func_name_sym)))
-        if origin_dist_array.partition_info.partition_type == DistArrayPartitionType_hash_server
+        if origin_dist_array.partition_info.partition_type == DistArrayPartitionType_modulo_server
             check_and_repartition(origin_dist_array,
-                                  PartitionInfo(DistArrayPartitionType_hash_executor,
+                                  PartitionInfo(DistArrayPartitionType_modulo_executor,
                                                 DistArrayIndexType_none))
         end
     else
@@ -760,8 +760,8 @@ function map_generic{T, N}(parent_dist_array::DistArray{T, N},
     end
 
     partition_info = parent_dist_array.partition_info
-    if partition_info.partition_type == DistArrayPartitionType_hash_server
-        partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_executor,
+    if partition_info.partition_type == DistArrayPartitionType_modulo_server
+        partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_executor,
                                                 DistArrayIndexType_none)
     end
 

@@ -207,8 +207,8 @@ function parallelize_naive(iteration_space::Symbol,
     println(iteration_space_partition_info.partition_type)
     if iteration_space_partition_info.partition_type == DistArrayPartitionType_naive ||
         iteration_space_partition_info.partition_type == DistArrayPartitionType_range ||
-        iteration_space_partition_info.partition_type == DistArrayPartitionType_hash_executor ||
-        iteration_space_partition_info.partition_type == DistArrayPartitionType_hash_server
+        iteration_space_partition_info.partition_type == DistArrayPartitionType_modulo_executor ||
+        iteration_space_partition_info.partition_type == DistArrayPartitionType_modulo_server
         partition_dim = length(get(iteration_space_dist_array.iterate_dims))
         return parallelize_1d(iteration_space,
                               iteration_var,
@@ -405,7 +405,7 @@ function parallelize_1d(iteration_space::Symbol,
     end
 
     for da_sym in global_indexed_dist_array_sym_set
-        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
+        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
                                                            DistArrayIndexType_range)
         repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
@@ -415,7 +415,7 @@ function parallelize_1d(iteration_space::Symbol,
         if da_sym in global_indexed_dist_array_sym_set
             continue
         end
-        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
+        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
                                                            DistArrayIndexType_range)
         repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
@@ -653,7 +653,7 @@ function parallelize_2d(iteration_space::Symbol,
     end
 
     for da_sym in global_indexed_dist_array_sym_set
-        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
+        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
                                                            DistArrayIndexType_range)
         repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
@@ -663,7 +663,7 @@ function parallelize_2d(iteration_space::Symbol,
         if da_sym in global_indexed_dist_array_sym_set
             continue
         end
-        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_hash_server,
+        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
                                                            DistArrayIndexType_range)
         repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)

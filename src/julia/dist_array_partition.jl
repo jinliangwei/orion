@@ -35,7 +35,7 @@ function dist_array_serialize_partition{T, N}(dist_array::AbstractDistArray{T, N
     return take!(buffer)
 end
 
-function dist_array_hash_serialize_partition{T, N}(dist_array::AbstractDistArray{T, N},
+function dist_array_modulo_serialize_partition{T, N}(dist_array::AbstractDistArray{T, N},
                                                    ptr_str::String,
                                                    key_vec::Vector{Int64},
                                                    num_dests::UInt64)::Tuple{Vector{Vector{Int64}},

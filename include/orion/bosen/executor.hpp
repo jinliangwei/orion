@@ -1898,8 +1898,8 @@ Executor::RepartitionDistArray() {
   meta.SetIndexType(index_type);
   meta.SetContiguousPartitions(contiguous_partitions);
 
-  bool from_server = orig_partition_scheme == DistArrayPartitionScheme::kHashServer;
-  bool to_server = partition_scheme == DistArrayPartitionScheme::kHashServer;
+  bool from_server = orig_partition_scheme == DistArrayPartitionScheme::kModuloServer;
+  bool to_server = partition_scheme == DistArrayPartitionScheme::kModuloServer;
 
   LOG(INFO) << __func__ << " dist_array_id = " << id;
   repartition_recv_ = true;
@@ -1922,15 +1922,15 @@ Executor::RepartitionDistArray() {
         partition_func_name);
   } else if (partition_scheme == DistArrayPartitionScheme::kRange) {
     LOG(FATAL);
-  } else if (partition_scheme == DistArrayPartitionScheme::kHashServer){
+  } else if (partition_scheme == DistArrayPartitionScheme::kModuloServer){
     cpp_func = std::bind(
-        &DistArray::ComputeHashRepartition,
+        &DistArray::ComputeModuloRepartition,
         &dist_array_to_repartition,
         kConfig.kNumServers);
   } else {
-    CHECK(partition_scheme == DistArrayPartitionScheme::kHashExecutor);
+    CHECK(partition_scheme == DistArrayPartitionScheme::kModuloExecutor);
     cpp_func = std::bind(
-        &DistArray::ComputeHashRepartition,
+        &DistArray::ComputeModuloRepartition,
         &dist_array_to_repartition,
         kConfig.kNumExecutors);
   }
@@ -1949,11 +1949,11 @@ Executor::RepartitionDistArraySerialize(int32_t dist_array_id,
   if ((partition_scheme == DistArrayPartitionScheme::kSpaceTime ||
        partition_scheme == DistArrayPartitionScheme::k1D ||
        partition_scheme == DistArrayPartitionScheme::kRange ||
-       partition_scheme == DistArrayPartitionScheme::kHashExecutor) &&
+       partition_scheme == DistArrayPartitionScheme::kModuloExecutor) &&
       (!kIsServer && kNumExecutors == 1)) {
     return false;
   }
-  if ((partition_scheme == DistArrayPartitionScheme::kHashServer) &&
+  if ((partition_scheme == DistArrayPartitionScheme::kModuloServer) &&
       (kIsServer && kNumServers == 1)) {
     return false;
   }
@@ -1976,7 +1976,7 @@ Executor::RepartitionDistArraySend() {
   auto &meta = dist_array_to_repartition.GetMeta();
   auto partition_scheme = meta.GetPartitionScheme();
 
-  bool to_server = partition_scheme == DistArrayPartitionScheme::kHashServer;
+  bool to_server = partition_scheme == DistArrayPartitionScheme::kModuloServer;
   size_t num_receivers = to_server ? kNumServers : kNumExecutors;
   size_t skip_id = num_receivers;
 

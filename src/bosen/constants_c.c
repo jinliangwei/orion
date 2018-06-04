@@ -57,10 +57,10 @@ extern "C" {
   = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kSpaceTime);
   const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_1D
   = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::k1D);
-  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_HASH_SERVER
-  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kHashServer);
-  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_HASH_EXECUTOR
-  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kHashExecutor);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_MODULO_SERVER
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kModuloServer);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_MODULO_EXECUTOR
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kModuloExecutor);
   const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_RANGE
   = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kRange);
 

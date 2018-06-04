@@ -88,7 +88,7 @@ class AbstractDistArrayPartition {
                               size_t num_elements);
 
   // repartition
-  void ComputeHashRepartitionIdsAndRepartition(size_t num_partitions);
+  void ComputeModuloRepartitionIdsAndRepartition(size_t num_partitions);
   void ComputeRepartitionIdsAndRepartition(
       const std::string &repartition_func_name);
 
@@ -114,7 +114,7 @@ class AbstractDistArrayPartition {
   virtual void GetAndSerializeValues(int64_t *keys, size_t num_keys,
                                      Blob *bytes_buff) = 0;
   virtual SendDataBuffer Serialize() = 0;
-  virtual void HashSerialize(ExecutorDataBufferMap *data_buffer_map) = 0;
+  virtual void ModuloSerialize(ExecutorDataBufferMap *data_buffer_map) = 0;
   virtual uint8_t* Deserialize(uint8_t *buffer) = 0;
   virtual uint8_t* DeserializeAndAppend(uint8_t *buffer) = 0;
 

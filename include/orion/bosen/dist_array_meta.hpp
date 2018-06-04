@@ -16,7 +16,7 @@ namespace bosen {
 // a user-defined hash function is used to compute the partition keys
 // 3) 1D partitioned: range partitioned based on one dimension of the key
 // 4) range partitioned: range partitioned based on the 64-bit full key
-// 5) hash partitioned: hash partitioned based on the 64-bit full key
+// 5) modulo partitioned: modulo partitioned based on the 64-bit full key
 
 // DistArrays that don't have keys are always naively partitioned.
 // All partition schemes allow building local index but only range partitioned and hash partitioned DistArrays
@@ -26,8 +26,8 @@ enum class DistArrayPartitionScheme {
   kNaive = 0,
     kSpaceTime = 1,
     k1D = 2,
-    kHashServer = 3,
-    kHashExecutor = 4,
+    kModuloServer = 3,
+    kModuloExecutor = 4,
     kRange = 5
 };
 

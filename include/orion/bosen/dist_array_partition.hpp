@@ -47,7 +47,7 @@ class DistArrayPartition : public AbstractDistArrayPartition {
                              Blob *bytes_buff);
 
   SendDataBuffer Serialize();
-  void HashSerialize(ExecutorDataBufferMap *data_buffer_map);
+  void ModuloSerialize(ExecutorDataBufferMap *data_buffer_map);
   uint8_t* Deserialize(uint8_t *buffer);
   uint8_t* DeserializeAndAppend(uint8_t *buffer);
 
@@ -539,7 +539,7 @@ DistArrayPartition<ValueType>::Serialize() {
 
 template<typename ValueType>
 void
-DistArrayPartition<ValueType>::HashSerialize(
+DistArrayPartition<ValueType>::ModuloSerialize(
     ExecutorDataBufferMap *data_buffer_map) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   std::unordered_map<int32_t, size_t> server_accum_size;
@@ -748,7 +748,7 @@ class DistArrayPartition<std::string> : public AbstractDistArrayPartition {
                              Blob *bytes_buff);
 
   SendDataBuffer Serialize();
-  void HashSerialize(ExecutorDataBufferMap *data_buffer_map);
+  void ModuloSerialize(ExecutorDataBufferMap *data_buffer_map);
   uint8_t* Deserialize(uint8_t *buffer);
   uint8_t* DeserializeAndAppend(uint8_t *buffer);
 
@@ -804,7 +804,7 @@ class DistArrayPartition<void> : public AbstractDistArrayPartition {
                              Blob *bytes_buff);
 
   SendDataBuffer Serialize();
-  void HashSerialize(ExecutorDataBufferMap *data_buffer_map);
+  void ModuloSerialize(ExecutorDataBufferMap *data_buffer_map);
   uint8_t* Deserialize(uint8_t *buffer);
   uint8_t* DeserializeAndAppend(uint8_t *buffer);
 

@@ -93,7 +93,7 @@ class DistArray {
   void Init();
   void Map(DistArray *child_dist_array);
 
-  void ComputeHashRepartition(size_t num_partitions);
+  void ComputeModuloRepartition(size_t num_partitions);
   void ComputeRepartition(const std::string &repartition_func_name);
 
   void SetDims(const std::vector<int64_t> &dims);

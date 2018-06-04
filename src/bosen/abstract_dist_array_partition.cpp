@@ -512,7 +512,7 @@ AbstractDistArrayPartition::ComputeKeysFromBuffer(
 }
 
 void
-AbstractDistArrayPartition::ComputeHashRepartitionIdsAndRepartition(size_t num_partitions) {
+AbstractDistArrayPartition::ComputeModuloRepartitionIdsAndRepartition(size_t num_partitions) {
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   std::vector<int32_t> repartition_ids(keys_.size());
   for (size_t i = 0; i < keys_.size(); i++) {

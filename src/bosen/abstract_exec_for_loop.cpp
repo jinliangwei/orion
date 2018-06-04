@@ -50,7 +50,6 @@ AbstractExecForLoop::AbstractExecForLoop(
     kPrefetchBatchFuncName(prefetch_batch_func_name),
     kDistArrayBufferInfoMap(dist_array_buffer_info_map),
     kIsRepeated(is_repeated) {
-  LOG(INFO) << "strlen(prefetch_batch_func_name) = " << strlen(prefetch_batch_func_name);
   auto iter = dist_arrays->find(iteration_space_id);
   CHECK(iter != dist_arrays->end());
   iteration_space_ = &(iter->second);
@@ -559,7 +558,7 @@ AbstractExecForLoop::SerializeAndClearDistArrayBuffers() {
     auto iter_pair = dist_array_buffer_data_buffer_map.emplace(dist_array_buffer_id, ExecutorDataBufferMap());
     auto iter = iter_pair.first;
     auto &data_buffer_map = iter->second;
-    buffer_partition->HashSerialize(&data_buffer_map);
+    buffer_partition->ModuloSerialize(&data_buffer_map);
     buffer_partition->Clear();
     for (auto &data_buff_pair : data_buffer_map) {
       int32_t server_id = data_buff_pair.first;
@@ -619,7 +618,7 @@ AbstractExecForLoop::SerializeAndClearDistArrayCaches() {
     auto iter_pair = dist_array_cache_data_buffer_map.emplace(dist_array_id, ExecutorDataBufferMap());
     auto iter = iter_pair.first;
     auto &data_buffer_map = iter->second;
-    cache_partition->HashSerialize(&data_buffer_map);
+    cache_partition->ModuloSerialize(&data_buffer_map);
     cache_partition->Clear();
     for (auto &data_buff_pair : data_buffer_map) {
       int32_t server_id = data_buff_pair.first;
