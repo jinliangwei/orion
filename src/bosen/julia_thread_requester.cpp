@@ -6,12 +6,11 @@
 namespace orion {
 namespace bosen {
 
-void
+jl_value_t*
 JuliaThreadRequester::RequestDistArrayData(
     int32_t dist_array_id,
     int64_t key,
-    type::PrimitiveType value_type,
-    jl_value_t *value_vec) {
+    type::PrimitiveType value_type) {
   request_replied_ = false;
   message::ExecuteMsgHelper::CreateMsg<
     message::ExecuteMsgRequestDistArrayValue>(&send_buff_, dist_array_id, key,
@@ -36,7 +35,7 @@ JuliaThreadRequester::RequestDistArrayData(
   std::unique_lock<std::mutex> lock(request_mtx_);
   request_cv_.wait(lock, [this]{ return this->request_replied_; });
   if (requested_value_.size() == 0) {
-    return;
+    return nullptr;
   }
 
   jl_value_t *value_jl = nullptr;
@@ -63,9 +62,9 @@ JuliaThreadRequester::RequestDistArrayData(
   } else {
     JuliaEvaluator::BoxValue(value_type, requested_value_.data(), &value_jl);
   }
-  jl_arrayset(reinterpret_cast<jl_array_t*>(value_vec), value_jl, 0);
   requested_value_.resize(0);
   JL_GC_POP();
+  return value_jl;
 }
 
 void

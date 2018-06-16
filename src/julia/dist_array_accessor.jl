@@ -67,17 +67,14 @@ end
 function dist_array_cache_fetch(dist_array_id::Int32,
                                 key::Int64,
                                 ValueType::DataType)
-    value = Vector{ValueType}(1)
-    ccall((:orion_request_dist_array_data, lib_path),
+    value = ccall((:orion_request_dist_array_data, lib_path),
           Void, (Int32,
                  Int64,
-                 Int32,
-                 Any),
+                 Int32),
           dist_array_id,
           key,
-          data_type_to_int32(ValueType),
-          value)
-    return value[1]
+          data_type_to_int32(ValueType))
+    return value
 end
 
 Base.IndexStyle{T<:DistArrayAccessor}(::Type{T}) = IndexLinear()

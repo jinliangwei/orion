@@ -28,7 +28,10 @@ enum class DistArrayPartitionScheme {
     k1D = 2,
     kModuloServer = 3,
     kModuloExecutor = 4,
-    kRange = 5
+    kRange = 5,
+    kPartialModuloExecutor = 6,
+    kPartialRandomExecutor = 7,
+    kHashExecutor = 8
 };
 
 enum class DistArrayIndexType {
@@ -59,7 +62,8 @@ enum class DistArrayMapType {
     kMap = 1,
     kMapFixedKeys = 2,
     kMapValues = 3,
-    kMapValuesNewKeys = 4
+    kMapValuesNewKeys = 4,
+    kGroupBy = 5
 };
 
 class DistArrayMeta {
@@ -80,6 +84,7 @@ class DistArrayMeta {
   std::string symbol_;
   std::vector<uint8_t> init_value_bytes_;
   bool contiguous_partitions_ { false };
+  const std::string kKeyFuncName;
  public:
   DistArrayMeta(size_t num_dims,
                 DistArrayParentType parent_type,
@@ -91,7 +96,8 @@ class DistArrayMeta {
                 type::PrimitiveType random_init_type,
                 bool flatten_results,
                 bool is_dense,
-                const std::string &symbol);
+                const std::string &symbol,
+                const std::string &key_func_name);
   ~DistArrayMeta() { }
   DISALLOW_COPY(DistArrayMeta);
 
@@ -117,7 +123,7 @@ class DistArrayMeta {
 
   DistArrayMapType GetMapType() const { return kMapType; }
   JuliaModule GetMapFuncModule() const { return kMapFuncModule; }
-  const std::string &GetMapFuncName() { return kMapFuncName; }
+  const std::string &GetMapFuncName() const { return kMapFuncName; }
 
   void SetInitValue(const uint8_t *init_value_bytes, size_t num_bytes);
   const std::vector<uint8_t>& GetInitValue() const;
@@ -125,6 +131,8 @@ class DistArrayMeta {
   DistArrayInitType GetInitType() const { return kInitType; }
   void SetContiguousPartitions(bool is_contiguous);
   bool IsContiguousPartitions() const;
+
+  const std::string &GetKeyFuncName() const { return kKeyFuncName; }
 };
 
 }

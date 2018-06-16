@@ -151,8 +151,6 @@ AbstractExecForLoop::InitOnCreation() {
 
 void
 AbstractExecForLoop::InitEachExecution(bool is_first_time) {
-  LOG(INFO) << __func__ << " is_first_time = " << is_first_time_
-            << " prefetch status = " << static_cast<int>(prefetch_status_);
   for (auto global_indexed_dist_array_pair : accessed_global_indexed_dist_arrays_) {
     int32_t id = global_indexed_dist_array_pair.first;
     auto* dist_array_ptr = global_indexed_dist_array_pair.second;
@@ -675,7 +673,6 @@ AbstractExecForLoop::GetAndClearDistArrayCacheSendMap(
 
 void
 AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
-  LOG(INFO) << __func__ << "Start";
   CHECK(time_partitions_cleared_);
   time_partitions_serialized_bytes_ = nullptr;
   time_partitions_serialized_size_ = 0;
@@ -731,12 +728,10 @@ AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
   cursor += sizeof(int32_t) * skipped_dist_array_id_vec.size();
   time_partitions_serialized_bytes_ = buffer_bytes;
   time_partitions_serialized_size_ = total_size;
-  LOG(INFO) << __func__ << "End";
 }
 
 void
 AbstractExecForLoop::DeserializePipelinedTimePartitions(uint8_t* bytes) {
-  LOG(INFO) << __func__ << "Start";
   uint8_t *cursor = bytes;
   size_t num_data_buffers = *reinterpret_cast<const size_t*>(cursor);
   cursor += sizeof(size_t);
@@ -770,7 +765,6 @@ AbstractExecForLoop::DeserializePipelinedTimePartitions(uint8_t* bytes) {
       skipped_set.insert(dist_array_id);
     }
   }
-  LOG(INFO) << __func__ << "End";
 }
 
 void

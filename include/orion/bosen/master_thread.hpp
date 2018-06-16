@@ -23,6 +23,10 @@
 #include <orion/bosen/dist_array_meta.hpp>
 #include <orion/bosen/julia_evaluator.hpp>
 #include <orion/bosen/accumulator.hpp>
+#include <orion/bosen/partition_num_unique_partial_keys.hpp>
+#include <orion/bosen/dim_histogram.hpp>
+#include <orion/bosen/key.hpp>
+
 namespace orion {
 namespace bosen {
 
@@ -84,7 +88,8 @@ class MasterThread {
       kCreateDistArray = 7,
       kRespondToDriver = 8,
       kCreateDistArrayBuffer = 9,
-      kWaitingExecutorResponse = 10
+      kWaitingExecutorResponse = 10,
+      kComputePartitionNumUniquePartialKeys = 11
   };
 
   const size_t kNumExecutors;
@@ -150,6 +155,8 @@ class MasterThread {
   std::string lib_path_;
   Accumulator accumulator_;
   const std::string kOrionHome;
+
+  void* task_data_ptr_ { nullptr };
  public:
   MasterThread(const Config &config);
   ~MasterThread();
@@ -176,6 +183,7 @@ class MasterThread {
   void BroadcastToAllExecutors();
   void BroadcastToAllServers();
   void SendToExecutor(int executor_index);
+  void SendToServer(int server_index);
   void SendToDriver();
 };
 
@@ -432,10 +440,36 @@ MasterThread::HandleMsg(PollConn *poll_conn_ptr) {
           }
 
           SendToDriver();
-          send_buff_.reset_sent_sizes();
           send_buff_.clear_to_send();
           action_ = Action::kNone;
           accum_result_size_ = 0;
+        }
+        break;
+      case Action::kComputePartitionNumUniquePartialKeys:
+        {
+          LOG(INFO) << __func__ << " action = ComputePartitionNumUniquePartialKeys";
+          message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgComputePartitionNumUniquePartialKeys>(
+              &send_buff_, driver_recv_byte_buff_.GetSize());
+          send_buff_.set_next_to_send(driver_recv_byte_buff_.GetBytes(),
+                                      driver_recv_byte_buff_.GetSize());
+          BroadcastToAllExecutorsAndServers();
+          send_buff_.clear_to_send();
+
+          task::RandomRemapPartialKeys random_remap_partial_keys_task;
+          std::string task_buff(
+              reinterpret_cast<const char*>(driver_recv_byte_buff_.GetBytes()),
+              driver_recv_byte_buff_.GetSize());
+          random_remap_partial_keys_task.ParseFromString(task_buff);
+          int32_t dist_array_id = random_remap_partial_keys_task.dist_array_id();
+          const size_t *dim_indices = random_remap_partial_keys_task.dim_indices().data();
+          size_t num_dim_indices = random_remap_partial_keys_task.dim_indices_size();
+
+          CHECK(task_data_ptr_ == nullptr);
+          task_data_ptr_ = new PartitionNumUniquePartialKeys(dist_array_id, dim_indices,
+                                                                  num_dim_indices);
+          num_expected_executor_acks_ = kNumExecutors + kNumServers;
+          num_recved_executor_acks_ = 0;
+          action_ = Action::kWaitingExecutorResponse;
         }
         break;
       case Action::kExit:
@@ -636,6 +670,61 @@ MasterThread::HandleDriverMsg(PollConn *poll_conn_ptr) {
         action_ = Action::kForwardDriverMsgToAllExecutorsAndServers;
       }
       break;
+    case message::DriverMsgType::kRandomRemapPartialKeys:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgRandomRemapPartialKeys>(recv_buff);
+        size_t expected_size = msg->task_size;
+
+        bool received_next_msg
+            = ReceiveArbitraryBytes(driver_.sock, &recv_buff,
+                                    &driver_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          executor_in_action_ = -1;
+
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kComputePartitionNumUniquePartialKeys;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::DriverMsgType::kComputeHistogram:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgComputeHistogram>(recv_buff);
+        size_t expected_size = msg->task_size;
+        LOG(INFO) << __func__ << " ComputeHistogram, expected size = "
+                  << expected_size;
+        bool received_next_msg
+            = ReceiveArbitraryBytes(driver_.sock, &recv_buff,
+                                    &driver_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          CHECK(task_data_ptr_ == nullptr);
+          task_data_ptr_ = new DimHistogram();
+
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kForwardDriverMsgAndNextToAllExecutorsAndServers;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::DriverMsgType::kSaveAsTextFile:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgSaveAsTextFile>(recv_buff);
+        size_t expected_size = msg->task_size;
+
+        bool received_next_msg
+            = ReceiveArbitraryBytes(driver_.sock, &recv_buff,
+                                    &driver_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kForwardDriverMsgAndNextToAllExecutorsAndServers;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
     default:
       auto& sock = poll_conn_ptr->conn->sock;
       LOG(FATAL) << "Unknown driver message type " << static_cast<int>(driver_msg_type)
@@ -803,8 +892,8 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
                                                 dist_array_id);
             send_buff_.set_next_to_send(dims.data(), dims.size()*sizeof(int64_t));
             num_recved_executor_acks_ = 0;
-            num_expected_executor_acks_ = kNumExecutors;
-            BroadcastToAllExecutors();
+            num_expected_executor_acks_ = kNumExecutors + kNumServers;
+            BroadcastToAllExecutorsAndServers();
             send_buff_.reset_sent_sizes();
             send_buff_.clear_to_send();
             action_ = Action::kWaitingExecutorResponse;
@@ -871,7 +960,6 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
                                                       0);
               SendToExecutor(executor_id);
               send_buff_.clear_to_send();
-              send_buff_.reset_sent_sizes();
             } else {
               auto &partition_id_vec = partition_id_vec_iter->second;
               std::vector<size_t> num_lines;
@@ -887,13 +975,11 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
                 message::ExecuteMsgPartitionNumLines>(&send_buff_,
                                                       dist_array_id,
                                                       num_lines.size());
-              memcpy(send_bytes_buff, num_lines.data(), num_lines.size() * sizeof(size_t));
               send_buff_.set_next_to_send(send_bytes_buff,
                                           num_lines.size() * sizeof(size_t),
                                           true);
               SendToExecutor(executor_id);
               send_buff_.clear_to_send();
-              send_buff_.reset_sent_sizes();
             }
           }
           executor_partition_ids.clear();
@@ -915,7 +1001,6 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
           send_buff_.set_next_to_send(dist_array_meta.GetDims().data(),
                                       dist_array_meta.GetDims().size()*sizeof(int64_t));
           SendToDriver();
-          send_buff_.reset_sent_sizes();
           send_buff_.clear_to_send();
           num_recved_executor_acks_ = 0;
           num_expected_executor_acks_ = 0;
@@ -933,7 +1018,6 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
           message::DriverMsgHelper::CreateMsg<message::DriverMsgMasterResponse>(
               &send_buff_, 0);
           SendToDriver();
-          send_buff_.reset_sent_sizes();
           send_buff_.clear_to_send();
           num_recved_executor_acks_ = 0;
           num_expected_executor_acks_ = 0;
@@ -951,16 +1035,11 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         size_t num_dims = ack_msg->num_dims;
         int32_t *max_ids = ack_msg->max_ids;
         auto &dist_array_meta = dist_array_metas_.at(dist_array_id);
-        LOG(INFO) << "RepartitionDistArrayMaxPartitionIds, dist_array_id = " << dist_array_id
-                  << " received num_dims = "
-                  << num_dims;
         if (num_dims > 0) {
           dist_array_meta.AccumMaxPartitionIds(max_ids, num_dims);
         }
         if (num_recved_executor_acks_ == num_expected_executor_acks_) {
           auto &max_ids = dist_array_meta.GetMaxPartitionIds();
-          LOG(INFO) << "RepartitionDistArrayMaxPartitionIds, dist_array_id = "
-                    << dist_array_id << " max_ids.size = " << max_ids.size();
           auto *msg = message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgRepartitionDistArrayMaxPartitionIds>(
               &send_buff_,
               dist_array_id,
@@ -1016,7 +1095,6 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
             send_buff_.set_next_to_send(driver_send_byte_buff_.GetBytes(),
                                         driver_send_byte_buff_.GetSize());
             SendToDriver();
-            send_buff_.reset_sent_sizes();
             send_buff_.clear_to_send();
           }
           ret = EventHandler<PollConn>::kClearOneAndNextMsg;
@@ -1031,6 +1109,211 @@ MasterThread::HandleExecuteMsg(PollConn *poll_conn_ptr) {
         ret = EventHandler<PollConn>::kClearOneMsg;
         if (num_recved_executor_acks_ == kNumExecutors + kNumServers) {
           action_ = Action::kRespondToDriver;
+        }
+      }
+      break;
+    case message::ExecuteMsgType::kComputePartitionNumUniquePartialKeysAck:
+      {
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgComputePartitionNumUniquePartialKeysAck>(recv_buff);
+        size_t num_partitions = msg->num_partitions;
+        size_t expected_size = num_partitions * (sizeof(int32_t) + sizeof(size_t));
+        int32_t executor_id = sock_conn_to_id_[poll_conn_ptr->conn];
+        bool is_from_executor = poll_conn_ptr->type == PollConn::ConnType::executor;
+        ByteBuffer &result_byte_buff
+            = is_from_executor
+            ? executor_byte_buff_[executor_id] : server_byte_buff_[executor_id];
+
+        bool received_next_msg = expected_size == 0 ? true
+                                 : ReceiveArbitraryBytes(poll_conn_ptr->conn->sock, &recv_buff,
+                                                         &result_byte_buff, expected_size);
+        action_ = Action::kNone;
+
+        if (received_next_msg) {
+          LOG(INFO) << __func__ << " received NumUniquePartialKeysAck from " << executor_id;
+          num_recved_executor_acks_++;
+          if (num_partitions > 0) {
+            auto *partition_num_unique_partial_keys = reinterpret_cast<PartitionNumUniquePartialKeys*>(task_data_ptr_);
+            LOG(INFO) << "task_data_ptr = " << (void*) partition_num_unique_partial_keys;
+            int32_t *partition_ids = reinterpret_cast<int32_t*>(result_byte_buff.GetBytes());
+            size_t *num_unique_partial_keys = reinterpret_cast<size_t*>(
+                result_byte_buff.GetBytes() + num_partitions * sizeof(int32_t));
+            auto &executor_id_to_partition_ids_map = is_from_executor ? partition_num_unique_partial_keys->executor_id_to_partition_ids :
+                                                     partition_num_unique_partial_keys->server_id_to_partition_ids;
+            executor_id_to_partition_ids_map[executor_id].resize(num_partitions);
+            for (size_t i = 0; i < num_partitions; i++) {
+              int32_t partition_id = partition_ids[i];
+              partition_num_unique_partial_keys->num_unique_partial_keys.emplace(
+                  std::make_pair(partition_id, num_unique_partial_keys[i]));
+              executor_id_to_partition_ids_map[executor_id][i] = partition_id;
+              partition_num_unique_partial_keys->total_num_unique_partial_keys += num_unique_partial_keys[i];
+              LOG(INFO) << __func__ << " partition_id = " << partition_id
+                        << " num_unique_partial_keys = " << num_unique_partial_keys[i];
+            }
+          }
+
+          if (num_recved_executor_acks_ == num_expected_executor_acks_) {
+            size_t offset = 0;
+            auto *partition_num_unique_partial_keys = reinterpret_cast<PartitionNumUniquePartialKeys*>(task_data_ptr_);
+            int32_t dist_array_id = partition_num_unique_partial_keys->kDistArrayId;
+            const std::vector<size_t> &dim_indices = partition_num_unique_partial_keys->dim_indices;
+            std::vector<int64_t> partial_dims(dim_indices.size());
+            auto &dist_array_meta = dist_array_metas_.at(dist_array_id);
+            auto &dims = dist_array_meta.GetDims();
+            key::get_partial_dims(dims, dim_indices, &partial_dims);
+            size_t length = key::get_length(partial_dims);
+            std::unordered_map<int32_t, std::pair<int64_t, int64_t>> partition_end_points;
+            size_t total_num_unique_partial_keys = partition_num_unique_partial_keys->total_num_unique_partial_keys;
+
+            for (auto &partition_pair : partition_num_unique_partial_keys->num_unique_partial_keys) {
+              int32_t partition_id = partition_pair.first;
+              size_t partition_num_unique_partial_keys = partition_pair.second;
+              size_t target_space_size
+                  = static_cast<size_t>(
+                      static_cast<double>(partition_num_unique_partial_keys) / static_cast<double>(total_num_unique_partial_keys) * static_cast<double>(length));
+              if (target_space_size < partition_num_unique_partial_keys) target_space_size = partition_num_unique_partial_keys;
+              partition_end_points.emplace(std::make_pair(partition_id, std::make_pair(offset, offset + target_space_size - 1)));
+
+              CHECK_GE(total_num_unique_partial_keys, partition_num_unique_partial_keys);
+              CHECK_GE(length, target_space_size);
+              total_num_unique_partial_keys -= partition_num_unique_partial_keys;
+              length -= target_space_size;
+              offset += target_space_size;
+            }
+
+            for (auto &executor_pair : partition_num_unique_partial_keys->executor_id_to_partition_ids) {
+              int32_t executor_id = executor_pair.first;
+              std::vector<int32_t>& partition_ids = executor_pair.second;
+              task::RandomRemapPartialKeys random_remap_partial_keys_task;
+              random_remap_partial_keys_task.set_dist_array_id(dist_array_id);
+              for (auto dim_index : dim_indices) {
+                random_remap_partial_keys_task.add_dim_indices(dim_index);
+              }
+              for (auto partition_id : partition_ids) {
+                auto end_points = partition_end_points.at(partition_id);
+                random_remap_partial_keys_task.add_partition_ids(partition_id);
+                random_remap_partial_keys_task.add_partition_end_points(end_points.first);
+                random_remap_partial_keys_task.add_partition_end_points(end_points.second);
+              }
+              std::string string_buff;
+              random_remap_partial_keys_task.SerializeToString(&string_buff);
+              uint8_t *send_bytes_buff = new uint8_t[string_buff.size()];
+              memcpy(send_bytes_buff, string_buff.data(), string_buff.size());
+              message::ExecuteMsgHelper::CreateMsg<
+                message::ExecuteMsgRandomRemapPartialKeys>(&send_buff_, string_buff.size());
+              send_buff_.set_next_to_send(send_bytes_buff, string_buff.size(), true);
+              SendToExecutor(executor_id);
+              send_buff_.clear_to_send();
+            }
+
+            for (auto &server_pair : partition_num_unique_partial_keys->server_id_to_partition_ids) {
+              int32_t server_id = server_pair.first;
+              std::vector<int32_t>& partition_ids = server_pair.second;
+              task::RandomRemapPartialKeys random_remap_partial_keys_task;
+              random_remap_partial_keys_task.set_dist_array_id(dist_array_id);
+              for (auto dim_index : dim_indices) {
+                random_remap_partial_keys_task.add_dim_indices(dim_index);
+              }
+              for (auto partition_id : partition_ids) {
+                auto end_points = partition_end_points.at(partition_id);
+                random_remap_partial_keys_task.add_partition_ids(partition_id);
+                random_remap_partial_keys_task.add_partition_end_points(end_points.first);
+                random_remap_partial_keys_task.add_partition_end_points(end_points.second);
+              }
+              std::string string_buff;
+              random_remap_partial_keys_task.SerializeToString(&string_buff);
+              uint8_t *send_bytes_buff = new uint8_t[string_buff.size()];
+              memcpy(send_bytes_buff, string_buff.data(), string_buff.size());
+              message::ExecuteMsgHelper::CreateMsg<
+                message::ExecuteMsgRandomRemapPartialKeys>(&send_buff_, string_buff.size());
+              send_buff_.set_next_to_send(send_bytes_buff, string_buff.size(), true);
+              SendToServer(server_id);
+              send_buff_.clear_to_send();
+            }
+            num_recved_executor_acks_ = 0;
+            num_expected_executor_acks_ = partition_num_unique_partial_keys->executor_id_to_partition_ids.size() +
+                                          partition_num_unique_partial_keys->server_id_to_partition_ids.size();
+            action_ = Action::kWaitingExecutorResponse;
+            delete reinterpret_cast<PartitionNumUniquePartialKeys*>(task_data_ptr_);
+            task_data_ptr_ = nullptr;
+            LOG(INFO) << __func__ << " deleted " << task_data_ptr_;
+          }
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::ExecuteMsgType::kComputeHistogramAck:
+      {
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgComputeHistogramAck>(recv_buff);
+        size_t num_bins = msg->num_bins;
+        size_t expected_size = msg->num_bins * (sizeof(int64_t) + sizeof(size_t));
+        int32_t executor_id = sock_conn_to_id_[poll_conn_ptr->conn];
+        ByteBuffer &result_byte_buff
+            = poll_conn_ptr->type == PollConn::ConnType::executor
+            ? executor_byte_buff_[executor_id] : server_byte_buff_[executor_id];
+
+        bool received_next_msg = num_bins > 0 ?
+                                 ReceiveArbitraryBytes(poll_conn_ptr->conn->sock, &recv_buff,
+                                                       &result_byte_buff, expected_size) :
+                                 false;
+        action_ = Action::kNone;
+        ret = EventHandler<PollConn>::kNoAction;
+        if (received_next_msg || num_bins == 0) {
+          num_recved_executor_acks_ += 1;
+          if (num_bins > 0) {
+            auto* histogram_accum = reinterpret_cast<DimHistogram*>(task_data_ptr_);
+
+            std::vector<int64_t> bin_keys(num_bins);
+            std::vector<size_t> bin_sizes(num_bins);
+            memcpy(bin_keys.data(), result_byte_buff.GetBytes(), num_bins * sizeof(int64_t));
+            memcpy(bin_sizes.data(), result_byte_buff.GetBytes() + num_bins * sizeof(int64_t),
+                   num_bins * sizeof(size_t));
+            auto &bin_to_counts_map = histogram_accum->bin_to_counts;
+            for (size_t i = 0; i < num_bins; i++) {
+              int64_t bin_key = bin_keys[i];
+              size_t bin_count = bin_sizes[i];
+              bin_to_counts_map[bin_key] += bin_count;
+              LOG(INFO) << " received ComputeHistogramAck from executor"
+                        << " i = " << i << " bin_key = " << bin_key
+                        << " bin_count = " << bin_count;
+            }
+            ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          } else {
+            ret = EventHandler<PollConn>::kClearOneMsg;
+          }
+
+          if (num_recved_executor_acks_ == num_expected_executor_acks_) {
+            auto* histogram_accum = reinterpret_cast<DimHistogram*>(task_data_ptr_);
+            auto &bin_to_counts_map = histogram_accum->bin_to_counts;
+            std::vector<int64_t> bin_keys(bin_to_counts_map.size());
+            std::vector<size_t> bin_sizes(bin_to_counts_map.size());
+            size_t index = 0;
+            for (auto &bin_pair : bin_to_counts_map) {
+              bin_keys[index] = bin_pair.first;
+              bin_sizes[index] = bin_pair.second;
+              LOG(INFO) << "ComputeHistogramAck " << " index = " << index
+                        << " bin_key = " << bin_keys[index]
+                        << " bin_sizes = " << bin_sizes[index];
+              index += 1;
+            }
+            size_t num_bytes = bin_keys.size() * sizeof(int64_t) +
+                               bin_sizes.size() * sizeof(size_t);
+            uint8_t* bytes_buff = new uint8_t[num_bytes];
+            memcpy(bytes_buff, bin_keys.data(), bin_keys.size() * sizeof(int64_t));
+            memcpy(bytes_buff + bin_keys.size() * sizeof(int64_t),
+                   bin_sizes.data(), bin_sizes.size() * sizeof(size_t));
+            num_recved_executor_acks_ = false;
+            message::DriverMsgHelper::CreateMsg<
+              message::DriverMsgMasterResponse>(
+                  &send_buff_,
+                  num_bytes);
+            send_buff_.set_next_to_send(bytes_buff, num_bytes, true);
+            SendToDriver();
+            send_buff_.clear_to_send();
+            delete histogram_accum;
+            task_data_ptr_ = nullptr;
+          }
         }
       }
       break;
@@ -1072,7 +1355,9 @@ MasterThread::CreateDistArrayMeta() {
   auto map_func_name = create_dist_array.has_map_func_name() ?
                        create_dist_array.map_func_name() :
                        "";
-
+  auto key_func_name = create_dist_array.has_key_func_name() ?
+                       create_dist_array.key_func_name() :
+                       "";
   auto random_init_type = create_dist_array.has_random_init_type() ?
                           static_cast<type::PrimitiveType>(create_dist_array.random_init_type())
                           : type::PrimitiveType::kVoid;
@@ -1094,7 +1379,8 @@ MasterThread::CreateDistArrayMeta() {
                             random_init_type,
                             flatten_results,
                             is_dense,
-                            symbol));
+                            symbol,
+                            key_func_name));
   auto meta_iter = iter_pair.first;
   if (create_dist_array.dims_size() > 0) {
     meta_iter->second.AssignDims(create_dist_array.dims().data());
@@ -1125,6 +1411,7 @@ MasterThread::CreateDistArrayBufferMeta() {
   auto partition_scheme = DistArrayPartitionScheme::kNaive;
   auto map_func_module = JuliaModule::kNone;
   auto map_func_name = "";
+  auto key_func_name = "";
   auto random_init_type = type::PrimitiveType::kVoid;
   auto flatten_results = false;
   auto is_dense = create_dist_array_buffer.is_dense();
@@ -1143,7 +1430,8 @@ MasterThread::CreateDistArrayBufferMeta() {
                             random_init_type,
                             flatten_results,
                             is_dense,
-                            symbol));
+                            symbol,
+                            key_func_name));
   auto meta_iter = iter_pair.first;
   meta_iter->second.AssignDims(create_dist_array_buffer.dims().data());
 
@@ -1262,7 +1550,7 @@ MasterThread::BroadcastToAllExecutorsAndServersRange(size_t start,
     bool sent = servers_[j]->sock.Send(&send_buff_);
     if (!sent) {
       send_buff.CopyAndMoveNextToSend(&send_buff_);
-      event_handler_.SetToReadWrite(executor_id_to_poll_conn_ptr_[j]);
+      event_handler_.SetToReadWrite(server_id_to_poll_conn_ptr_[j]);
     }
     send_buff_.reset_sent_sizes();
   }
@@ -1310,15 +1598,15 @@ MasterThread::BroadcastToAllServers() {
     bool sent = servers_[i]->sock.Send(&send_buff_);
     if (!sent) {
       send_buff.CopyAndMoveNextToSend(&send_buff_);
-      event_handler_.SetToReadWrite(executor_id_to_poll_conn_ptr_[i]);
+      event_handler_.SetToReadWrite(server_id_to_poll_conn_ptr_[i]);
     }
     send_buff_.reset_sent_sizes();
   }
 }
 
 void
-MasterThread::SendToExecutor(int executor_index) {
-  conn::SocketConn* executor = executors_[executor_index].get();
+MasterThread::SendToExecutor(int executor_id) {
+  conn::SocketConn* executor = executors_[executor_id].get();
   conn::SendBuffer& send_buff = executor->send_buff;
   if (send_buff.get_remaining_to_send_size() > 0
       || send_buff.get_remaining_next_to_send_size() > 0) {
@@ -1331,8 +1619,29 @@ MasterThread::SendToExecutor(int executor_index) {
   bool sent = executor->sock.Send(&send_buff_);
   if (!sent) {
     send_buff.CopyAndMoveNextToSend(&send_buff_);
-    event_handler_.SetToReadWrite(executor_id_to_poll_conn_ptr_[executor_index]);
+    event_handler_.SetToReadWrite(executor_id_to_poll_conn_ptr_[executor_id]);
   }
+  send_buff_.reset_sent_sizes();
+}
+
+void
+MasterThread::SendToServer(int server_id) {
+  conn::SocketConn* server = servers_[server_id].get();
+  conn::SendBuffer& send_buff = server->send_buff;
+  if (send_buff.get_remaining_to_send_size() > 0
+      || send_buff.get_remaining_next_to_send_size() > 0) {
+    bool sent = server->sock.Send(&send_buff);
+    while (!sent) {
+      sent = server->sock.Send(&send_buff);
+    }
+    send_buff.clear_to_send();
+  }
+  bool sent = server->sock.Send(&send_buff_);
+  if (!sent) {
+    send_buff.CopyAndMoveNextToSend(&send_buff_);
+    event_handler_.SetToReadWrite(server_id_to_poll_conn_ptr_[server_id]);
+  }
+  send_buff_.reset_sent_sizes();
 }
 
 void
@@ -1351,6 +1660,7 @@ MasterThread::SendToDriver() {
     send_buff.CopyAndMoveNextToSend(&send_buff_);
     event_handler_.SetToReadWrite(&driver_poll_conn_);
   }
+  send_buff_.reset_sent_sizes();
 }
 
 } // end namespace bosen

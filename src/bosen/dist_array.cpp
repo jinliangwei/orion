@@ -24,7 +24,8 @@ DistArray::DistArray(
     bool flatten_results,
     bool is_dense,
     const std::string &symbol,
-    JuliaThreadRequester *julia_requester):
+    JuliaThreadRequester *julia_requester,
+    const std::string &key_func_name):
     kId(id),
     kConfig(config),
     kIsServer(is_server),
@@ -42,9 +43,10 @@ DistArray::DistArray(
           random_init_type,
           flatten_results,
           is_dense,
-          symbol),
-    julia_requester_(julia_requester) {
-}
+          symbol,
+          key_func_name),
+    julia_requester_(julia_requester),
+    perf_count_(kPerfCountTypes) { }
 
 DistArray::~DistArray() {
   for (auto &partition_pair : partitions_) {
@@ -241,6 +243,28 @@ DistArray::Map(DistArray* child_dist_array) {
 }
 
 void
+DistArray::GroupBy(DistArray* child_dist_array) {
+  for (auto& partition_pair : partitions_) {
+    int64_t partition_id = partition_pair.first;
+    auto* partition = partition_pair.second;
+    auto child_partition_pair = child_dist_array->GetAndCreateLocalPartition(partition_id);
+    auto *child_partition = child_partition_pair.first;
+    partition->GroupBy(child_partition);
+  }
+
+  for (auto &time_partitions : space_time_partitions_) {
+    int64_t space_id = time_partitions.first;
+    for (auto &partition_pair : time_partitions.second) {
+      int64_t time_id = partition_pair.first;
+      auto *partition = partition_pair.second;
+      auto child_partition_pair = child_dist_array->GetAndCreateLocalPartition(space_id, time_id);
+      auto *child_partition = child_partition_pair.first;
+      partition->GroupBy(child_partition);
+    }
+  }
+}
+
+void
 DistArray::ComputeModuloRepartition(size_t num_partitions) {
   std::vector<AbstractDistArrayPartition*> partition_buff;
   GetAndClearLocalPartitions(&partition_buff);
@@ -249,6 +273,26 @@ DistArray::ComputeModuloRepartition(size_t num_partitions) {
     dist_array_partition->BuildKeyValueBuffersFromSparseIndex();
     dist_array_partition->ComputeModuloRepartitionIdsAndRepartition(num_partitions);
     delete dist_array_partition;
+  }
+
+  bool from_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
+  bool to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
+
+  bool repartition_recv = true;
+  if ((to_server && (!kIsServer || (from_server && kConfig.kNumServers == 1))) ||
+      (!to_server && (kIsServer || (!from_server && kConfig.kNumExecutors == 1)))
+      ) {
+    repartition_recv = false;
+  }
+
+  bool to_hold_partitions = false;
+  if (to_server == kIsServer) {
+    to_hold_partitions = true;
+  }
+
+  if (!repartition_recv && to_hold_partitions) {
+    ComputeMaxPartitionIds();
+    CheckAndBuildIndex();
   }
 }
 
@@ -273,9 +317,226 @@ DistArray::ComputeRepartition(const std::string &repartition_func_name) {
     repartition_recv = false;
   }
 
-  if (!repartition_recv) {
+  bool to_hold_partitions = false;
+  if (to_server == kIsServer) {
+    to_hold_partitions = true;
+  }
+
+  if (!repartition_recv && to_hold_partitions) {
     ComputeMaxPartitionIds();
     CheckAndBuildIndex();
+  }
+}
+
+void
+DistArray::ComputeHashRepartition(const std::string &repartition_func_name,
+                                  size_t num_partitions) {
+  std::vector<AbstractDistArrayPartition*> partition_buff;
+  GetAndClearLocalPartitions(&partition_buff);
+
+  for (auto dist_array_partition : partition_buff) {
+    dist_array_partition->BuildKeyValueBuffersFromSparseIndex();
+    dist_array_partition->ComputeHashRepartitionIdsAndRepartition(repartition_func_name,
+                                                                  num_partitions);
+    delete dist_array_partition;
+  }
+
+  bool from_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
+  bool to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
+
+  bool repartition_recv = true;
+  if ((to_server && (!kIsServer || (from_server && kConfig.kNumServers == 1))) ||
+      (!to_server && (kIsServer || (!from_server && kConfig.kNumExecutors == 1)))
+      ) {
+    repartition_recv = false;
+  }
+
+  bool to_hold_partitions = false;
+  if (to_server == kIsServer) {
+    to_hold_partitions = true;
+  }
+
+  if (!repartition_recv && to_hold_partitions) {
+    ComputeMaxPartitionIds();
+    CheckAndBuildIndex();
+  }
+}
+
+void
+DistArray::ComputePartialModuloRepartitionIdsAndRepartition(size_t num_partitions,
+                                                            const std::vector<size_t> &dim_indices) {
+  std::vector<AbstractDistArrayPartition*> partition_buff;
+  GetAndClearLocalPartitions(&partition_buff);
+
+  for (auto dist_array_partition : partition_buff) {
+    dist_array_partition->BuildKeyValueBuffersFromSparseIndex();
+    dist_array_partition->ComputePartialModuloRepartitionIdsAndRepartition(num_partitions,
+                                                                        dim_indices);
+    delete dist_array_partition;
+  }
+
+  bool from_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
+  bool to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
+
+  bool repartition_recv = true;
+  if ((to_server && (!kIsServer || (from_server && kConfig.kNumServers == 1))) ||
+      (!to_server && (kIsServer || (!from_server && kConfig.kNumExecutors == 1)))
+      ) {
+    repartition_recv = false;
+  }
+
+  bool to_hold_partitions = false;
+  if (to_server == kIsServer) {
+    to_hold_partitions = true;
+  }
+
+  if (!repartition_recv && to_hold_partitions) {
+    ComputeMaxPartitionIds();
+    CheckAndBuildIndex();
+  }
+}
+
+void
+DistArray::ComputePartialRandomRepartitionIdsAndRepartition(size_t num_partitions,
+                                                         const std::vector<size_t> &dim_indices) {
+
+  std::vector<AbstractDistArrayPartition*> partition_buff;
+  GetAndClearLocalPartitions(&partition_buff);
+
+  std::unordered_map<int64_t, int32_t> partial_key_to_repartition_id_map;
+
+  for (auto dist_array_partition : partition_buff) {
+    dist_array_partition->BuildKeyValueBuffersFromSparseIndex();
+    dist_array_partition->ComputePartialRandomRepartitionIdsAndRepartition(num_partitions,
+                                                                           dim_indices,
+                                                                           &partial_key_to_repartition_id_map);
+    delete dist_array_partition;
+  }
+
+  bool from_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
+  bool to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
+
+  bool repartition_recv = true;
+  if ((to_server && (!kIsServer || (from_server && kConfig.kNumServers == 1))) ||
+      (!to_server && (kIsServer || (!from_server && kConfig.kNumExecutors == 1)))
+      ) {
+    repartition_recv = false;
+  }
+
+  bool to_hold_partitions = false;
+  if (to_server == kIsServer) {
+    to_hold_partitions = true;
+  }
+
+  if (!repartition_recv && to_hold_partitions) {
+    ComputeMaxPartitionIds();
+    CheckAndBuildIndex();
+  }
+}
+
+void
+DistArray::GetPartitionNumUniquePartialKeys(const std::vector<size_t> &dim_indices,
+                                            std::vector<int32_t> *partition_ids,
+                                            std::vector<size_t> *partition_num_unique_partial_keys) const {
+  CHECK(meta_.GetPartitionScheme() != DistArrayPartitionScheme::kSpaceTime);
+  partition_ids->resize(partitions_.size());
+  partition_num_unique_partial_keys->resize(partitions_.size());
+  size_t idx = 0;
+  for (auto &partition_pair : partitions_) {
+    int32_t partition_id = partition_pair.first;
+    auto* partition = partition_pair.second;
+    size_t num_unique_partial_keys = partition->GetNumUniquePartialKeys(dim_indices);
+    (*partition_ids)[idx] = partition_id;
+    (*partition_num_unique_partial_keys)[idx] = num_unique_partial_keys;
+  }
+}
+
+void
+DistArray::RandomRemapPartialKeys(const std::vector<size_t> &dim_indices,
+                                  const std::vector<int32_t> &partition_ids,
+                                  const std::vector<int64_t> &remapped_ranges) {
+  CHECK(meta_.GetPartitionScheme() != DistArrayPartitionScheme::kSpaceTime);
+
+  CHECK(partition_ids.size() == partitions_.size());
+  CHECK(partition_ids.size() * 2 == remapped_ranges.size());
+  std::unordered_map<int64_t, int64_t> partial_key_to_remapped_partial_key;
+  std::set<int64_t> remapped_partial_key_set;
+
+  for (size_t i = 0; i < partition_ids.size(); i++) {
+    int32_t partition_id = partition_ids[i];
+    int64_t remapped_range_start = remapped_ranges[i * 2];
+    int64_t remapped_range_end = remapped_ranges[i * 2 + 1];
+    auto partition_iter = partitions_.find(partition_id);
+    CHECK(partition_iter != partitions_.end());
+    auto *partition = partition_iter->second;
+    partition->RandomRemapPartialKeys(dim_indices,
+                                      &partial_key_to_remapped_partial_key,
+                                      &remapped_partial_key_set,
+                                      remapped_range_start,
+                                      remapped_range_end);
+  }
+}
+
+void
+DistArray::ComputeHistogram(size_t dim_index,
+                            size_t num_bins,
+                            std::unordered_map<int64_t, size_t> *histogram) const {
+  const auto &dims = GetDims();
+  size_t dim_size = dims[dim_index];
+  CHECK_GE(dim_size, num_bins) << " dim_index = " << dim_index;
+
+  size_t full_bin_size = (dim_size + num_bins - 1) / num_bins;
+  size_t num_full_bins = (dim_size % num_bins == 0) ? num_bins : (dim_size % num_bins);
+  size_t bin_size = full_bin_size - 1;
+  int64_t full_bin_cutoff_key = num_full_bins * full_bin_size - 1;
+
+  int64_t dim_divider = 1;
+  for (size_t i = 0; i < dim_index; i++) {
+    dim_divider *= dims[i];
+  }
+
+  int64_t dim_mod = dims[dim_index];
+
+  if (meta_.GetPartitionScheme() == DistArrayPartitionScheme::kSpaceTime) {
+    ComputeHistogramSpaceTime(dim_index, num_bins, histogram,
+                              full_bin_size,
+                              num_full_bins,
+                              bin_size,
+                              full_bin_cutoff_key,
+                              dim_divider,
+                              dim_mod);
+  } else {
+    ComputeHistogram1D(dim_index, num_bins, histogram,
+                       full_bin_size,
+                       num_full_bins,
+                       bin_size,
+                       full_bin_cutoff_key,
+                       dim_divider,
+                       dim_mod);
+
+  }
+}
+
+void
+DistArray::SaveAsTextFile(const std::string &to_string_func_name,
+      const std::string &file_path) {
+  for (auto& partition_pair : partitions_) {
+    int64_t partition_id = partition_pair.first;
+    auto* partition = partition_pair.second;
+    std::string id_str = std::to_string(partition_id);
+    partition->SaveAsTextFile(id_str, to_string_func_name,
+                              file_path);
+  }
+
+  for (auto &time_partitions : space_time_partitions_) {
+    int64_t space_id = time_partitions.first;
+    for (auto &partition_pair : time_partitions.second) {
+      int64_t time_id = partition_pair.first;
+      auto *partition = partition_pair.second;
+      std::string id_str = std::to_string(space_id) + std::string(".") + std::to_string(time_id);
+      partition->SaveAsTextFile(id_str, to_string_func_name,
+                                file_path);
+    }
   }
 }
 
@@ -760,6 +1021,85 @@ DistArray::ComputeMaxPartitionIds1D() {
     if (max_partition_id < partition_id) max_partition_id = partition_id;
   }
   meta_.SetMaxPartitionIds(max_partition_id);
+}
+
+
+void
+DistArray::ComputeHistogramSpaceTime(size_t dim_index,
+                                     size_t num_bins,
+                                     std::unordered_map<int64_t, size_t> *histogram,
+                                     size_t full_bin_size,
+                                     size_t num_full_bins,
+                                     size_t bin_size,
+                                     int64_t full_bin_cutoff_key,
+                                     int64_t dim_divider,
+                                     int64_t dim_mod) const {
+  std::vector<size_t> histogram_vec(num_bins);
+  for (auto &time_partition_map : space_time_partitions_) {
+    for (auto &partition_pair : time_partition_map.second) {
+      auto *partition = partition_pair.second;
+      partition->AccumHistogram(dim_index, num_bins,
+                                &histogram_vec,
+                                full_bin_size,
+                                num_full_bins,
+                                bin_size,
+                                full_bin_cutoff_key,
+                                dim_divider,
+                                dim_mod);
+    }
+  }
+  for (size_t i = 0; i < histogram_vec.size(); i++) {
+    size_t count = histogram_vec[i];
+    if (count > 0) {
+      (*histogram)[i] = count;
+    }
+  }
+}
+
+void
+DistArray::ComputeHistogram1D(size_t dim_index,
+                              size_t num_bins,
+                              std::unordered_map<int64_t, size_t> *histogram,
+                              size_t full_bin_size,
+                              size_t num_full_bins,
+                              size_t bin_size,
+                              int64_t full_bin_cutoff_key,
+                              int64_t dim_divider,
+                              int64_t dim_mod) const {
+  std::vector<size_t> histogram_vec(num_bins);
+  for (auto &partition_pair : partitions_) {
+      auto *partition = partition_pair.second;
+      partition->AccumHistogram(dim_index, num_bins,
+                                &histogram_vec,
+                                full_bin_size,
+                                num_full_bins,
+                                bin_size,
+                                full_bin_cutoff_key,
+                                dim_divider,
+                                dim_mod);
+  }
+  for (size_t i = 0; i < histogram_vec.size(); i++) {
+    size_t count = histogram_vec[i];
+    if (count > 0) {
+      (*histogram)[i] = count;
+    }
+  }
+}
+
+void DistArray::PrintPerfCounts() {
+  LOG(INFO) << __func__ << " PerfCount "
+            << "CPU_CYCLES "
+            << perf_count_.GetByIndex(0)
+            << " HW_INSTRUCTIONS "
+            << perf_count_.GetByIndex(1)
+            << " HW_CACHE_REFERENCES "
+            << perf_count_.GetByIndex(2)
+            << " HW_CACHE_MISSES "
+            << perf_count_.GetByIndex(3)
+            << " L1D_READ_ACCESS "
+            << perf_count_.GetByIndex(4)
+            << " L1D_WRITE_ACCESS "
+            << perf_count_.GetByIndex(5);
 }
 
 }

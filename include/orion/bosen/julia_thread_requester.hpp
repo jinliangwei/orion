@@ -44,11 +44,10 @@ class JuliaThreadRequester {
                                           kIsExecutor(is_executor) { }
   ~JuliaThreadRequester() { }
 
-  void RequestDistArrayData(
+  jl_value_t* RequestDistArrayData(
       int32_t dist_array_id,
       int64_t key,
-      type::PrimitiveType value_type,
-      jl_value_t *value_vec);
+      type::PrimitiveType value_type);
 
   void ReplyDistArrayData(
       const uint8_t* bytes,

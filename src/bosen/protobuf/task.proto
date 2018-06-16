@@ -19,6 +19,7 @@ message CreateDistArray {
   required string symbol = 17;
   required bytes serialized_value_type = 18;
   optional bytes serialized_init_value = 19;
+  optional string key_func_name = 20;
 }
 
 message CreateDistArrayBuffer {
@@ -43,6 +44,7 @@ message RepartitionDistArray {
   required int32 partition_scheme = 3;
   required int32 index_type = 4;
   required bool contiguous_partitions = 5;
+  repeated uint64 partition_dims = 6;
 }
 
 message UpdateDistArrayIndex {
@@ -81,4 +83,23 @@ message ExecForLoop {
 message GetAccumulatorValue {
   required string symbol = 1;
   required string combiner = 2;
+}
+
+message RandomRemapPartialKeys {
+  required int32 dist_array_id = 1;
+  repeated uint64 dim_indices = 2;
+  repeated int32 partition_ids = 3;
+  repeated int64 partition_end_points = 4;
+}
+
+message ComputeHistogram {
+  required int32 dist_array_id = 1;
+  required uint64 dim_index = 2;
+  required uint64 num_bins = 3;
+}
+
+message SaveAsTextFile {
+  required int32 dist_array_id = 1;
+  required string to_string_func_name = 2;
+  required string file_path = 3;
 }

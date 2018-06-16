@@ -74,7 +74,6 @@ void
 ExecForLoop1D::AdvanceClock() {
   if (clock_ == kNumClocks) return;
   clock_++;
-  LOG(INFO) << __func__ << " clock = " << clock_;
 }
 
 bool

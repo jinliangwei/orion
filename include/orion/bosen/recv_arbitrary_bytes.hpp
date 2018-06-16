@@ -10,7 +10,7 @@ bool
 ReceiveArbitraryBytes(Conn &conn, conn::RecvBuffer* recv_buff,
                       ByteBuffer* byte_buff, size_t expected_size) {
   CHECK(static_cast<int64_t>(expected_size) > 0)
-      << "got negative expected size = " << (int64_t) expected_size;
+      << "got nonpositive expected size = " << (int64_t) expected_size;
   if (recv_buff->IsExepectingNextMsg()) {
     bool recv = conn.Recv(recv_buff, byte_buff->GetAvailMem());
     byte_buff->IncSize(

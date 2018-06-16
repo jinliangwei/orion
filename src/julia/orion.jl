@@ -1,10 +1,5 @@
 module Orion
 
-#using MacroTools
-#using Sugar
-
-#const MacroParserError = "MacroParserError"
-
 include("scope_context.jl")
 include("dist_array_accessor.jl")
 include("dist_array.jl")

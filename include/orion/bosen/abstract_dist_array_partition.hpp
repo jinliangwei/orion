@@ -67,10 +67,15 @@ class AbstractDistArrayPartition {
   void ParseText(Blob *max_key, size_t line_num_start);
   void ComputeKeysFromBuffer(const std::vector<int64_t> &dims);
   size_t CountNumLines() const;
+  void SaveAsTextFile(const std::string &id_str,
+                      const std::string &to_string_func_name,
+                      const std::string &file_path);
 
   // execute computation
   void Init(int64_t key_begin, size_t num_elements);
   void Map(AbstractDistArrayPartition *child_partition);
+  void GroupBy(AbstractDistArrayPartition *child_partition);
+
   void Execute(const std::string &loop_batch_func_name,
                const std::vector<jl_value_t*> &accessed_dist_arrays,
                const std::vector<jl_value_t*> &accessed_dist_array_buffers,
@@ -91,6 +96,34 @@ class AbstractDistArrayPartition {
   void ComputeModuloRepartitionIdsAndRepartition(size_t num_partitions);
   void ComputeRepartitionIdsAndRepartition(
       const std::string &repartition_func_name);
+  void ComputeHashRepartitionIdsAndRepartition(
+      const std::string &repartition_func_name,
+      size_t num_partitions);
+  void ComputePartialModuloRepartitionIdsAndRepartition(
+      size_t num_partitions,
+      const std::vector<size_t> &dim_indices);
+  void ComputePartialRandomRepartitionIdsAndRepartition(
+      size_t num_partitions,
+      const std::vector<size_t> &dim_indices,
+      std::unordered_map<int64_t, int32_t> *partial_key_to_repartition_id_map);
+
+  // shuffle
+  size_t GetNumUniquePartialKeys(const std::vector<size_t> &dim_indices) const;
+  void RandomRemapPartialKeys(const std::vector<size_t> &dim_indices,
+                              std::unordered_map<int64_t, int64_t> *partial_key_to_remapped_partial_key,
+                              std::set<int64_t> *remapped_partial_key_set,
+                              int64_t remapped_partial_key_start,
+                              int64_t remapped_partial_key_end);
+  // histogram
+  void AccumHistogram(size_t dim_index,
+                      size_t num_bins,
+                      std::vector<size_t> *histogram_vec,
+                      size_t full_bin_size,
+                      size_t num_full_bins,
+                      size_t bin_size,
+                      int64_t full_bin_cutoff_key,
+                      int64_t dim_divider,
+                      int64_t dim_mod) const;
 
   // storage type state transition
   void BuildIndex();

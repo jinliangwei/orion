@@ -39,7 +39,8 @@ extern "C" {
       const uint8_t* value_type_bytes,
       size_t value_type_size,
       const uint8_t* init_value_bytes,
-      size_t init_value_size);
+      size_t init_value_size,
+      const char* key_func_name);
 
   void orion_create_dist_array_buffer(
       int32_t id,
@@ -60,7 +61,9 @@ extern "C" {
       const char *partition_func_name,
       int32_t partition_scheme,
       int32_t index_type,
-      bool contiguous_partitions);
+      bool contiguous_partitions,
+      size_t *partition_dims,
+      size_t num_partition_dims);
 
   void orion_update_dist_array_index(
       int32_t id,
@@ -107,6 +110,26 @@ extern "C" {
   jl_value_t* orion_get_accumulator_value(
       const char *symbol,
       const char *combiner);
+
+  void orion_random_remap_partial_keys(
+      int32_t dist_array_id,
+      size_t *dim_indices,
+      size_t num_dim_indices);
+
+  jl_value_t* orion_compute_histogram(
+      int32_t dist_array_id,
+      size_t dim_index,
+      size_t num_bins);
+
+  void orion_group_by(
+      int32_t dist_array_id,
+      const char *key_func_name,
+      const char *group_func_name);
+
+  void orion_save_as_text_file(
+      int32_t dist_array_id,
+      const char* to_string_func_name,
+      const char* file_path);
 
   void orion_stop();
 

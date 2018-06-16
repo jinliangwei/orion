@@ -50,34 +50,3 @@ function parse_map_fixed_keys_function(
     end
     return rettype
 end
-
-function test_sugar(func::Function, arg_types::Tuple)
-    #sugared_func = Sugar.sugared(func, (AbstractString,), code_typed)
-    #a = Sugar.get_lambda(code_typed, func, arg_types)
-    #println(a)
-    println(Base.return_types(func, arg_types))
-    println(Sugar.get_static_parameters(func, (String,)))
-    func_ast = Sugar.macro_form(func, (String,))[1]
-    println(func_ast)
-
-    buff = IOBuffer()
-
-    #print(buff, func_ast)
-    #println(takebuf_array(buff))
-    #print(buff, func_ast)
-    #func_ast_str = takebuf_string(buff)
-    #println(func_ast_str)
-    #eval(parse(func_ast_str))
-    serialize(buff, func_ast)
-    seekstart(buff)
-    dfunc_ast = deserialize(buff)
-    eval(dfunc_ast)
-
-
-    #eval(func_ast)
-    #print(Sugar.macro_form(func, (String,))[1])
-    #eval("function tf()\n  return 2\nend")
-    a = parse_line("1,2,0.2")
-    println(a[1])
-
-end

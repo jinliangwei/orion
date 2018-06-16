@@ -910,7 +910,6 @@ Executor::HandlePeerRecvThrExecuteMsg() {
       break;
     case message::ExecuteMsgType::kReplyExecForLoopPipelinedTimePartitions:
       {
-        LOG(INFO) <<"Got ReplyExecForLoopPipelinedTimePartitions";
         action_ = Action::kNone;
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgReplyExecForLoopPipelinedTimePartitions>(recv_buff);
@@ -1150,7 +1149,8 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
                 action_ = Action::kCreateDistArrayAck;
               }
               break;
-              case TaskLabel::kMapDistArray:
+            case TaskLabel::kMapDistArray:
+            case TaskLabel::kGroupByDistArray:
               {
                 action_ = Action::kCreateDistArrayAck;
               }
@@ -1279,6 +1279,11 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
                 action_ = Action::kExecutorAck;
               }
               break;
+            case TaskLabel::kSaveAsTextFile:
+              {
+                action_ = Action::kExecutorAck;
+              }
+              break;
             default:
               LOG(FATAL) << "unknown task label";
           }
@@ -1362,6 +1367,7 @@ Executor::HandleExecuteMsg() {
       break;
     case message::ExecuteMsgType::kDistArrayDims:
       {
+
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgDistArrayDims>(recv_buff);
         size_t expected_size = msg->num_dims*sizeof(int64_t);
@@ -1407,6 +1413,95 @@ Executor::HandleExecuteMsg() {
         dist_array_meta.SetMaxPartitionIds(max_ids, num_dims);
         ret = EventHandler<PollConn>::kClearOneMsg;
         action_ = Action::kNone;
+      }
+      break;
+    case message::ExecuteMsgType::kComputePartitionNumUniquePartialKeys:
+      {
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgComputePartitionNumUniquePartialKeys>(recv_buff);
+        size_t expected_size = msg->task_size;
+        bool received_next_msg =
+            ReceiveArbitraryBytes(master_.sock, &recv_buff,
+                                  &master_recv_byte_buff_,
+                                  expected_size);
+        if (received_next_msg) {
+          task::RandomRemapPartialKeys random_remap_partial_keys_task;
+          std::string task_buff(
+              reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
+              master_recv_byte_buff_.GetSize());
+          random_remap_partial_keys_task.ParseFromString(task_buff);
+          int32_t dist_array_id = random_remap_partial_keys_task.dist_array_id();
+
+          auto& dist_array = dist_arrays_.at(dist_array_id);
+          const size_t *dim_indices = random_remap_partial_keys_task.dim_indices().data();
+          size_t num_dim_indices = random_remap_partial_keys_task.dim_indices_size();
+          std::vector<size_t> dim_indices_vec(num_dim_indices);
+          memcpy(dim_indices_vec.data(), dim_indices, num_dim_indices * sizeof(size_t));
+
+          std::vector<int32_t> partition_ids;
+          std::vector<size_t> partition_num_unique_partial_keys;
+          dist_array.GetPartitionNumUniquePartialKeys(dim_indices_vec, &partition_ids,
+                                                      &partition_num_unique_partial_keys);
+
+          size_t buff_size = partition_ids.size() * sizeof(int32_t) +
+                             partition_num_unique_partial_keys.size() * sizeof(size_t);
+          uint8_t* master_send_bytes_buff = new uint8_t[buff_size];
+          memcpy(master_send_bytes_buff, partition_ids.data(), partition_ids.size() * sizeof(int32_t));
+          memcpy(master_send_bytes_buff + partition_ids.size() * sizeof(int32_t),
+                 partition_num_unique_partial_keys.data(),
+                 partition_num_unique_partial_keys.size() * sizeof(size_t));
+
+          message::ExecuteMsgHelper::CreateMsg<
+            message::ExecuteMsgComputePartitionNumUniquePartialKeysAck>(
+                &send_buff_,
+                partition_ids.size());
+          send_buff_.set_next_to_send(master_send_bytes_buff, buff_size, true);
+          Send(&master_poll_conn_, &master_);
+          send_buff_.clear_to_send();
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kNone;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::ExecuteMsgType::kRandomRemapPartialKeys:
+      {
+        auto *msg = message::ExecuteMsgHelper::get_msg<
+          message::ExecuteMsgRandomRemapPartialKeys>(recv_buff);
+        size_t expected_size = msg->task_size;
+        bool received_next_msg =
+            ReceiveArbitraryBytes(master_.sock, &recv_buff,
+                                  &master_recv_byte_buff_,
+                                  expected_size);
+        if (received_next_msg) {
+          task::RandomRemapPartialKeys random_remap_partial_keys_task;
+          std::string task_buff(
+              reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
+              master_recv_byte_buff_.GetSize());
+          random_remap_partial_keys_task.ParseFromString(task_buff);
+          int32_t dist_array_id = random_remap_partial_keys_task.dist_array_id();
+
+          auto& dist_array = dist_arrays_.at(dist_array_id);
+          const size_t *dim_indices = random_remap_partial_keys_task.dim_indices().data();
+          size_t num_dim_indices = random_remap_partial_keys_task.dim_indices_size();
+          std::vector<size_t> dim_indices_vec(num_dim_indices);
+          memcpy(dim_indices_vec.data(), dim_indices, num_dim_indices * sizeof(size_t));
+
+          const int32_t *partition_ids = random_remap_partial_keys_task.partition_ids().data();
+          size_t num_partition_ids = random_remap_partial_keys_task.partition_ids_size();
+          std::vector<int32_t> partition_ids_vec(num_partition_ids);
+          memcpy(partition_ids_vec.data(), partition_ids, num_partition_ids * sizeof(int32_t));
+
+          const int64_t *partition_end_points = random_remap_partial_keys_task.partition_end_points().data();
+          size_t num_partition_end_points = random_remap_partial_keys_task.partition_end_points_size();
+          std::vector<int64_t> partition_end_points_vec(num_partition_end_points);
+          memcpy(partition_end_points_vec.data(), partition_end_points, num_partition_end_points * sizeof(int64_t));
+
+          dist_array.RandomRemapPartialKeys(dim_indices_vec,
+                                            partition_ids_vec,
+                                            partition_end_points_vec);
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+          action_ = Action::kExecutorAck;
+        } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
     default:
@@ -1563,6 +1658,91 @@ Executor::HandleDriverMsg() {
         exec_cpp_func_task_.label = TaskLabel::kDeleteDistArray;
         julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
         action_ = Action::kNone;
+      }
+      break;
+    case message::DriverMsgType::kComputeHistogram:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgComputeHistogram>(recv_buff);
+        size_t expected_size = msg->task_size;
+
+        bool received_next_msg
+            = ReceiveArbitraryBytes(master_.sock, &recv_buff,
+                                    &master_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          task::ComputeHistogram compute_histogram_task;
+          std::string task_buff(
+              reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
+              master_recv_byte_buff_.GetSize());
+          compute_histogram_task.ParseFromString(task_buff);
+          int32_t dist_array_id = compute_histogram_task.dist_array_id();
+          size_t dim_index = compute_histogram_task.dim_index();
+          size_t num_bins = compute_histogram_task.num_bins();
+          auto& dist_array = dist_arrays_.at(dist_array_id);
+          std::unordered_map<int64_t, size_t> histogram;
+
+          dist_array.ComputeHistogram(dim_index, num_bins, &histogram);
+
+          message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgComputeHistogramAck>(
+              &send_buff_,
+              histogram.size());
+          if (!histogram.empty()) {
+            std::vector<int64_t> bin_keys(histogram.size());
+            std::vector<size_t> bin_sizes(histogram.size());
+            size_t index = 0;
+            for (auto &bin_pair : histogram) {
+              bin_keys[index] = bin_pair.first;
+              bin_sizes[index] = bin_pair.second;
+              index += 1;
+            }
+            size_t num_bytes = bin_keys.size() * sizeof(int64_t) +
+                               bin_sizes.size() * sizeof(size_t);
+            uint8_t* bytes_buff = new uint8_t[num_bytes];
+            memcpy(bytes_buff, bin_keys.data(), bin_keys.size() * sizeof(int64_t));
+            memcpy(bytes_buff + bin_keys.size() * sizeof(int64_t),
+                   bin_sizes.data(), bin_sizes.size() * sizeof(size_t));
+            send_buff_.set_next_to_send(bytes_buff, num_bytes, true);
+          }
+          Send(&master_poll_conn_, &master_);
+          send_buff_.clear_to_send();
+          action_ = Action::kNone;
+          ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+        } else ret = EventHandler<PollConn>::kNoAction;
+      }
+      break;
+    case message::DriverMsgType::kSaveAsTextFile:
+      {
+        auto *msg = message::DriverMsgHelper::get_msg<
+          message::DriverMsgSaveAsTextFile>(recv_buff);
+        size_t expected_size = msg->task_size;
+
+        bool received_next_msg
+            = ReceiveArbitraryBytes(master_.sock, &recv_buff,
+                                    &master_recv_byte_buff_,
+                                    expected_size);
+        if (received_next_msg) {
+          task::SaveAsTextFile save_as_text_file_task;
+          std::string task_buff(
+              reinterpret_cast<const char*>(master_recv_byte_buff_.GetBytes()),
+              master_recv_byte_buff_.GetSize());
+          save_as_text_file_task.ParseFromString(task_buff);
+          int32_t dist_array_id = save_as_text_file_task.dist_array_id();
+          std::string to_string_func_name = save_as_text_file_task.to_string_func_name();
+          std::string file_path = save_as_text_file_task.file_path();
+
+          auto& dist_array = dist_arrays_.at(dist_array_id);
+          auto cpp_func = std::bind(
+              &DistArray::SaveAsTextFile,
+              &dist_array,
+              to_string_func_name,
+              file_path);
+        exec_cpp_func_task_.func = cpp_func;
+        exec_cpp_func_task_.label = TaskLabel::kSaveAsTextFile;
+        julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+        action_ = Action::kNone;
+        ret = EventHandler<PollConn>::kClearOneAndNextMsg;
+        } else ret = EventHandler<PollConn>::kNoAction;
       }
       break;
     default:
@@ -1792,10 +1972,30 @@ Executor::CreateDistArray() {
             (map_type == DistArrayMapType::kMapFixedKeys || map_type == DistArrayMapType::kMapValues)) {
           child_dist_array_meta.SetContiguousPartitions(true);
         }
-        auto cpp_func = std::bind(&DistArray::Map, &parent_dist_array, &dist_array);
-        exec_cpp_func_task_.func = cpp_func;
-        exec_cpp_func_task_.label = TaskLabel::kMapDistArray;
-        julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+        switch (map_type) {
+          case DistArrayMapType::kNoMap:
+          case DistArrayMapType::kMap:
+          case DistArrayMapType::kMapFixedKeys:
+          case DistArrayMapType::kMapValues:
+          case DistArrayMapType::kMapValuesNewKeys:
+            {
+              auto cpp_func = std::bind(&DistArray::Map, &parent_dist_array, &dist_array);
+              exec_cpp_func_task_.func = cpp_func;
+              exec_cpp_func_task_.label = TaskLabel::kMapDistArray;
+              julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+            }
+            break;
+          case DistArrayMapType::kGroupBy:
+            {
+              auto cpp_func = std::bind(&DistArray::GroupBy, &parent_dist_array, &dist_array);
+              exec_cpp_func_task_.func = cpp_func;
+              exec_cpp_func_task_.label = TaskLabel::kGroupByDistArray;
+              julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
+            }
+            break;
+          default:
+            LOG(FATAL) << "Unknown map type = " << static_cast<int>(map_type);
+        }
       }
       break;
     case DistArrayParentType::kInit:
@@ -1909,32 +2109,84 @@ Executor::RepartitionDistArray() {
     repartition_recv_ = false;
   }
 
+  // Skip computing repartition if I am not holding the original DistArray
   if ((from_server && !kIsServer) || (!from_server && kIsServer)) return false;
 
   std::function<void()> cpp_func;
-  if (partition_scheme == DistArrayPartitionScheme::kSpaceTime ||
-      partition_scheme == DistArrayPartitionScheme::k1D) {
-    std::string partition_func_name
-        = repartition_dist_array_task.partition_func_name();
-    cpp_func = std::bind(
-        &DistArray::ComputeRepartition,
-        &dist_array_to_repartition,
-        partition_func_name);
-  } else if (partition_scheme == DistArrayPartitionScheme::kRange) {
-    LOG(FATAL);
-  } else if (partition_scheme == DistArrayPartitionScheme::kModuloServer){
-    cpp_func = std::bind(
-        &DistArray::ComputeModuloRepartition,
-        &dist_array_to_repartition,
-        kConfig.kNumServers);
-  } else {
-    CHECK(partition_scheme == DistArrayPartitionScheme::kModuloExecutor);
-    cpp_func = std::bind(
-        &DistArray::ComputeModuloRepartition,
-        &dist_array_to_repartition,
-        kConfig.kNumExecutors);
+  switch(partition_scheme) {
+    case DistArrayPartitionScheme::kSpaceTime:
+    case DistArrayPartitionScheme::k1D:
+      {
+        std::string partition_func_name
+            = repartition_dist_array_task.partition_func_name();
+        cpp_func = std::bind(
+            &DistArray::ComputeRepartition,
+            &dist_array_to_repartition,
+            partition_func_name);
+      }
+      break;
+    case DistArrayPartitionScheme::kRange:
+      LOG(FATAL) << "Can only be achieved when constructing a DistArray";
+    case DistArrayPartitionScheme::kModuloServer:
+      {
+        cpp_func = std::bind(
+            &DistArray::ComputeModuloRepartition,
+            &dist_array_to_repartition,
+            kConfig.kNumServers);
+      }
+      break;
+    case DistArrayPartitionScheme::kModuloExecutor:
+      {
+        cpp_func = std::bind(
+            &DistArray::ComputeModuloRepartition,
+            &dist_array_to_repartition,
+            kConfig.kNumExecutors);
+      }
+      break;
+    case DistArrayPartitionScheme::kPartialModuloExecutor:
+      {
+        size_t num_dim_indices = repartition_dist_array_task.partition_dims_size();
+        CHECK(num_dim_indices > 0);
+        std::vector<size_t> dim_indices(num_dim_indices);
+        for (size_t i = 0; i < num_dim_indices; i++) {
+          dim_indices[i] = repartition_dist_array_task.partition_dims(i);
+        }
+        cpp_func = std::bind(
+            &DistArray::ComputePartialModuloRepartitionIdsAndRepartition,
+            &dist_array_to_repartition,
+            kConfig.kNumExecutors,
+            dim_indices);
+      }
+      break;
+    case DistArrayPartitionScheme::kPartialRandomExecutor:
+      {
+        size_t num_dim_indices = repartition_dist_array_task.partition_dims_size();
+        CHECK(num_dim_indices > 0);
+        std::vector<size_t> dim_indices(num_dim_indices);
+        for (size_t i = 0; i < num_dim_indices; i++) {
+          dim_indices[i] = repartition_dist_array_task.partition_dims(i);
+        }
+        cpp_func = std::bind(
+            &DistArray::ComputePartialRandomRepartitionIdsAndRepartition,
+            &dist_array_to_repartition,
+            kConfig.kNumExecutors,
+            dim_indices);
+      }
+      break;
+    case DistArrayPartitionScheme::kHashExecutor:
+      {
+        std::string partition_func_name
+            = repartition_dist_array_task.partition_func_name();
+        cpp_func = std::bind(
+            &DistArray::ComputeHashRepartition,
+            &dist_array_to_repartition,
+            partition_func_name,
+            kConfig.kNumExecutors);
+      }
+      break;
+    default:
+      LOG(FATAL) << "Unknown partition scheme " << static_cast<int>(partition_scheme);
   }
-
   exec_cpp_func_task_.func = cpp_func;
   exec_cpp_func_task_.label = TaskLabel::kComputeRepartition;
   julia_eval_thread_.SchedTask(static_cast<JuliaTask*>(&exec_cpp_func_task_));
@@ -1949,10 +2201,13 @@ Executor::RepartitionDistArraySerialize(int32_t dist_array_id,
   if ((partition_scheme == DistArrayPartitionScheme::kSpaceTime ||
        partition_scheme == DistArrayPartitionScheme::k1D ||
        partition_scheme == DistArrayPartitionScheme::kRange ||
-       partition_scheme == DistArrayPartitionScheme::kModuloExecutor) &&
+       partition_scheme == DistArrayPartitionScheme::kModuloExecutor ||
+       partition_scheme == DistArrayPartitionScheme::kPartialModuloExecutor ||
+       partition_scheme == DistArrayPartitionScheme::kPartialRandomExecutor) &&
       (!kIsServer && kNumExecutors == 1)) {
     return false;
   }
+
   if ((partition_scheme == DistArrayPartitionScheme::kModuloServer) &&
       (kIsServer && kNumServers == 1)) {
     return false;
@@ -2062,7 +2317,9 @@ Executor::DefineJuliaDistArray() {
   auto map_func_name = create_dist_array.has_map_func_name() ?
                        create_dist_array.map_func_name() :
                        "";
-
+  auto key_func_name = create_dist_array.has_key_func_name() ?
+                       create_dist_array.key_func_name() :
+                       "";
   auto random_init_type = create_dist_array.has_random_init_type() ?
                           static_cast<type::PrimitiveType>(create_dist_array.random_init_type())
                           : type::PrimitiveType::kVoid;
@@ -2093,7 +2350,9 @@ Executor::DefineJuliaDistArray() {
                             flatten_results,
                             is_dense,
                             symbol,
-                            julia_requester_));
+                            julia_requester_,
+                            key_func_name));
+
 
   DistArray &dist_array = iter_pair.first->second;
   if (create_dist_array.dims_size() > 0) {
@@ -2147,6 +2406,7 @@ Executor::DefineJuliaDistArrayBuffer() {
   auto partition_scheme = DistArrayPartitionScheme::kNaive;
   auto map_func_module = JuliaModule::kNone;
   auto map_func_name = "";
+  auto key_func_name = "";
   auto random_init_type = type::PrimitiveType::kVoid;
   auto flatten_results = false;
   auto is_dense = create_dist_array_buffer.is_dense();
@@ -2172,7 +2432,8 @@ Executor::DefineJuliaDistArrayBuffer() {
                             flatten_results,
                             is_dense,
                             symbol,
-                            julia_requester_));
+                            julia_requester_,
+                            key_func_name));
 
   DistArray &dist_array = iter_pair.first->second;
   const int64_t *dims = create_dist_array_buffer.dims().data();

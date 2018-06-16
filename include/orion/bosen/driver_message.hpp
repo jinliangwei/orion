@@ -179,6 +179,48 @@ struct DriverMsgUpdateDistArrayIndex {
   }
 };
 
+struct DriverMsgRandomRemapPartialKeys {
+  size_t task_size;
+ private:
+  DriverMsgRandomRemapPartialKeys() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _task_size) {
+    task_size = _task_size;
+  }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kRandomRemapPartialKeys;
+  }
+};
+
+struct DriverMsgComputeHistogram {
+  size_t task_size;
+ private:
+  DriverMsgComputeHistogram() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _task_size) {
+    task_size = _task_size;
+  }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kComputeHistogram;
+  }
+};
+
+struct DriverMsgSaveAsTextFile {
+  size_t task_size;
+ private:
+  DriverMsgSaveAsTextFile() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _task_size) {
+    task_size = _task_size;
+  }
+  static constexpr DriverMsgType get_type() {
+    return DriverMsgType::kSaveAsTextFile;
+  }
+};
+
 class DriverMsgHelper {
  public:
   template<typename Msg,

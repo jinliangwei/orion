@@ -69,7 +69,6 @@ function compute_dependence_vectors(dist_array_access_dict::Dict{Symbol, Vector{
                         continue
                     else
                         dep_val = sub_a.offset - sub_b.offset
-                        println(sub_a.offset - sub_b.offset)
                         if dep_vec[sub_a.loop_index_dim] == dep_val ||
                             dep_vec[sub_a.loop_index_dim] == DepVecValue_any
                             dep_vec[sub_a.loop_index_dim] = dep_val
@@ -82,7 +81,6 @@ function compute_dependence_vectors(dist_array_access_dict::Dict{Symbol, Vector{
                 if no_dep
                     continue
                 end
-                println(dist_array_sym, " ", subscripts_a, " ", subscripts_b)
                 for i in eachindex(dep_vec)
                     dep_val = dep_vec[i]
                     if isa(dep_val, Number)
@@ -112,7 +110,7 @@ end
 
 function check_for_1d_parallelization(dep_vecs::Set{Tuple}, num_dims)::Vector{Int64}
     par_dims = Vector{Int64}()
-    for i = 1:num_dims
+    for i = num_dims:-1:1
         is_parallelizable = true
         for dep_vec in dep_vecs
             if dep_vec[i] != 0
@@ -129,8 +127,8 @@ end
 
 function check_for_2d_parallelization(dep_vecs::Set{Tuple}, num_dims)::Vector{Tuple{Int64, Int64}}
     par_dims = Vector{Tuple{Int64, Int64}}()
-    for i = 1:num_dims
-        for j = (i + 1):num_dims
+    for i = num_dims:-1:1
+        for j = (i - 1):-1:1
             is_parallelizable = true
             for dep_vec in dep_vecs
                 if dep_vec[i] != 0 &&
@@ -196,6 +194,7 @@ function parallelize_naive(iteration_space::Symbol,
                            loop_body::Expr,
                            is_ordered::Bool,
                            is_repeated::Bool,
+                           is_histogram_partitioned::Bool,
                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                            flow_graph::BasicBlock,
                            dist_array_access_context::DistArrayAccessContext)
@@ -219,6 +218,7 @@ function parallelize_naive(iteration_space::Symbol,
                               loop_body,
                               is_ordered,
                               is_repeated,
+                              is_histogram_partitioned,
                               [partition_dim],
                               ssa_defs,
                               flow_graph,
@@ -233,6 +233,7 @@ function parallelize_naive(iteration_space::Symbol,
                               loop_body,
                               is_ordered,
                               is_repeated,
+                              is_histogram_partitioned,
                               [get(iteration_space_partition_info.partition_dims)[1]],
                               ssa_defs,
                               flow_graph,
@@ -247,6 +248,7 @@ function parallelize_naive(iteration_space::Symbol,
                               loop_body,
                               is_ordered,
                               is_repeated,
+                              is_histogram_partitioned,
                               [get(iteration_space_partition_info.partition_dims)],
                               ssa_defs,
                               flow_graph,
@@ -261,6 +263,7 @@ function parallelize_naive(iteration_space::Symbol,
                                       loop_body,
                                       is_ordered,
                                       is_repeated,
+                                      is_histogram_partitioned,
                                       [get(iteration_space_partition_info.partition_dims)...],
                                       ssa_defs,
                                       flow_graph,
@@ -293,6 +296,80 @@ function get_accessed_dist_array_buffer_ids(accessed_buffer_sym_set::Set{Symbol}
     end
 end
 
+function histogram_partition(bin_size_vec::Vector{Tuple{Int64, UInt64}},
+                             num_bins::Integer,
+                             num_partitions::Integer,
+                             dim_size::Integer)
+
+    full_bin_size = cld(dim_size, num_bins)
+    num_full_bins = (dim_size % num_bins == 0) ? num_bins : (dim_size % num_bins)
+    bin_size = full_bin_size - 1
+
+    bin_size_dict = Dict(bin_size_vec)
+    total_num_elements = reduce((x, y) -> x + y, Base.map(x -> x[2], bin_size_vec))
+    partition_size = cld(total_num_elements, num_partitions)
+
+    partition_bounds = Vector{Int64}(num_partitions)
+
+    bin_index = 0
+    partition_index = 0
+    partition_sizes = Vector{UInt64}(num_partitions)
+
+    curr_range_start = 0
+    curr_range_end = full_bin_size - 1
+    curr_range_size = get(bin_size_dict, bin_index, 0)
+    next_bin = false
+    for partition_index = 0:(num_partitions - 1)
+        curr_size = 0
+        partition_bound = 0
+        while curr_size < partition_size &&
+            bin_index < num_bins
+            if curr_size + curr_range_size < partition_size
+                curr_size += curr_range_size
+                next_bin = true
+            else
+                curr_range_used = partition_size - curr_size
+                curr_size += curr_range_used
+                curr_range_percent = curr_range_used / curr_range_size
+                partition_bound = curr_range_start + trunc(Int64, (curr_range_end - curr_range_start) * curr_range_percent)
+                curr_range_start += trunc(Int64, (curr_range_end - curr_range_start) * curr_range_percent) + 1
+                if curr_range_start > curr_range_end ||
+                    curr_range_used >= curr_range_size
+                    next_bin = true
+                    partition_bound = curr_range_end
+                else
+                    curr_range_size -= curr_range_used
+                end
+            end
+            if next_bin
+                bin_index += 1
+                if bin_index >= num_bins
+                    break
+                end
+                next_bin = false
+                if bin_index < num_full_bins
+                    curr_range_start = bin_index * full_bin_size
+                    curr_range_end = curr_range_start + full_bin_size - 1
+                    curr_range_size = get(bin_size_dict, bin_index, 0)
+                else
+                    curr_range_start = num_full_bins * full_bin_size + (bin_index - num_full_bins) * bin_size
+                    curr_range_end = curr_range_start + bin_size - 1
+                    curr_range_size = get(bin_size_dict, bin_index, 0)
+                end
+            end
+        end
+
+        if bin_index >= num_bins
+            partition_bounds[partition_index + 1] = dim_size
+        else
+            partition_bounds[partition_index + 1] = partition_bound
+        end
+        partition_sizes[partition_index + 1] = curr_size
+    end
+    println("partition_sizes = ", Base.map(x -> Int64(x), partition_sizes))
+    return partition_bounds, partition_sizes
+end
+
 function parallelize_1d(iteration_space::Symbol,
                         iteration_var::Symbol,
                         dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
@@ -302,6 +379,7 @@ function parallelize_1d(iteration_space::Symbol,
                         loop_body::Expr,
                         is_ordered::Bool,
                         is_repeated::Bool,
+                        is_histogram_partitioned::Bool,
                         par_dims::Vector{Int64},
                         ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                         flow_graph::BasicBlock,
@@ -310,18 +388,72 @@ function parallelize_1d(iteration_space::Symbol,
     space_partition_dim = par_dims[end]
     iteration_space_dist_array = eval(current_module(), iteration_space)
     iteration_space_dims = get(iteration_space_dist_array.iterate_dims)
-    tile_size = get_1d_tile_size(space_partition_dim, iteration_space_dist_array)
     iteration_space_dims_diff = length(iteration_space_dist_array.dims) - length(get(iteration_space_dist_array.iterate_dims))
 
     loop_partition_func_name = gen_unique_symbol()
-    loop_partition_func = gen_1d_partition_function(loop_partition_func_name,
-                                                    space_partition_dim + iteration_space_dims_diff,
-                                                    tile_size)
-    dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
-                                                       string(loop_partition_func_name),
-                                                       (space_partition_dim + iteration_space_dims_diff,),
-                                                       (tile_size,),
-                                                       DistArrayIndexType_none)
+    reuse_partition = false
+    if !isnull(iteration_space_dist_array.target_partition_info)
+        dist_array_partition_info = get(iteration_space_dist_array.target_partition_info)
+    else
+        dist_array_partition_info = iteration_space_dist_array.partition_info
+    end
+    if dist_array_partition_info.partition_type == DistArrayPartitionType_1d
+        iteration_space_tile_sizes = get(dist_array_partition_info.tile_sizes)
+        if isa(iteration_space_tile_sizes[1], Integer)
+            if !is_histogram_partitioned
+                reuse_partition = true
+            end
+        elseif isa(iteration_space_tile_sizes[1], Tuple)
+            reuse_partition = true
+            is_histogram_partitioned = true
+        else
+            error("unknown tile_sizes type ", println(typeof(iteration_space_tile_sizes)))
+        end
+    end
+    println("reuse_partition = ", reuse_partition)
+    if reuse_partition
+        if !is_histogram_partitioned
+            tile_size = get(dist_array_partition_info.tile_sizes)[1]
+        else
+            partition_bounds = [get(dist_array_partition_info.tile_sizes)[1]...]
+        end
+    else
+        if !is_histogram_partitioned
+            tile_size = get_1d_tile_size(space_partition_dim, iteration_space_dist_array)
+            loop_partition_func = gen_1d_partition_function(loop_partition_func_name,
+                                                            space_partition_dim + iteration_space_dims_diff,
+                                                            tile_size)
+
+            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                               string(loop_partition_func_name),
+                                                               (space_partition_dim + iteration_space_dims_diff,),
+                                                               (tile_size,),
+                                                               DistArrayIndexType_none)
+
+        else
+            num_partitions = iteration_space_dist_array.num_partitions_per_dim
+            dim_size = iteration_space_dist_array.dims[space_partition_dim]
+            println(iteration_space_dist_array.dims, " ", space_partition_dim)
+            num_bins = min(num_partitions * 10, dim_size)
+            bin_size_vec = compute_histogram(iteration_space_dist_array, space_partition_dim, num_bins)
+            partition_bounds, partition_sizes = histogram_partition(bin_size_vec,
+                                                                    num_bins,
+                                                                    num_partitions,
+                                                                    dim_size)
+
+            loop_partition_func = gen_1d_histogram_partition_function(loop_partition_func_name,
+                                                                      space_partition_dim + iteration_space_dims_diff,
+                                                                      partition_bounds)
+
+            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                               string(loop_partition_func_name),
+                                                               (space_partition_dim + iteration_space_dims_diff,),
+                                                               (tuple(partition_bounds...),),
+                                                               DistArrayIndexType_none)
+        end
+        eval_expr_on_all(loop_partition_func, :Main)
+    end
+
     parallelized_loop = quote end
     repartition_stmt = :(Orion.check_and_repartition($(esc(iteration_space)), $dist_array_partition_info))
     iteration_space_dist_array.target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
@@ -354,15 +486,12 @@ function parallelize_1d(iteration_space::Symbol,
     else
         global_indexed_dist_array_id_vec = Vector{Int32}()
     end
-    println("global indexed dist array id vec = ",
-            global_indexed_dist_array_id_vec)
+    println("global indexed dist array id vec = ", global_indexed_dist_array_id_vec)
     written_dist_array_id_vec = Vector{Int32}()
     accessed_dist_array_sym_vec = Vector{Symbol}()
     accessed_dist_array_id_vec = Vector{Int32}()
 
     for (da_sym, da_access_vec) in dist_array_access_dict
-        println(da_sym)
-        println(da_access_vec)
         push!(accessed_dist_array_sym_vec, da_sym)
         push!(accessed_dist_array_id_vec, eval(current_module(), da_sym).id)
 
@@ -390,15 +519,29 @@ function parallelize_1d(iteration_space::Symbol,
 
         if partition_dim > 0
             partition_func_name = gen_unique_symbol()
-            partition_func = gen_1d_partition_function(partition_func_name,
-                                                       partition_dim,
-                                                       tile_size)
+            if !is_histogram_partitioned
+                partition_func = gen_1d_partition_function(partition_func_name,
+                                                           partition_dim,
+                                                           tile_size)
+                dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                                   string(partition_func_name),
+                                                                   (partition_dim,),
+                                                                   (tile_size,),
+                                                                   DistArrayIndexType_none)
+
+            else
+                partition_func = gen_1d_histogram_partition_function(partition_func_name,
+                                                                     partition_dim,
+                                                                     partition_bounds)
+                dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                                   string(partition_func_name),
+                                                                   (partition_dim,),
+                                                                   (tuple(partition_bounds...),),
+                                                                   DistArrayIndexType_none)
+
+            end
+            eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
             push!(partition_func_set, partition_func)
-            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
-                                                               string(partition_func_name),
-                                                               (partition_dim,),
-                                                               (tile_size,),
-                                                               DistArrayIndexType_none)
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
         end
@@ -407,6 +550,7 @@ function parallelize_1d(iteration_space::Symbol,
     for da_sym in global_indexed_dist_array_sym_set
         dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
                                                            DistArrayIndexType_range)
+        eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
         repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
     end
@@ -417,6 +561,7 @@ function parallelize_1d(iteration_space::Symbol,
         end
         dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
                                                            DistArrayIndexType_range)
+        eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
         repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
     end
@@ -493,7 +638,6 @@ function parallelize_1d(iteration_space::Symbol,
         end
     end
 
-    eval_expr_on_all(loop_partition_func, :Main)
     for partition_func in partition_func_set
         eval_expr_on_all(partition_func, :Main)
     end
@@ -537,6 +681,7 @@ function parallelize_2d(iteration_space::Symbol,
                         loop_body::Expr,
                         is_ordered::Bool,
                         is_repeated::Bool,
+                        is_histogram_partitioned::Bool,
                         par_dims::Vector{Tuple{Int64, Int64}},
                         ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                         flow_graph::BasicBlock,
@@ -548,22 +693,93 @@ function parallelize_2d(iteration_space::Symbol,
 
     iteration_space_dist_array = eval(current_module(), iteration_space)
     iteration_space_dims = get(iteration_space_dist_array.iterate_dims)
-    tile_sizes = get_2d_tile_sizes(par_dim, iteration_space_dist_array)
 
     iteration_space_dims_diff = length(iteration_space_dist_array.dims) - length(get(iteration_space_dist_array.iterate_dims))
 
     loop_partition_func_name = gen_unique_symbol()
-    loop_partition_func = gen_2d_partition_function(loop_partition_func_name,
-                                                    space_partition_dim + iteration_space_dims_diff,
-                                                    time_partition_dim + iteration_space_dims_diff,
-                                                    tile_sizes[1],
-                                                    tile_sizes[2])
-    dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_2d,
-                                                       string(loop_partition_func_name),
-                                                       (space_partition_dim + iteration_space_dims_diff,
-                                                        time_partition_dim + iteration_space_dims_diff),
-                                                       tile_sizes,
-                                                       DistArrayIndexType_none)
+
+    reuse_partition = false
+    if !isnull(iteration_space_dist_array.target_partition_info)
+        dist_array_partition_info = get(iteration_space_dist_array.target_partition_info)
+    else
+        dist_array_partition_info = iteration_space_dist_array.partition_info
+    end
+    if dist_array_partition_info.partition_type == DistArrayPartitionType_2d
+        iteration_space_tile_sizes = get(dist_array_partition_info.tile_sizes)
+        if isa(iteration_space_tile_sizes[1], Integer)
+            if !is_histogram_partitioned
+                reuse_partition = true
+            end
+        elseif isa(iteration_space_tile_sizes[1], Tuple)
+            reuse_partition = true
+            is_histogram_partitioned = true
+        else
+            error("unknown tile_sizes type ", println(iteration_space_tile_sizes))
+        end
+    end
+    println("reuse_partition = ", reuse_partition)
+    if reuse_partition
+        if !is_histogram_partitioned
+            tile_sizes = get(dist_array_partition_info.tile_sizes)
+        else
+            space_partition_bounds = get(dist_array_partition_info.tile_sizes)[1]
+            space_partition_bounds = [space_partition_bounds...]
+            time_partition_bounds = get(dist_array_partition_info.tile_sizes)[2]
+            time_partition_bounds = [time_partition_bounds...]
+        end
+    else
+        if !is_histogram_partitioned
+            tile_sizes = get_2d_tile_sizes(par_dim, iteration_space_dist_array)
+            loop_partition_func = gen_2d_partition_function(loop_partition_func_name,
+                                                            space_partition_dim + iteration_space_dims_diff,
+                                                            time_partition_dim + iteration_space_dims_diff,
+                                                            tile_sizes[1],
+                                                            tile_sizes[2])
+
+            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_2d,
+                                                               string(loop_partition_func_name),
+                                                               (space_partition_dim + iteration_space_dims_diff,
+                                                                time_partition_dim + iteration_space_dims_diff),
+                                                               tile_sizes,
+                                                               DistArrayIndexType_none)
+
+        else
+            num_partitions = iteration_space_dist_array.num_partitions_per_dim
+            space_dim_size = iteration_space_dist_array.dims[space_partition_dim]
+            space_num_bins = min(num_partitions * 10, space_dim_size)
+            time_dim_size = iteration_space_dist_array.dims[time_partition_dim]
+            time_num_bins = min(num_partitions * 10, time_dim_size)
+            println(iteration_space_dist_array.dims, " ", space_partition_dim,
+                    " ", time_partition_dim)
+            space_bin_size_vec = compute_histogram(iteration_space_dist_array, space_partition_dim, space_num_bins)
+            time_bin_size_vec = compute_histogram(iteration_space_dist_array, time_partition_dim, time_num_bins)
+
+            space_partition_bounds, space_partition_sizes = histogram_partition(space_bin_size_vec,
+                                                                                space_num_bins,
+                                                                                num_partitions,
+                                                                                space_dim_size)
+
+            time_partition_bounds, time_partition_sizes = histogram_partition(time_bin_size_vec,
+                                                                              time_num_bins,
+                                                                              num_partitions,
+                                                                              time_dim_size)
+
+            loop_partition_func = gen_2d_histogram_partition_function(loop_partition_func_name,
+                                                                      space_partition_dim + iteration_space_dims_diff,
+                                                                      time_partition_dim + iteration_space_dims_diff,
+                                                                      space_partition_bounds,
+                                                                      time_partition_bounds)
+
+
+            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_2d,
+                                                               string(loop_partition_func_name),
+                                                               (space_partition_dim + iteration_space_dims_diff,
+                                                                time_partition_dim + iteration_space_dims_diff),
+                                                               (tuple(space_partition_bounds...), tuple(time_partition_bounds...)),
+                                                               DistArrayIndexType_none)
+        end
+        eval_expr_on_all(loop_partition_func, :Main)
+    end
     parallelized_loop = quote end
     repartition_stmt = :(Orion.check_and_repartition($(esc(iteration_space)), $dist_array_partition_info))
     iteration_space_dist_array.target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
@@ -624,12 +840,16 @@ function parallelize_2d(iteration_space::Symbol,
             if space_partition_dim in keys(partition_dims)
                 partition_dim = partition_dims[space_partition_dim]
                 push!(space_partitioned_dist_array_id_vec, eval(current_module(), da_sym).id)
-                tile_size = tile_sizes[1]
+                if !is_histogram_partitioned
+                    tile_size = tile_sizes[1]
+                end
             else
                 @assert time_partition_dim in keys(partition_dims)
                 partition_dim = partition_dims[time_partition_dim]
                 push!(time_partitioned_dist_array_id_vec, eval(current_module(), da_sym).id)
-                tile_size = tile_sizes[2]
+                if !is_histogram_partitioned
+                    tile_size = tile_sizes[2]
+                end
             end
         elseif !(da_sym in global_indexed_dist_array_sym_set)
             push!(global_indexed_dist_array_id_vec, eval(current_module(), da_sym).id)
@@ -638,15 +858,34 @@ function parallelize_2d(iteration_space::Symbol,
 
         if partition_dim > 0
             partition_func_name = gen_unique_symbol()
-            partition_func = gen_1d_partition_function(partition_func_name,
-                                                       partition_dim,
-                                                       tile_size)
+            if !is_histogram_partitioned
+                partition_func = gen_1d_partition_function(partition_func_name,
+                                                           partition_dim,
+                                                           tile_size)
+                dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                                   string(partition_func_name),
+                                                                   (partition_dim,),
+                                                                   (tile_size,),
+                                                                   DistArrayIndexType_none)
+            else
+                if space_partition_dim in keys(partition_dims)
+                    partition_bounds = space_partition_bounds
+                else
+                    partition_bounds = time_partition_bounds
+                end
+                println(partition_bounds)
+                partition_func = gen_1d_histogram_partition_function(partition_func_name,
+                                                                     partition_dim,
+                                                                     partition_bounds)
+
+                dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                                   string(partition_func_name),
+                                                                   (partition_dim + iteration_space_dims_diff,),
+                                                                   (tuple(partition_bounds...),),
+                                                                   DistArrayIndexType_none)
+            end
+            eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
             push!(partition_func_set, partition_func)
-            dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
-                                                               string(partition_func_name),
-                                                               (partition_dim,),
-                                                               (tile_size,),
-                                                               DistArrayIndexType_none)
             repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
             push!(parallelized_loop.args, repartition_stmt)
         end
@@ -655,6 +894,7 @@ function parallelize_2d(iteration_space::Symbol,
     for da_sym in global_indexed_dist_array_sym_set
         dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
                                                            DistArrayIndexType_range)
+        eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
         repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
     end
@@ -665,6 +905,7 @@ function parallelize_2d(iteration_space::Symbol,
         end
         dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
                                                            DistArrayIndexType_range)
+        eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
         repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
         push!(parallelized_loop.args, repartition_stmt)
     end
@@ -739,7 +980,7 @@ function parallelize_2d(iteration_space::Symbol,
             println(prefetch_batch_func)
         end
     end
-    eval_expr_on_all(loop_partition_func, :Main)
+
     for partition_func in partition_func_set
         eval_expr_on_all(partition_func, :Main)
     end
@@ -785,6 +1026,7 @@ function parallelize_unimodular(iteration_space::Symbol,
                                 loop_body::Expr,
                                 is_ordered::Bool,
                                 is_repeated::Bool,
+                                is_histogram_partitioned::Bool,
                                 par_dims::Vector{Int64},
                                 ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                                 flow_graph::BasicBlock,
@@ -846,6 +1088,7 @@ function static_parallelize(iteration_space::Symbol,
                             loop_body::Expr,
                             is_ordered::Bool,
                             is_repeated::Bool,
+                            is_histogram_partitioned::Bool,
                             ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                             flow_graph::BasicBlock)
     iteration_space = iteration_space
@@ -866,6 +1109,7 @@ function static_parallelize(iteration_space::Symbol,
                                  loop_body,
                                  is_ordered,
                                  is_repeated,
+                                 is_histogram_partitioned,
                                  ssa_defs,
                                  flow_graph,
                                  dist_array_access_context)
@@ -880,6 +1124,7 @@ function static_parallelize(iteration_space::Symbol,
                               loop_body,
                               is_ordered,
                               is_repeated,
+                              is_histogram_partitioned,
                               par_scheme[2],
                               ssa_defs,
                               flow_graph,
@@ -895,6 +1140,7 @@ function static_parallelize(iteration_space::Symbol,
                               loop_body,
                               is_ordered,
                               is_repeated,
+                              is_histogram_partitioned,
                               par_scheme[2],
                               ssa_defs,
                               flow_graph,
@@ -910,6 +1156,7 @@ function static_parallelize(iteration_space::Symbol,
                                       loop_body,
                                       is_ordered,
                                       is_repeated,
+                                      is_histogram_partitioned,
                                       par_scheme[2],
                                       ssa_defs,
                                       flow_graph,

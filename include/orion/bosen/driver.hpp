@@ -145,14 +145,17 @@ class Driver {
       const uint8_t* value_type_bytes,
       size_t value_type_size,
       const uint8_t* init_value_bytes,
-      size_t init_value_size);
+      size_t init_value_size,
+      const char* key_func_name);
 
   void RepartitionDistArray(
       int32_t id,
       const char *partition_func_name,
       int32_t partition_scheme,
       int32_t index_type,
-      bool contiguous_partitions);
+      bool contiguous_partitions,
+      size_t *partition_dims,
+      size_t num_partition_dims);
 
   void UpdateDistArrayIndex(
       int32_t id,
@@ -213,6 +216,21 @@ class Driver {
   jl_value_t* GetAccumulatorValue(
       const char *symbol,
       const char *combiner);
+
+  void RandomRemapPartialKeys(
+      int32_t dist_array_id,
+      size_t* dim_indices,
+      size_t num_dim_indices);
+
+  jl_value_t* ComputeHistogram(
+      int32_t dist_array_id,
+      size_t dim_index,
+      size_t num_bins);
+
+  void SaveAsTextFile(
+      int32_t dist_array_id,
+      const char* to_string_func_name,
+      const char* file_path);
 
   void Stop();
 };
@@ -403,7 +421,8 @@ Driver::CreateDistArray(
       const uint8_t* value_type_bytes,
       size_t value_type_size,
       const uint8_t* init_value_bytes,
-      size_t init_value_size) {
+      size_t init_value_size,
+      const char* key_func_name) {
   task::CreateDistArray create_dist_array;
   create_dist_array.set_id(id);
   create_dist_array.set_parent_type(parent_type);
@@ -443,10 +462,13 @@ Driver::CreateDistArray(
   create_dist_array.set_map_type(map_type);
   create_dist_array.set_partition_scheme(partition_scheme);
   create_dist_array.set_flatten_results(flatten_results);
-  if (static_cast<DistArrayMapType>(map_type )!= DistArrayMapType::kNoMap) {
+  if (static_cast<DistArrayMapType>(map_type) != DistArrayMapType::kNoMap) {
    create_dist_array.set_map_func_module(
         static_cast<int>(map_func_module));
     create_dist_array.set_map_func_name(map_func_name);
+  }
+  if (static_cast<DistArrayMapType>(map_type) == DistArrayMapType::kGroupBy) {
+    create_dist_array.set_key_func_name(key_func_name);
   }
   create_dist_array.set_num_dims(num_dims);
   create_dist_array.set_value_type(value_type);
@@ -499,17 +521,23 @@ Driver::RepartitionDistArray(
     const char *partition_func_name,
     int32_t partition_scheme,
     int32_t index_type,
-    bool contiguous_partitions) {
+    bool contiguous_partitions,
+    size_t *partition_dims,
+    size_t num_partition_dims) {
   task::RepartitionDistArray repartition_dist_array_task;
   repartition_dist_array_task.set_id(id);
   auto my_partition_scheme = static_cast<DistArrayPartitionScheme>(partition_scheme);
   if (my_partition_scheme == DistArrayPartitionScheme::kSpaceTime ||
-      my_partition_scheme == DistArrayPartitionScheme::k1D) {
+      my_partition_scheme == DistArrayPartitionScheme::k1D ||
+      my_partition_scheme == DistArrayPartitionScheme::kHashExecutor) {
     repartition_dist_array_task.set_partition_func_name(partition_func_name);
   }
   repartition_dist_array_task.set_partition_scheme(partition_scheme);
   repartition_dist_array_task.set_index_type(index_type);
   repartition_dist_array_task.set_contiguous_partitions(contiguous_partitions);
+  for (size_t i = 0; i < num_partition_dims; i++) {
+    repartition_dist_array_task.add_partition_dims(partition_dims[i]);
+  }
   repartition_dist_array_task.SerializeToString(&msg_buff_);
 
   message::DriverMsgHelper::CreateMsg<message::DriverMsgRepartitionDistArray>(
@@ -798,7 +826,7 @@ Driver::GetAccumulatorValue(
   auto *msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
       master_recv_temp_buff_);
   size_t result_size = msg->result_bytes;
-  CHECK_GE(result_size, 0);
+  CHECK_GT(result_size, 0);
 
   uint8_t *cursor = result_buff_.GetBytes();
   jl_value_t *bytes_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint8_type), 1);
@@ -828,6 +856,123 @@ Driver::GetAccumulatorValue(
   JL_GC_POP();
   master_recv_temp_buff_.ClearOneAndNextMsg();
   return deserialized_result;
+}
+
+void Driver::RandomRemapPartialKeys(
+    int32_t dist_array_id,
+    size_t* dim_indices,
+    size_t num_dim_indices) {
+  task::RandomRemapPartialKeys random_remap_partial_keys_task;
+  random_remap_partial_keys_task.set_dist_array_id(dist_array_id);
+  for (size_t i = 0; i < num_dim_indices; i++) {
+    random_remap_partial_keys_task.add_dim_indices(dim_indices[i]);
+  }
+  random_remap_partial_keys_task.SerializeToString(&msg_buff_);
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgRandomRemapPartialKeys>(
+      &master_.send_buff, msg_buff_.size());
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+
+  received_from_master_ = false;
+  BlockRecvFromMaster();
+  auto *msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  size_t result_size = msg->result_bytes;
+  CHECK_EQ(result_size, 0);
+
+  master_recv_temp_buff_.ClearOneMsg();
+}
+
+jl_value_t* Driver::ComputeHistogram(
+      int32_t dist_array_id,
+      size_t dim_index,
+      size_t num_bins) {
+  task::ComputeHistogram compute_histogram_task;
+  compute_histogram_task.set_dist_array_id(dist_array_id);
+  compute_histogram_task.set_dim_index(dim_index);
+  compute_histogram_task.set_num_bins(num_bins);
+  compute_histogram_task.SerializeToString(&msg_buff_);
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgComputeHistogram>(
+      &master_.send_buff, msg_buff_.size());
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  received_from_master_ = false;
+  BlockRecvFromMaster();
+
+  auto *msg = message::DriverMsgHelper::get_msg<message::DriverMsgMasterResponse>(
+      master_recv_temp_buff_);
+  size_t result_size = msg->result_bytes;
+  size_t replied_num_bins = result_size / (sizeof(int64_t) + sizeof(size_t));
+  std::vector<int64_t> bin_keys(replied_num_bins);
+  std::vector<size_t> bin_sizes(replied_num_bins);
+
+  uint8_t *cursor = result_buff_.GetBytes();
+  memcpy(bin_keys.data(), cursor, replied_num_bins * sizeof(int64_t));
+  memcpy(bin_sizes.data(), cursor + replied_num_bins * sizeof(int64_t),
+         replied_num_bins * sizeof(size_t));
+
+  jl_value_t **jl_values;
+  JL_GC_PUSHARGS(jl_values, 7);
+  jl_value_t *&key_array_type_jl = jl_values[0];
+  jl_value_t *&size_array_type_jl = jl_values[1];
+  jl_value_t *&key_array_jl = jl_values[2];
+  jl_value_t *&size_array_jl = jl_values[3];
+  jl_value_t *&ret_tuple_jl = jl_values[4];
+  jl_value_t *&key_jl = jl_values[5];
+  jl_value_t *&size_jl = jl_values[6];
+
+  key_array_type_jl = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
+  key_array_jl = reinterpret_cast<jl_value_t*>(
+      jl_alloc_array_1d(key_array_type_jl, replied_num_bins));
+  size_array_type_jl = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_uint64_type), 1);
+  size_array_jl = reinterpret_cast<jl_value_t*>(jl_alloc_array_1d(size_array_type_jl,
+                                                                  replied_num_bins));
+
+  for (size_t i = 0; i < replied_num_bins; i++) {
+    auto bin_key = bin_keys[i];
+    auto bin_size = bin_sizes[i];
+    key_jl = jl_box_int64(bin_key);
+    size_jl = jl_box_uint64(bin_size);
+    jl_arrayset(reinterpret_cast<jl_array_t*>(key_array_jl), key_jl, i);
+    jl_arrayset(reinterpret_cast<jl_array_t*>(size_array_jl), size_jl, i);
+  }
+  jl_function_t *tuple_func = JuliaEvaluator::GetFunction(jl_base_module, "tuple");
+  ret_tuple_jl = jl_call2(tuple_func, key_array_jl, size_array_jl);
+  JuliaEvaluator::AbortIfException();
+  JL_GC_POP();
+  master_recv_temp_buff_.ClearOneAndNextMsg();
+  return ret_tuple_jl;
+}
+
+void
+Driver::SaveAsTextFile(
+    int32_t dist_array_id,
+    const char* to_string_func_name,
+    const char* file_path) {
+
+  task::SaveAsTextFile save_as_text_file_task;
+  save_as_text_file_task.set_dist_array_id(dist_array_id);
+  save_as_text_file_task.set_to_string_func_name(to_string_func_name);
+  save_as_text_file_task.set_file_path(file_path);
+  save_as_text_file_task.SerializeToString(&msg_buff_);
+  message::DriverMsgHelper::CreateMsg<message::DriverMsgSaveAsTextFile>(
+      &master_.send_buff, msg_buff_.size());
+  master_.send_buff.set_next_to_send(msg_buff_.data(), msg_buff_.size());
+  BlockSendToMaster();
+  master_.send_buff.clear_to_send();
+  master_.send_buff.reset_sent_sizes();
+
+  expected_msg_type_ = message::DriverMsgType::kMasterResponse;
+  received_from_master_ = false;
+  BlockRecvFromMaster();
+  master_recv_temp_buff_.ClearOneAndNextMsg();
 }
 
 }

@@ -14,7 +14,8 @@ DistArrayMeta::DistArrayMeta(
     type::PrimitiveType random_init_type,
     bool flatten_results,
     bool is_dense,
-    const std::string &symbol):
+    const std::string &symbol,
+    const std::string &key_func_name):
     kNumDims(num_dims),
     dims_(num_dims, 0),
     kParentType(parent_type),
@@ -27,7 +28,8 @@ DistArrayMeta::DistArrayMeta(
     kRandomInitType(random_init_type),
     partition_scheme_(partition_scheme),
     index_type_(DistArrayIndexType::kNone),
-    symbol_(symbol) { }
+    symbol_(symbol),
+    kKeyFuncName(key_func_name) { }
 
 void
 DistArrayMeta::UpdateDimsMax(

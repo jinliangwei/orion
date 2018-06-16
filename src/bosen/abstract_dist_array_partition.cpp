@@ -1,5 +1,7 @@
 #include <glog/logging.h>
 #include <algorithm>
+#include <random>
+#include <fstream>
 
 #include <orion/bosen/abstract_dist_array_partition.hpp>
 #include <orion/bosen/dist_array.hpp>
@@ -239,6 +241,49 @@ AbstractDistArrayPartition::CountNumLines() const {
     if (c == '\n') num_lines++;
   }
   return num_lines;
+}
+
+void
+AbstractDistArrayPartition::SaveAsTextFile(const std::string &id_str,
+                                           const std::string &to_string_func_name,
+                                           const std::string &file_path) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  jl_value_t* key_array_type = nullptr;
+  jl_value_t* dim_array_jl = nullptr;
+  jl_value_t* key_array_jl = nullptr;
+  jl_value_t* value_array_jl = nullptr;
+  jl_value_t* record_str_vec_jl = nullptr;
+  JL_GC_PUSH5(&key_array_type, &dim_array_jl, &key_array_jl,
+              &value_array_jl, &record_str_vec_jl);
+
+  GetJuliaValueArray(&value_array_jl);
+  std::vector<int64_t> dims = GetDims();
+
+  key_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
+  dim_array_jl = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(key_array_type, dims.data(), dims.size(), 0));
+  key_array_jl = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(key_array_type, keys_.data(), keys_.size(), 0));
+
+  jl_function_t *to_string_func = JuliaEvaluator::GetFunction(
+      jl_main_module, to_string_func_name.c_str());
+
+  record_str_vec_jl = jl_call3(to_string_func, dim_array_jl, key_array_jl,
+                               value_array_jl);
+  JuliaEvaluator::AbortIfException();
+  auto &meta = dist_array_->GetMeta();
+  const auto &symbol = meta.GetSymbol();
+  std::string file_name = file_path + "/" + symbol + std::string(".partition.") + id_str;
+  std::ofstream out_fs(file_name);
+
+  size_t num_record_strs = jl_array_len(reinterpret_cast<jl_array_t*>(record_str_vec_jl));
+  for (size_t i = 0; i < num_record_strs; i++) {
+    jl_value_t* record_str_jl = jl_arrayref(reinterpret_cast<jl_array_t*>(record_str_vec_jl), i);
+    const char* record_str = jl_string_ptr(record_str_jl);
+    out_fs << record_str << std::endl;
+  }
+  out_fs.close();
+  JL_GC_POP();
 }
 
 void
@@ -497,12 +542,75 @@ AbstractDistArrayPartition::Map(AbstractDistArrayPartition *child_partition) {
 }
 
 void
+AbstractDistArrayPartition::GroupBy(AbstractDistArrayPartition* child_partition) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  jl_value_t **jl_values;
+  JL_GC_PUSHARGS(jl_values, 7);
+  jl_value_t *&input_values_jl = jl_values[0];
+  jl_value_t *&output_value_type = jl_values[1];
+  jl_value_t *&key_array_type = jl_values[2];
+  jl_value_t *&key_array_jl = jl_values[3];
+  jl_value_t *&parent_dim_array_jl = jl_values[4];
+  jl_value_t *&child_dim_array_jl = jl_values[5];
+  jl_value_t *&output_tuple_jl = jl_values[6];
+
+  GetJuliaValueArray(&input_values_jl);
+  auto *child_dist_array = child_partition->dist_array_;
+  auto &dist_array_meta = child_dist_array->GetMeta();
+  std::vector<int64_t> child_dims = dist_array_meta.GetDims();
+  auto map_func_module = dist_array_meta.GetMapFuncModule();
+  const auto &map_func_name = dist_array_meta.GetMapFuncName();
+  const auto &dist_array_sym = dist_array_meta.GetSymbol();
+  std::vector<int64_t> parent_dims = GetDims();
+  JuliaEvaluator::GetDistArrayValueType(dist_array_sym,
+                                        reinterpret_cast<jl_datatype_t**>(&output_value_type));
+
+  key_array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
+  parent_dim_array_jl = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(key_array_type, parent_dims.data(), parent_dims.size(), 0));
+  child_dim_array_jl = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(key_array_type, child_dims.data(), child_dims.size(), 0));
+  key_array_jl = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(key_array_type, keys_.data(), keys_.size(), 0));
+
+  jl_function_t *map_func_jl = JuliaEvaluator::GetFunction(
+      GetJlModule(map_func_module), map_func_name.c_str());
+
+  {
+    jl_value_t *args[5];
+    args[0] = parent_dim_array_jl;
+    args[1] = child_dim_array_jl;
+    args[2] = key_array_jl;
+    args[3] = input_values_jl;
+    args[4] = output_value_type;
+    output_tuple_jl = jl_call(map_func_jl, args, 5);
+    JuliaEvaluator::AbortIfException();
+  }
+
+  jl_value_t *output_key_array_jl = jl_get_nth_field(output_tuple_jl, 0);
+  jl_value_t *output_values_jl = jl_get_nth_field(output_tuple_jl, 1);
+
+  size_t num_output_keys = jl_array_len(output_key_array_jl);
+  child_partition->keys_.resize(num_output_keys);
+
+  uint8_t *output_key_array = reinterpret_cast<uint8_t*>(jl_array_data(output_key_array_jl));
+  memcpy(child_partition->keys_.data(), output_key_array, num_output_keys * sizeof(int64_t));
+
+  size_t num_output_values = jl_array_len(reinterpret_cast<jl_array_t*>(output_values_jl));
+  CHECK_EQ(num_output_values, num_output_keys);
+  child_partition->AppendJuliaValueArray(output_values_jl);
+  JL_GC_POP();
+}
+
+void
 AbstractDistArrayPartition::ComputeKeysFromBuffer(
     const std::vector<int64_t> &dims) {
   size_t num_dims = dims.size();
   keys_.resize(key_buff_.size() / num_dims);
+
   for (int i = 0; i < key_buff_.size(); i += num_dims) {
     int64_t key_i = key::array_to_int64(dims, key_buff_.data() + i);
+    CHECK_GE(key_i, 0) << " " << key_buff_[i] << " " << key_buff_[i + 1];
     keys_[i / num_dims] = key_i;
   }
   {
@@ -551,6 +659,202 @@ AbstractDistArrayPartition::ComputeRepartitionIdsAndRepartition(
 }
 
 void
+AbstractDistArrayPartition::ComputeHashRepartitionIdsAndRepartition(
+    const std::string &repartition_func_name,
+    size_t num_partitions) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  jl_value_t *array_type = nullptr,
+            *keys_vec_jl = nullptr,
+            *dims_vec_jl = nullptr,
+       *hash_vals_vec_jl = nullptr;
+  JL_GC_PUSH4(&array_type, &keys_vec_jl, &dims_vec_jl, &hash_vals_vec_jl);
+  const auto &dims = dist_array_->GetDims();
+  auto temp_dims = dims;
+  array_type = jl_apply_array_type(reinterpret_cast<jl_value_t*>(jl_int64_type), 1);
+  keys_vec_jl = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(array_type, keys_.data(), keys_.size(), 0));
+  dims_vec_jl = reinterpret_cast<jl_value_t*>(
+      jl_ptr_to_array_1d(array_type, temp_dims.data(), temp_dims.size(), 0));
+
+  jl_function_t *repartition_func = JuliaEvaluator::GetFunction(jl_main_module,
+                                                                repartition_func_name.c_str());
+  hash_vals_vec_jl = jl_call2(repartition_func, keys_vec_jl, dims_vec_jl);
+  JuliaEvaluator::AbortIfException();
+  CHECK(!jl_exception_occurred()) << jl_typeof_str(jl_exception_occurred());
+
+  uint64_t *hash_vals = reinterpret_cast<uint64_t*>(jl_array_data(hash_vals_vec_jl));
+  size_t num_hash_vals = jl_array_len(hash_vals_vec_jl);
+  std::vector<int32_t> repartition_ids(num_hash_vals);
+  for (size_t i = 0; i < num_hash_vals; i++) {
+    repartition_ids[i] = static_cast<int32_t>(hash_vals[i] % num_partitions);
+  }
+  Repartition(repartition_ids.data());
+  JL_GC_POP();
+}
+
+void
+AbstractDistArrayPartition::ComputePartialModuloRepartitionIdsAndRepartition(
+    size_t num_partitions,
+    const std::vector<size_t> &dim_indices) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  const auto &dims = dist_array_->GetDims();
+  std::vector<int32_t> repartition_ids(keys_.size());
+  std::vector<int64_t> key_vec(dims.size());
+  std::vector<int64_t> partial_dims(dim_indices.size());
+  std::vector<int64_t> partial_key_vec(dim_indices.size());
+  key::get_partial_dims(dims, dim_indices, &partial_dims);
+  for (size_t i = 0; i < keys_.size(); i ++) {
+    auto key = keys_[i];
+    key::int64_to_vec(dims, key, &key_vec);
+    key::get_partial_key(key_vec, dim_indices, &partial_key_vec);
+    auto partial_key = key::vec_to_int64(partial_dims, partial_key_vec);
+    int32_t repartition_id = partial_key % num_partitions;
+    repartition_ids[i] = repartition_id;
+  }
+  Repartition(repartition_ids.data());
+}
+
+void
+AbstractDistArrayPartition::ComputePartialRandomRepartitionIdsAndRepartition(
+    size_t num_partitions,
+    const std::vector<size_t> &dim_indices,
+    std::unordered_map<int64_t, int32_t> *partial_key_to_repartition_id_map) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+
+  const auto &dims = dist_array_->GetDims();
+  std::vector<int32_t> repartition_ids(keys_.size());
+  std::vector<int64_t> key_vec(dims.size());
+  std::vector<int64_t> partial_dims(dim_indices.size());
+  std::vector<int64_t> partial_key_vec(dim_indices.size());
+  key::get_partial_dims(dims, dim_indices, &partial_dims);
+
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<int32_t> dist(0, num_partitions - 1);
+
+  for (size_t i = 0; i < keys_.size(); i ++) {
+    auto key = keys_[i];
+    key::int64_to_vec(dims, key, &key_vec);
+    key::get_partial_key(key_vec, dim_indices, &partial_key_vec);
+    auto partial_key = key::vec_to_int64(partial_dims, partial_key_vec);
+
+    auto repartition_id_iter = partial_key_to_repartition_id_map->find(partial_key);
+    if (repartition_id_iter == partial_key_to_repartition_id_map->end()) {
+      int32_t repartition_id = dist(gen);
+      auto emplace_pair = partial_key_to_repartition_id_map->emplace(
+          std::make_pair(partial_key, repartition_id));
+      repartition_id_iter = emplace_pair.first;
+    }
+    int32_t repartition_id = repartition_id_iter->second;
+    repartition_ids[i] = repartition_id;
+  }
+  Repartition(repartition_ids.data());
+}
+
+size_t
+AbstractDistArrayPartition::GetNumUniquePartialKeys(const std::vector<size_t> &dim_indices) const {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  const auto &dims = dist_array_->GetDims();
+  std::vector<int64_t> key_vec(dims.size());
+  std::vector<int64_t> partial_dims(dim_indices.size());
+  std::vector<int64_t> partial_key_vec(dim_indices.size());
+  key::get_partial_dims(dims, dim_indices, &partial_dims);
+  std::set<int64_t> partial_key_set;
+
+  for (size_t i = 0; i < keys_.size(); i ++) {
+    auto key = keys_[i];
+    key::int64_to_vec(dims, key, &key_vec);
+    key::get_partial_key(key_vec, dim_indices, &partial_key_vec);
+    auto partial_key = key::vec_to_int64(partial_dims, partial_key_vec);
+    partial_key_set.emplace(partial_key);
+  }
+  return partial_key_set.size();
+}
+
+// remap to [remapped_partial_key_start, remapped_partial_key_end]
+void
+AbstractDistArrayPartition::RandomRemapPartialKeys(
+    const std::vector<size_t> &dim_indices,
+    std::unordered_map<int64_t, int64_t> *partial_key_to_remapped_partial_key,
+    std::set<int64_t> *remapped_partial_key_set,
+    int64_t remapped_partial_key_start,
+    int64_t remapped_partial_key_end) {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  const auto &dims = dist_array_->GetDims();
+  std::vector<int64_t> key_vec(dims.size());
+  std::vector<int64_t> partial_dims(dim_indices.size());
+  std::vector<int64_t> partial_key_vec(dim_indices.size());
+  key::get_partial_dims(dims, dim_indices, &partial_dims);
+
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<int64_t> dist(remapped_partial_key_start,
+                                              remapped_partial_key_end);
+
+  for (size_t i = 0; i < keys_.size(); i ++) {
+    auto key = keys_[i];
+    key::int64_to_vec(dims, key, &key_vec);
+    key::get_partial_key(key_vec, dim_indices, &partial_key_vec);
+    auto partial_key = key::vec_to_int64(partial_dims, partial_key_vec);
+    auto remap_iter = partial_key_to_remapped_partial_key->find(partial_key);
+    if (remap_iter == partial_key_to_remapped_partial_key->end()) {
+      int64_t remapped_partial_key = dist(gen);
+      size_t num_trials = 0;
+      while (remapped_partial_key_set->count(remapped_partial_key) == 1) {
+        num_trials += 1;
+        CHECK_LT(num_trials,
+                 remapped_partial_key_end - remapped_partial_key_start + 1);
+        remapped_partial_key = remapped_partial_key + 1;
+        if (remapped_partial_key > remapped_partial_key_end) {
+          remapped_partial_key = remapped_partial_key_start;
+        }
+      }
+      remapped_partial_key_set->emplace(remapped_partial_key);
+      auto emplace_pair = partial_key_to_remapped_partial_key->emplace(
+          std::make_pair(partial_key, remapped_partial_key));
+      remap_iter = emplace_pair.first;
+    }
+    int64_t remapped_partial_key = remap_iter->second;
+    key::int64_to_vec(partial_dims, remapped_partial_key, &partial_key_vec);
+    key::update_key_with_partial_key(partial_key_vec, dim_indices, &key_vec);
+    int64_t remapped_key = key::vec_to_int64(dims, key_vec);
+    keys_[i] = remapped_key;
+  }
+  sorted_ = false;
+}
+
+void
+AbstractDistArrayPartition::AccumHistogram(size_t dim_index,
+                                           size_t num_bins,
+                                           std::vector<size_t> *histogram_vec,
+                                           size_t full_bin_size,
+                                           size_t num_full_bins,
+                                           size_t bin_size,
+                                           int64_t full_bin_cutoff_key,
+                                           int64_t dim_divider,
+                                           int64_t dim_mod) const {
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+
+  for (size_t i = 0; i < keys_.size(); i++) {
+    auto key = keys_[i];
+    int64_t dim_key = (key / dim_divider) % dim_mod;
+    int64_t bin_key = 0;
+    if (dim_key <= full_bin_cutoff_key) {
+      bin_key = dim_key / full_bin_size;
+    } else {
+      bin_key = (dim_key - full_bin_size * num_full_bins) / bin_size + num_full_bins;
+    }
+    CHECK_LT(bin_key, num_bins) << " key = " << key
+                                << " dim_key = " << dim_key
+                                << " dim_divider = " << dim_divider
+                                << " dim_mod = " << dim_mod
+                                << " bin_size = " << bin_size
+                                << " full_bin_size = " << full_bin_size;
+    (*histogram_vec)[bin_key] += 1;
+  }
+}
+
+void
 AbstractDistArrayPartition::ComputePrefetchIndices(
     const std::string &prefetch_batch_func_name,
     const std::vector<int32_t> &dist_array_ids_vec,
@@ -560,10 +864,6 @@ AbstractDistArrayPartition::ComputePrefetchIndices(
     PointQueryKeyDistArrayMap *point_key_vec_map,
     size_t offset,
     size_t num_elements) {
-  LOG(INFO) << __func__
-            << " " << prefetch_batch_func_name
-            << " num_dist_arrays_to_prefetch = "
-            << global_indexed_dist_arrays.size();
 
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   size_t num_args = global_read_only_var_vals.size()
@@ -655,7 +955,6 @@ AbstractDistArrayPartition::ComputePrefetchIndices(
     }
   }
   JL_GC_POP();
-  LOG(INFO) << __func__ << " done!";
 }
 
 void
@@ -667,9 +966,8 @@ AbstractDistArrayPartition::Execute(
     const std::vector<std::string> &accumulator_var_syms,
     size_t offset,
     size_t num_elements) {
+  LOG(INFO) << __func__ << "Start";
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
-  LOG(INFO) << __func__ << "Start " << num_elements;
-
   size_t num_args = accessed_dist_arrays.size() + accessed_dist_array_buffers.size()
                     + global_read_only_var_vals.size()
                     + accumulator_var_syms.size() + 5;
@@ -721,6 +1019,7 @@ AbstractDistArrayPartition::Execute(
   jl_function_t *exec_loop_func
       = JuliaEvaluator::GetFunction(jl_main_module,
                                     loop_batch_func_name.c_str());
+  LOG(INFO) << __func__ << " JLCall Start";
   jl_call(exec_loop_func, jl_values, num_args);
   JuliaEvaluator::AbortIfException();
   JL_GC_POP();

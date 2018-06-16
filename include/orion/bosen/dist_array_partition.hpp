@@ -403,8 +403,6 @@ DistArrayPartition<ValueType>::GetAndSerializeValues(int64_t *keys,
                                         << " key = " << key
                                         << " size = " << sparse_index_.size();
     auto value = iter->second;
-    LOG(INFO) << __func__ << " key = " << key
-              << " value = " << value;
     *reinterpret_cast<ValueType*>(cursor) = value;
     cursor += sizeof(ValueType);
   }

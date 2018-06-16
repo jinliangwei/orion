@@ -45,7 +45,8 @@ extern "C" {
       const uint8_t* value_type_bytes,
       size_t value_type_size,
       const uint8_t* init_value_bytes,
-      size_t init_value_size) {
+      size_t init_value_size,
+      const char* key_func_name) {
     driver->CreateDistArray(
         id,
         parent_type,
@@ -66,7 +67,8 @@ extern "C" {
         value_type_bytes,
         value_type_size,
         init_value_bytes,
-        init_value_size);
+        init_value_size,
+        key_func_name);
   }
 
   void orion_create_dist_array_buffer(
@@ -110,11 +112,15 @@ extern "C" {
       const char *partition_func_name,
       int32_t partition_scheme,
       int32_t index_type,
-      bool contiguous_partitions) {
+      bool contiguous_partitions,
+      size_t *partition_dims,
+      size_t num_partition_dims) {
     driver->RepartitionDistArray(id, partition_func_name,
                                  partition_scheme,
                                  index_type,
-                                 contiguous_partitions);
+                                 contiguous_partitions,
+                                 partition_dims,
+                                 num_partition_dims);
   }
 
   void orion_update_dist_array_index(
@@ -204,6 +210,29 @@ extern "C" {
     return driver->GetAccumulatorValue(
         symbol,
         combiner);
+  }
+
+  void orion_random_remap_partial_keys(
+      int32_t dist_array_id,
+      size_t *dim_indices,
+      size_t num_dim_indices) {
+    driver->RandomRemapPartialKeys(dist_array_id,
+                                   dim_indices,
+                                   num_dim_indices);
+  }
+
+  jl_value_t* orion_compute_histogram(
+      int32_t dist_array_id,
+      size_t dim_index,
+      size_t num_bins) {
+    return driver->ComputeHistogram(dist_array_id, dim_index, num_bins);
+  }
+
+  void orion_save_as_text_file(
+      int32_t dist_array_id,
+      const char* to_string_func_name,
+      const char* file_path) {
+    driver->SaveAsTextFile(dist_array_id, to_string_func_name, file_path);
   }
 
   void orion_stop() {

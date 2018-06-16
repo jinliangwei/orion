@@ -50,6 +50,8 @@ extern "C" {
   = static_cast<int32_t>(orion::bosen::DistArrayMapType::kMapValues);
   const int32_t ORION_DIST_ARRAY_MAP_TYPE_MAP_VALUES_NEW_KEYS
   = static_cast<int32_t>(orion::bosen::DistArrayMapType::kMapValuesNewKeys);
+  const int32_t ORION_DIST_ARRAY_MAP_TYPE_GROUP_BY
+  = static_cast<int32_t>(orion::bosen::DistArrayMapType::kGroupBy);
 
   const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_NAIVE
   = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kNaive);
@@ -63,6 +65,12 @@ extern "C" {
   = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kModuloExecutor);
   const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_RANGE
   = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kRange);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_PARTIAL_MODULO_EXECUTOR
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kPartialModuloExecutor);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_PARTIAL_RANDOM_EXECUTOR
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kPartialRandomExecutor);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_HASH_EXECUTOR
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kHashExecutor);
 
   const int32_t ORION_DIST_ARRAY_INDEX_TYPE_NONE
   = static_cast<int32_t>(orion::bosen::DistArrayIndexType::kNone);

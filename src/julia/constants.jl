@@ -82,6 +82,8 @@ function load_dist_array_map_type_int32()
     global const dist_array_map_type_map_values = unsafe_load(ptr_val)
     ptr_val = cglobal((:ORION_DIST_ARRAY_MAP_TYPE_MAP_VALUES_NEW_KEYS, lib_path), Int32)
     global const dist_array_map_type_map_values_new_keys = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_MAP_TYPE_GROUP_BY, lib_path), Int32)
+    global const dist_array_map_type_group_by = unsafe_load(ptr_val)
 end
 
 function load_dist_array_partition_scheme_int32()
@@ -97,6 +99,12 @@ function load_dist_array_partition_scheme_int32()
     global const dist_array_partition_scheme_modulo_executor = unsafe_load(ptr_val)
     ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_RANGE, lib_path), Int32)
     global const dist_array_partition_scheme_range = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_PARTIAL_MODULO_EXECUTOR, lib_path), Int32)
+    global const dist_array_partition_scheme_partial_modulo_executor = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_PARTIAL_RANDOM_EXECUTOR, lib_path), Int32)
+    global const dist_array_partition_scheme_partial_random_executor = unsafe_load(ptr_val)
+    ptr_val = cglobal((:ORION_DIST_ARRAY_PARTITION_SCHEME_HASH_EXECUTOR, lib_path), Int32)
+    global const dist_array_partition_scheme_hash_executor = unsafe_load(ptr_val)
 end
 
 function load_dist_array_index_type_int32()
@@ -161,6 +169,8 @@ function dist_array_map_type_to_int32(map_type::DistArrayMapType)::Int32
         return dist_array_map_type_map_values
     elseif map_type == DistArrayMapType_map_values_new_keys
         return dist_array_map_type_map_values_new_keys
+    elseif map_type == DistArrayMapType_group_by
+        return dist_array_map_type_group_by
     else
         error("unknown ", map_type)
     end
@@ -181,6 +191,12 @@ function dist_array_partition_type_to_int32(partition_type::DistArrayPartitionTy
         return dist_array_partition_scheme_modulo_server
     elseif partition_type == DistArrayPartitionType_modulo_executor
         return dist_array_partition_scheme_modulo_executor
+    elseif partition_type == DistArrayPartitionType_partial_modulo_executor
+        return dist_array_partition_scheme_partial_modulo_executor
+    elseif partition_type == DistArrayPartitionType_partial_random_executor
+        return dist_array_partition_scheme_partial_random_executor
+    elseif partition_type == DistArrayPartitionType_hash_executor
+        return dist_array_partition_scheme_hash_executor
     else
         error("unknown ", partition_type)
     end

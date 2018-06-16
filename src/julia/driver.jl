@@ -46,6 +46,7 @@ function eval_expr_on_all(ex, eval_module::Symbol)
     buff = IOBuffer()
     serialize(buff, ex)
     buff_array = take!(buff)
+    println("serialized expr length = ", length(buff_array))
     result_array = ccall((:orion_eval_expr_on_all, lib_path),
                          Any, (Ref{UInt8}, UInt64, Int32),
                          buff_array, length(buff_array),

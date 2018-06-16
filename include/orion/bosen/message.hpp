@@ -129,7 +129,10 @@ enum class DriverMsgType {
     kSetDistArrayBufferInfo = 15,
     kDeleteDistArrayBufferInfo = 16,
     kUpdateDistArrayIndex = 17,
-    kDeleteDistArray = 18
+    kDeleteDistArray = 18,
+    kRandomRemapPartialKeys = 19,
+    kComputeHistogram = 20,
+    kSaveAsTextFile = 21
 };
 
 struct DriverMsg {
@@ -175,7 +178,11 @@ enum class ExecuteMsgType {
     kExecForLoopDistArrayBufferData = 27,
     kExecForLoopDistArrayCacheData = 28,
     kExecForLoopDistArrayBufferDataPtr = 29,
-    kExecForLoopDistArrayCacheDataPtr = 30
+    kExecForLoopDistArrayCacheDataPtr = 30,
+    kComputePartitionNumUniquePartialKeys = 31,
+    kComputePartitionNumUniquePartialKeysAck = 32,
+    kRandomRemapPartialKeys = 33,
+    kComputeHistogramAck = 34
 };
 
 struct ExecuteMsg {

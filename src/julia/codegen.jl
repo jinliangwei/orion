@@ -64,6 +64,62 @@ function gen_1d_partition_function(func_name::Symbol,
     return partition_func
 end
 
+function gen_2d_histogram_partition_function(func_name::Symbol,
+                                             space_partition_dim::Int64,
+                                             time_partition_dim::Int64,
+                                             space_partition_bounds::Vector{Int64},
+                                             time_partition_bounds::Vector{Int64})
+
+    partition_func = :(
+        function $func_name(keys::Vector{Int64},
+                            dims::Vector{Int64})
+          repartition_ids = Vector{Int32}(length(keys) * 2)
+          dim_keys = Vector{Int64}(length(dims))
+          space_partition_bounds = $space_partition_bounds
+          time_partition_bounds = $time_partition_bounds
+
+          for index in eachindex(keys)
+              key = keys[index]
+              OrionWorker.from_int64_to_keys(key, dims, dim_keys)
+              space_dim_key = dim_keys[$space_partition_dim] - 1
+              space_partition_pos = Base.Sort.searchsortedfirst(space_partition_bounds, space_dim_key)
+              space_partition_index = space_partition_pos - 1
+              repartition_ids[index * 2 - 1] = space_partition_index
+
+              time_dim_key = dim_keys[$time_partition_dim] - 1
+              time_partition_pos = Base.Sort.searchsortedfirst(time_partition_bounds, time_dim_key)
+              time_partition_index = time_partition_pos - 1
+              repartition_ids[index * 2] = time_partition_index
+        end
+          return repartition_ids
+        end)
+
+    return partition_func
+end
+
+function gen_1d_histogram_partition_function(func_name::Symbol,
+                                             partition_dim::Int64,
+                                             partition_bounds::Vector{Int64})
+    partition_func = :(
+        function $func_name(keys::Vector{Int64},
+                            dims::Vector{Int64})
+          repartition_ids = Vector{Int32}(length(keys))
+          dim_keys = Vector{Int64}(length(dims))
+          partition_bounds = $partition_bounds
+          for index in eachindex(keys)
+              key = keys[index]
+              OrionWorker.from_int64_to_keys(key, dims, dim_keys)
+              dim_key = dim_keys[$partition_dim] - 1
+              partition_pos = Base.Sort.searchsortedfirst(partition_bounds, dim_key)
+              partition_index = partition_pos - 1
+              repartition_ids[index] = partition_index
+          end
+          return repartition_ids
+        end)
+
+    return partition_func
+end
+
 function gen_utransform_2d_partition_function(func_name::Symbol,
                                               dims::Array{Tuple{Int64}, 1},
                                               coeffs::Array{Tuple{Int64}, 1},
@@ -1047,4 +1103,85 @@ function gen_apply_batch_buffered_updates_func(batch_func_name::Symbol,
     append!(apply_batch_buffered_updates_func.args[2].args, init_start_index_stmts)
     push!(apply_batch_buffered_updates_func.args[2].args, apply_buffered_updates_loop)
     return apply_batch_buffered_updates_func
+end
+
+function gen_group_by_key_batch_function(key_func_name::Symbol,
+                                         key_batch_func_name::Symbol)
+    key_batch_func = :(
+        function $key_batch_func_name(keys::Vector{Int64},
+                                      dims::Vector{Int64})
+        group_keys = Vector{UInt64}(length(keys))
+        dim_keys_vec = Vector{Int64}(length(dims))
+        for i in eachindex(keys)
+            key = keys[i]
+            OrionWorker.from_int64_to_keys(key, dims, dim_keys_vec)
+            dim_keys = tuple(dim_keys_vec...)
+            group_key = $(key_func_name)(dim_keys)
+            group_keys[i] = group_key
+        end
+        return group_keys
+    end
+   )
+end
+
+function gen_group_by_map_batch_function(key_func_name::Symbol,
+                                         map_func_name::Symbol,
+                                         map_batch_func_name::Symbol,
+                                         num_dims::Integer,
+                                         ValueType)
+    map_batch_func = :(
+       function $map_batch_func_name(dims::Vector{Int64},
+                                     new_dims::Vector{Int64},
+                                     keys::Vector{Int64},
+                                     values::Vector,
+                                     output_value_type)
+            new_keys = Vector{Int64}()
+            new_values = Vector{output_value_type}()
+            dim_keys_vec = Vector{Int64}(length(dims))
+            key_group_dict = Dict{UInt64, Vector{Tuple{NTuple{$num_dims, Int64}, $ValueType}}
+                                  }()
+            @assert length(keys) == length(values)
+            for i in eachindex(keys)
+                key = keys[i]
+                value = values[i]
+                OrionWorker.from_int64_to_keys(key, dims, dim_keys_vec)
+                dim_keys = tuple(dim_keys_vec...)
+                group_key = $(key_func_name)(dim_keys)
+                if !haskey(key_group_dict, group_key)
+                    key_group_dict[group_key] = Vector{Tuple{NTuple{$num_dims, Int64}, $ValueType}}()
+                end
+                push!(key_group_dict[group_key], (dim_keys, value))
+            end
+            for (group_key, group_values) in key_group_dict
+                (new_dim_keys, new_value) = $(map_func_name)(group_values)
+                new_key = OrionWorker.from_keys_to_int64(new_dim_keys, new_dims)
+                push!(new_keys, new_key)
+                push!(new_values, new_value)
+            end
+            return (new_keys, new_values)
+      end
+    )
+    return map_batch_func
+end
+
+function gen_to_string_batch_function(to_string_func_name::Symbol,
+                                      to_string_batch_func_name::Symbol)
+    to_string_batch_func = :(
+       function $to_string_batch_func_name(dims::Vector{Int64},
+                                           keys::Vector{Int64},
+                                           values::Vector)
+            record_strings_vec = Vector{String}(length(keys))
+            dim_keys_vec = Vector{Int64}(length(dims))
+            for i in eachindex(keys)
+                key = keys[i]
+                value = values[i]
+                OrionWorker.from_int64_to_keys(key, dims, dim_keys_vec)
+                dim_keys = tuple(dim_keys_vec...)
+                record_string = $(to_string_func_name)(dim_keys, value)
+                record_strings_vec[i] = record_string
+             end
+             return record_strings_vec
+       end
+    )
+    return to_string_batch_func
 end

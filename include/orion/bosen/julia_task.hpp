@@ -39,7 +39,9 @@ enum class TaskLabel {
     kExecForLoopClear = 26,
     kDeleteAllDistArrays = 27,
     kDeleteDistArray = 28,
-    kSkipPartition = 29
+    kSkipPartition = 29,
+    kSaveAsTextFile = 30,
+    kGroupByDistArray = 31
           };
 
 class JuliaTask {

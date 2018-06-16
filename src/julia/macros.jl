@@ -27,6 +27,7 @@ function parallelize_for_loop(args...)
     loop_stmt = args[end]
     is_ordered = false
     is_repeated = false
+    is_histogram_partitioned = false
 
     for arg in args[1:(length(args) - 1)]
         @assert isa(arg, Symbol)
@@ -34,6 +35,8 @@ function parallelize_for_loop(args...)
             is_ordered = true
         elseif arg == :repeated
             is_repeated = true
+        elseif arg == :histogram_partitioned
+            is_histogram_partitioned = true
         else
             error("unrecognized specifier ", arg)
         end
@@ -76,6 +79,7 @@ function parallelize_for_loop(args...)
                                          loop_body,
                                          is_ordered,
                                          is_repeated,
+                                         is_histogram_partitioned,
                                          ssa_context.ssa_defs,
                                          flow_graph)
 

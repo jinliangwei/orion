@@ -480,6 +480,62 @@ struct ExecuteMsgExecForLoopDistArrayCacheDataPtr {
   }
 };
 
+struct ExecuteMsgComputePartitionNumUniquePartialKeys {
+  size_t task_size;
+ private:
+  ExecuteMsgComputePartitionNumUniquePartialKeys() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _task_size) {
+    task_size = _task_size;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kComputePartitionNumUniquePartialKeys;
+  }
+};
+
+struct ExecuteMsgComputePartitionNumUniquePartialKeysAck {
+  size_t num_partitions;
+ private:
+  ExecuteMsgComputePartitionNumUniquePartialKeysAck() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _num_partitions) {
+    num_partitions = _num_partitions;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kComputePartitionNumUniquePartialKeysAck;
+  }
+};
+
+struct ExecuteMsgRandomRemapPartialKeys {
+  size_t task_size;
+ private:
+  ExecuteMsgRandomRemapPartialKeys() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _task_size) {
+    task_size = _task_size;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kRandomRemapPartialKeys;
+  }
+};
+
+struct ExecuteMsgComputeHistogramAck {
+  size_t num_bins;
+ private:
+  ExecuteMsgComputeHistogramAck() = default;
+  friend class DefaultMsgCreator;
+ public:
+  void Init(size_t _num_bins) {
+    num_bins = _num_bins;
+  }
+  static constexpr ExecuteMsgType get_type() {
+    return ExecuteMsgType::kComputeHistogramAck;
+  }
+};
+
 class ExecuteMsgHelper {
  public:
   template<typename Msg,
