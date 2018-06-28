@@ -9,22 +9,22 @@ const master_ip = "10.117.1.14"
 #const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 384
-const num_servers = 12
+const num_executors = 1
+const num_servers = 1
 
 Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity, num_executors, num_servers)
 
-#const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm.5K"
+const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm.4"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/pubmed.dat"
-const data_path = "file:///proj/BigLearning/jinlianw/data/clueweb.libsvm.8M"
-Orion.@share const num_topics = 400
+#const data_path = "file:///proj/BigLearning/jinlianw/data/clueweb.libsvm.8M"
+Orion.@share const num_topics = 100
 
-Orion.@share const alpha = 0.1
-Orion.@share const beta = 0.1
-const num_iterations = 100
+Orion.@share const alpha = Float32(0.1)
+Orion.@share const beta = Float32(0.1)
+const num_iterations = 2
 
 const alpha_beta = alpha * beta
 
@@ -104,7 +104,7 @@ Orion.@dist_array doc_topic_table = Orion.fill(Dict{Int32, UInt64}(), num_docs)
 Orion.materialize(doc_topic_table)
 
 Orion.@dist_array topic_summary_buff = Orion.create_dense_dist_array_buffer((1,),
-                                                                            zeros(Int64, num_topics))
+                                                                            zeros(UInt64, num_topics))
 Orion.materialize(topic_summary_buff)
 
 Orion.@share function apply_buffered_vec(vec_key,
@@ -118,9 +118,10 @@ end
 
 Orion.set_write_buffer(topic_summary_buff, topic_summary, apply_buffered_vec,
                        max_delay = 6000000000)
+
 Orion.@share srand(1)
+
 println("initialization")
-#Orion.dist_array_set_num_partitions_per_dim(topic_assignments, num_executors * 2)
 Orion.@parallel_for for topic_assignment_pair in topic_assignments
     doc_id = topic_assignment_pair[1][3]
     word_id = topic_assignment_pair[1][2]
@@ -174,9 +175,9 @@ Orion.delete_dist_array(word_topic_table)
 
 println("initializing s_sum")
 
-Orion.@accumulator s_sum_accum = 0.0
+Orion.@accumulator s_sum_accum = Float32(0.0)
 
-const beta_sum = beta * vocab_size
+const beta_sum = Float32(beta * vocab_size)
 
 Orion.@parallel_for for topic_summary_pair in topic_summary
     topic_summary_vec = topic_summary_pair[2]
@@ -195,11 +196,12 @@ Orion.@share function apply_buffered_update(key::Int64, value, update)
     return value + update
 end
 
-Orion.@dist_array s_sum_buff = Orion.create_dense_dist_array_buffer((s_sum.dims...), 0.0)
+Orion.@dist_array s_sum_buff = Orion.create_dense_dist_array_buffer((s_sum.dims...), Float32(0.0))
 Orion.materialize(s_sum_buff)
+
 Orion.set_write_buffer(s_sum_buff, s_sum, apply_buffered_update, max_delay = 6000000000)
 println("initializing r_sum")
-Orion.@dist_array r_sum = Orion.fill(0.0, num_docs)
+Orion.@dist_array r_sum = Orion.fill(Float32(0.0), num_docs)
 Orion.materialize(r_sum)
 
 Orion.@parallel_for for doc_topic_dict_pair in doc_topic_table
@@ -238,7 +240,7 @@ Orion.materialize(word_log_gamma_sum_buff)
 
 Orion.set_write_buffer(word_log_gamma_sum_buff, word_log_gamma_sum, apply_buffered_update)
 
-Orion.@accumulator llh = 0.0
+Orion.@accumulator llh = Float32(0.0)
 
 Orion.@share function find_index(vec::Vector{Int32}, key)
     for idx in eachindex(vec)
@@ -250,17 +252,17 @@ Orion.@share function find_index(vec::Vector{Int32}, key)
     return -1
 end
 
-llh_vec = Vector{Float64}()
-word_llh_vec = Vector{Float64}()
+llh_vec = Vector{Float32}()
+word_llh_vec = Vector{Float32}()
 
 time_vec = Vector{Float64}()
 start_time = now()
 last_time = start_time
 
-Orion.@accumulator old_word_id = 0
-Orion.@accumulator old_doc_id = 0
-Orion.@accumulator q_sum = 0.0
-Orion.@accumulator num_nonzero_q_terms = 0
+Orion.@accumulator old_word_id = Int32(0)
+Orion.@accumulator old_doc_id = Int32(0)
+Orion.@accumulator q_sum = Float32(0.0)
+Orion.@accumulator num_nonzero_q_terms = UInt64(0)
 
 Orion.@share const q_term_val = Vector{Float32}(num_topics)
 Orion.@share const q_term_topic = Vector{Int32}(num_topics)
@@ -282,8 +284,8 @@ Orion.@share const q_term_topic = Vector{Int32}(num_topics)
 
         if old_word_id != word_id ||
             old_doc_id != doc_id
-            q_sum = 0.0
-            num_nonzero_q_terms = 0
+            q_sum = Float32(0.0)
+            num_nonzero_q_terms = UInt64(0)
             for index in eachindex(word_topic_vec)
                 topic_count = word_topic_count_vec[index]
                 topic = word_topic_vec[index]

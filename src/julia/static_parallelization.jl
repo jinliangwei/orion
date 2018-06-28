@@ -186,7 +186,8 @@ function determine_parallelization_scheme(dep_vecs::Set{Tuple}, num_dims)
 end
 
 function parallelize_naive(iteration_space::Symbol,
-                           iteration_var::Symbol,
+                           iteration_var_key::Symbol,
+                           iteration_var_val::Symbol,
                            dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
                            buffer_set::Set{Symbol},
                            global_read_only_vars::Vector{Symbol},
@@ -195,6 +196,8 @@ function parallelize_naive(iteration_space::Symbol,
                            is_ordered::Bool,
                            is_repeated::Bool,
                            is_histogram_partitioned::Bool,
+                           is_prefetch_disabled::Bool,
+                           is_iteration_var_val_reassigned::Bool,
                            ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                            flow_graph::BasicBlock,
                            dist_array_access_context::DistArrayAccessContext)
@@ -204,13 +207,10 @@ function parallelize_naive(iteration_space::Symbol,
         iteration_space_dist_array.partition_info :
         get(iteration_space_dist_array.target_partition_info)
     println(iteration_space_partition_info.partition_type)
-    if iteration_space_partition_info.partition_type == DistArrayPartitionType_naive ||
-        iteration_space_partition_info.partition_type == DistArrayPartitionType_range ||
-        iteration_space_partition_info.partition_type == DistArrayPartitionType_modulo_executor ||
-        iteration_space_partition_info.partition_type == DistArrayPartitionType_modulo_server
-        partition_dim = length(get(iteration_space_dist_array.iterate_dims))
+  if iteration_space_partition_info.partition_type == DistArrayPartitionType_1d
         return parallelize_1d(iteration_space,
-                              iteration_var,
+                              iteration_var_key,
+                              iteration_var_val,
                               dist_array_access_dict,
                               buffer_set,
                               global_read_only_vars,
@@ -219,28 +219,16 @@ function parallelize_naive(iteration_space::Symbol,
                               is_ordered,
                               is_repeated,
                               is_histogram_partitioned,
-                              [partition_dim],
-                              ssa_defs,
-                              flow_graph,
-                              dist_array_access_context)
-    elseif iteration_space_partition_info.partition_type == DistArrayPartitionType_1d
-        return parallelize_1d(iteration_space,
-                              iteration_var,
-                              dist_array_access_dict,
-                              buffer_set,
-                              global_read_only_vars,
-                              accumulator_vars,
-                              loop_body,
-                              is_ordered,
-                              is_repeated,
-                              is_histogram_partitioned,
+                              is_prefetch_disabled,
+                              is_iteration_var_val_reassigned,
                               [get(iteration_space_partition_info.partition_dims)[1]],
                               ssa_defs,
                               flow_graph,
                               dist_array_access_context)
     elseif iteration_space_partition_info.partition_type == DistArrayPartitionType_2d
         return parallelize_2d(iteration_space,
-                              iteration_var,
+                              iteration_var_key,
+                              iteration_var_val,
                               dist_array_access_dict,
                               buffer_set,
                               global_read_only_vars,
@@ -249,13 +237,16 @@ function parallelize_naive(iteration_space::Symbol,
                               is_ordered,
                               is_repeated,
                               is_histogram_partitioned,
+                              is_prefetch_disabled,
+                              is_iteration_var_val_reassigned,
                               [get(iteration_space_partition_info.partition_dims)],
                               ssa_defs,
                               flow_graph,
                               dist_array_access_context)
-    else
+    elseif iteration_space_partition_info.partition_type == DistArrayPartitionType_2d_unimodular
         return parallelize_unimodular(iteration_space,
-                                      iteration_var,
+                                      iteration_var_key,
+                                      iteration_var_val,
                                       dist_array_access_dict,
                                       buffer_set,
                                       global_read_only_vars,
@@ -264,12 +255,32 @@ function parallelize_naive(iteration_space::Symbol,
                                       is_ordered,
                                       is_repeated,
                                       is_histogram_partitioned,
+                                      is_prefetch_disabled,
+                                      is_iteration_var_val_reassigned,
                                       [get(iteration_space_partition_info.partition_dims)...],
                                       ssa_defs,
                                       flow_graph,
                                       dist_array_access_context)
+    else
+        partition_dim = length(get(iteration_space_dist_array.iterate_dims))
+        return parallelize_1d(iteration_space,
+                              iteration_var_key,
+                              iteration_var_val,
+                              dist_array_access_dict,
+                              buffer_set,
+                              global_read_only_vars,
+                              accumulator_vars,
+                              loop_body,
+                              is_ordered,
+                              is_repeated,
+                              is_histogram_partitioned,
+                              is_prefetch_disabled,
+                              is_iteration_var_val_reassigned,
+                              [partition_dim],
+                              ssa_defs,
+                              flow_graph,
+                              dist_array_access_context)
     end
-
 end
 
 function get_accessed_dist_array_buffer_ids(accessed_buffer_sym_set::Set{Symbol},
@@ -370,8 +381,164 @@ function histogram_partition(bin_size_vec::Vector{Tuple{Int64, UInt64}},
     return partition_bounds, partition_sizes
 end
 
+function partition_dist_arrays_and_generate_code(parallelization_scheme::ForLoopParallelScheme,
+                                                 parallelized_loop::Expr,
+                                                 partition_func_set::Set{Expr},
+                                                 loop_body::Expr,
+                                                 iteration_space::Symbol,
+                                                 iteration_space_dist_array::DistArray,
+                                                 iteration_var_key::Symbol,
+                                                 iteration_var_val::Symbol,
+                                                 accessed_dist_array_sym_vec::Vector{Symbol},
+                                                 accessed_dist_array_buffer_sym_vec::Vector{Symbol},
+                                                 global_indexed_dist_array_sym_set::Set{Symbol},
+                                                 buffer_global_indexed_dist_array_sym_set::Set{Symbol},
+                                                 space_partitioned_dist_array_id_vec::Vector{Int32},
+                                                 time_partitioned_dist_array_id_vec::Vector{Int32},
+                                                 global_indexed_dist_array_id_vec::Vector{Int32},
+                                                 dist_array_buffer_id_vec::Vector{Int32},
+                                                 written_dist_array_id_vec::Vector{Int32},
+                                                 accessed_dist_array_id_vec::Vector{Int32},
+                                                 accumulator_vars::Vector{Symbol},
+                                                 global_read_only_vars::Vector{Symbol},
+                                                 is_ordered::Bool,
+                                                 is_repeated::Bool,
+                                                 is_prefetch_disabled::Bool,
+                                                 is_iteration_var_val_reassigned::Bool,
+                                                 flow_graph::BasicBlock,
+                                                 ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
+                                                 dist_array_access_context::DistArrayAccessContext)
+
+    for da_sym in global_indexed_dist_array_sym_set
+        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
+                                                           DistArrayIndexType_range)
+        eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
+        repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
+        push!(parallelized_loop.args, repartition_stmt)
+    end
+
+    for da_sym in buffer_global_indexed_dist_array_sym_set
+        if da_sym in global_indexed_dist_array_sym_set
+            continue
+        end
+        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
+                                                           DistArrayIndexType_range)
+        eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
+        repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
+        push!(parallelized_loop.args, repartition_stmt)
+    end
+
+    println("global_indexed_dist_array_id_vec = ", global_indexed_dist_array_id_vec)
+    println("accessed_dist_array_id_vec = ", accessed_dist_array_id_vec)
+    println("dist_array_buffer_id_vec = ", dist_array_buffer_id_vec)
+    renamed_accumulator_vars_map, update_global_accumulator_vars_stmt =
+        gen_renamed_accumulator_vars(accumulator_vars)
+    println("generate loop body function")
+    loop_batch_func_name = gen_unique_symbol()
+    iter_space_value_type = dist_array_get_value_type(iteration_space_dist_array)
+    if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
+        loop_batch_func = gen_loop_body_batch_function(loop_batch_func_name,
+                                                       loop_body,
+                                                       iteration_space,
+                                                       iteration_var_key,
+                                                       iteration_var_val,
+                                                       iter_space_value_type,
+                                                       accessed_dist_array_sym_vec,
+                                                       accessed_dist_array_buffer_sym_vec,
+                                                       global_read_only_vars,
+                                                       accumulator_vars,
+                                                       renamed_accumulator_vars_map,
+                                                       update_global_accumulator_vars_stmt,
+                                                       is_iteration_var_val_reassigned)
+    else
+        loop_batch_func = gen_loop_body_batch_function_iter_dims(loop_batch_func_name,
+                                                                 loop_body,
+                                                                 iteration_space,
+                                                                 iteration_var_key,
+                                                                 iteration_var_val,
+                                                                 iter_space_value_type,
+                                                                 length(get(iteration_space_dist_array.iterate_dims)),
+                                                                 accessed_dist_array_sym_vec,
+                                                                 accessed_dist_array_buffer_sym_vec,
+                                                                 global_read_only_vars,
+                                                                 accumulator_vars,
+                                                                 renamed_accumulator_vars_map,
+                                                                 update_global_accumulator_vars_stmt,
+                                                                 is_iteration_var_val_reassigned)
+    end
+
+    println(loop_batch_func)
+    println("generate prefetch_function")
+    prefetch_func = nothing
+    prefetch_batch_func = nothing
+    prefetch = false
+    if !isempty(global_indexed_dist_array_sym_set) && !is_prefetch_disabled
+       prefetch_stmts = get_prefetch_stmts(flow_graph,
+                                           global_indexed_dist_array_sym_set,
+                                           ssa_defs,
+                                           dist_array_access_context)
+        if prefetch_stmts != nothing
+            prefetch = true
+            prefetch_batch_func_name = gen_unique_symbol()
+
+            if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
+                prefetch_batch_func = gen_prefetch_batch_function(prefetch_batch_func_name,
+                                                                  iteration_var_key,
+                                                                  iteration_var_val,
+                                                                  prefetch_stmts,
+                                                                  iter_space_value_type,
+                                                                  global_read_only_vars,
+                                                                  accumulator_vars,
+                                                                  renamed_accumulator_vars_map)
+            else
+                prefetch_batch_func = gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name,
+                                                                            iteration_var_key,
+                                                                            iteration_var_val,
+                                                                            prefetch_stmts,
+                                                                            iter_space_value_type,
+                                                                            length(get(iteration_space_dist_array.iterate_dims)),
+                                                                            global_read_only_vars,
+                                                                            accumulator_vars,
+                                                                            renamed_accumulator_vars_map)
+            end
+            println(prefetch_batch_func)
+        end
+    end
+
+    for partition_func in partition_func_set
+        eval_expr_on_all(partition_func, :Main)
+    end
+    if prefetch
+        eval_expr_on_all(prefetch_batch_func, :Main)
+    end
+    eval_expr_on_all(loop_batch_func, :Main)
+
+    loop_batch_func_name_str = string(loop_batch_func_name)
+    prefetch_batch_func_name_str = prefetch ? string(prefetch_batch_func_name) : ""
+    global exec_for_loop_count
+    exec_for_loop_id = exec_for_loop_count
+    exec_for_loop_count += 1
+    exec_loop_stmt = :(Orion.exec_for_loop(Int32($(exec_for_loop_id)),
+                                           $(iteration_space_dist_array.id),
+                                           $parallelization_scheme,
+                                           $(space_partitioned_dist_array_id_vec),
+                                           $(time_partitioned_dist_array_id_vec),
+                                           $(global_indexed_dist_array_id_vec),
+                                           $(dist_array_buffer_id_vec),
+                                           $(written_dist_array_id_vec),
+                                           $(accessed_dist_array_id_vec),
+                                           $(global_read_only_vars),
+                                           $(accumulator_vars),
+                                           $loop_batch_func_name_str,
+                                           $prefetch_batch_func_name_str,
+                                           $(is_ordered),
+                                           $(is_repeated)))
+    push!(parallelized_loop.args, exec_loop_stmt)
+end
+
 function parallelize_1d(iteration_space::Symbol,
-                        iteration_var::Symbol,
+                        iteration_var_key::Symbol,
+                        iteration_var_val::Symbol,
                         dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
                         buffer_set::Set{Symbol},
                         global_read_only_vars::Vector{Symbol},
@@ -380,6 +547,8 @@ function parallelize_1d(iteration_space::Symbol,
                         is_ordered::Bool,
                         is_repeated::Bool,
                         is_histogram_partitioned::Bool,
+                        is_prefetch_disabled::Bool,
+                        is_iteration_var_val_reassigned::Bool,
                         par_dims::Vector{Int64},
                         ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                         flow_graph::BasicBlock,
@@ -547,133 +716,39 @@ function parallelize_1d(iteration_space::Symbol,
         end
     end
 
-    for da_sym in global_indexed_dist_array_sym_set
-        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
-                                                           DistArrayIndexType_range)
-        eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
-        repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
-        push!(parallelized_loop.args, repartition_stmt)
-    end
-
-    for da_sym in buffer_global_indexed_dist_array_sym_set
-        if da_sym in global_indexed_dist_array_sym_set
-            continue
-        end
-        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
-                                                           DistArrayIndexType_range)
-        eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
-        repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
-        push!(parallelized_loop.args, repartition_stmt)
-    end
-
-    println("generate loop body function")
-    loop_body_func_name = gen_unique_symbol()
-    loop_batch_func_name = gen_unique_symbol()
-    loop_body_func = gen_loop_body_function(loop_body_func_name,
+    partition_dist_arrays_and_generate_code(Orion.ForLoopParallelScheme_1d,
+                                            parallelized_loop,
+                                            partition_func_set,
                                             loop_body,
                                             iteration_space,
-                                            iteration_var,
+                                            iteration_space_dist_array,
+                                            iteration_var_key,
+                                            iteration_var_val,
                                             accessed_dist_array_sym_vec,
                                             accessed_dist_array_buffer_sym_vec,
-                                            global_read_only_vars,
+                                            global_indexed_dist_array_sym_set,
+                                            buffer_global_indexed_dist_array_sym_set,
+                                            space_partitioned_dist_array_id_vec,
+                                            Vector{Int32}(),
+                                            global_indexed_dist_array_id_vec,
+                                            dist_array_buffer_id_vec,
+                                            written_dist_array_id_vec,
+                                            accessed_dist_array_id_vec,
                                             accumulator_vars,
-                                            ssa_defs)
-    println(loop_body_func)
-    iter_space_value_type = dist_array_get_value_type(iteration_space_dist_array)
-    if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
-        loop_batch_func = gen_loop_body_batch_function(loop_batch_func_name,
-                                                       loop_body_func_name,
-                                                       iter_space_value_type,
-                                                       accessed_dist_array_sym_vec,
-                                                       accessed_dist_array_buffer_sym_vec,
-                                                       global_read_only_vars,
-                                                       accumulator_vars)
-    else
-        loop_batch_func = gen_loop_body_batch_function_iter_dims(loop_batch_func_name,
-                                                                 loop_body_func_name,
-                                                                 iter_space_value_type,
-                                                                 length(get(iteration_space_dist_array.iterate_dims)),
-                                                                 accessed_dist_array_sym_vec,
-                                                                 accessed_dist_array_buffer_sym_vec,
-                                                                 global_read_only_vars,
-                                                                 accumulator_vars)
-    end
-    println(loop_batch_func)
-    println("generate prefetch_function")
-    prefetch_func = nothing
-    prefetch_batch_func = nothing
-    prefetch = false
-    if !isempty(global_indexed_dist_array_sym_set)
-       prefetch_stmts = get_prefetch_stmts(flow_graph,
-                                           global_indexed_dist_array_sym_set,
-                                           ssa_defs,
-                                           dist_array_access_context)
-        if prefetch_stmts != nothing
-            prefetch = true
-            prefetch_func_name = gen_unique_symbol()
-            prefetch_batch_func_name = gen_unique_symbol()
-            prefetch_func = gen_prefetch_function(prefetch_func_name,
-                                                  iteration_var,
-                                                  prefetch_stmts,
-                                                  global_read_only_vars,
-                                                  accumulator_vars)
-            println(prefetch_func)
-            prefetch_func.args[2] = remap_ssa_vars(prefetch_func.args[2], ssa_defs)
-            if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
-                prefetch_batch_func = gen_prefetch_batch_function(prefetch_batch_func_name,
-                                                                  prefetch_func_name,
-                                                                  iter_space_value_type,
-                                                                  global_read_only_vars,
-                                                                  accumulator_vars)
-            else
-                prefetch_batch_func = gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name,
-                                                                            prefetch_func_name,
-                                                                            iter_space_value_type,
-                                                                            length(get(iteration_space_dist_array.iterate_dims)),
-                                                                            global_read_only_vars,
-                                                                            accumulator_vars)
-            end
-            println(prefetch_func)
-            println(prefetch_batch_func)
-        end
-    end
-
-    for partition_func in partition_func_set
-        eval_expr_on_all(partition_func, :Main)
-    end
-    if prefetch
-        eval_expr_on_all(prefetch_func, :Main)
-        eval_expr_on_all(prefetch_batch_func, :Main)
-    end
-    eval_expr_on_all(loop_body_func, :Main)
-    eval_expr_on_all(loop_batch_func, :Main)
-
-    loop_batch_func_name_str = string(loop_batch_func_name)
-    prefetch_batch_func_name_str = prefetch ? string(prefetch_batch_func_name) : ""
-    global exec_for_loop_count
-    exec_for_loop_id = exec_for_loop_count
-    exec_for_loop_count += 1
-    exec_loop_stmt = :(Orion.exec_for_loop(Int32($(exec_for_loop_id)),
-                                           $(iteration_space_dist_array.id),
-                                           Orion.ForLoopParallelScheme_1d,
-                                           $(space_partitioned_dist_array_id_vec),
-                                           Vector{Int32}(),
-                                           $(global_indexed_dist_array_id_vec),
-                                           $(dist_array_buffer_id_vec),
-                                           $(written_dist_array_id_vec),
-                                           $(accessed_dist_array_id_vec),
-                                           $(global_read_only_vars),
-                                           $(accumulator_vars),
-                                           $loop_batch_func_name_str,
-                                           $prefetch_batch_func_name_str,
-                                           $(is_ordered),
-                                           $(is_repeated)))
-    push!(parallelized_loop.args, exec_loop_stmt)
+                                            global_read_only_vars,
+                                            is_ordered,
+                                            is_repeated,
+                                            is_prefetch_disabled,
+                                            is_iteration_var_val_reassigned,
+                                            flow_graph,
+                                            ssa_defs,
+                                            dist_array_access_context)
     return parallelized_loop
 end
 
 function parallelize_2d(iteration_space::Symbol,
-                        iteration_var::Symbol,
+                        iteration_var_key::Symbol,
+                        iteration_var_val::Symbol,
                         dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
                         buffer_set::Set{Symbol},
                         global_read_only_vars::Vector{Symbol},
@@ -682,10 +757,13 @@ function parallelize_2d(iteration_space::Symbol,
                         is_ordered::Bool,
                         is_repeated::Bool,
                         is_histogram_partitioned::Bool,
+                        is_prefetch_disabled::Bool,
+                        is_iteration_var_val_reassigned::Bool,
                         par_dims::Vector{Tuple{Int64, Int64}},
                         ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                         flow_graph::BasicBlock,
                         dist_array_access_context::DistArrayAccessContext)
+
     println("parallelize_2d")
     par_dim = par_dims[end]
     space_partition_dim = par_dim[1]
@@ -891,142 +969,48 @@ function parallelize_2d(iteration_space::Symbol,
         end
     end
 
-    for da_sym in global_indexed_dist_array_sym_set
-        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
-                                                           DistArrayIndexType_range)
-        eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
-        repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
-        push!(parallelized_loop.args, repartition_stmt)
-    end
-
-    for da_sym in buffer_global_indexed_dist_array_sym_set
-        if da_sym in global_indexed_dist_array_sym_set
-            continue
-        end
-        dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_modulo_server,
-                                                           DistArrayIndexType_range)
-        eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
-        repartition_stmt = :(Orion.check_and_repartition($(esc(da_sym)), $dist_array_partition_info))
-        push!(parallelized_loop.args, repartition_stmt)
-    end
-
-    loop_body_func_name = gen_unique_symbol()
-    loop_batch_func_name = gen_unique_symbol()
-    loop_body_func = gen_loop_body_function(loop_body_func_name,
+    partition_dist_arrays_and_generate_code(Orion.ForLoopParallelScheme_2d,
+                                            parallelized_loop,
+                                            partition_func_set,
                                             loop_body,
                                             iteration_space,
-                                            iteration_var,
+                                            iteration_space_dist_array,
+                                            iteration_var_key,
+                                            iteration_var_val,
                                             accessed_dist_array_sym_vec,
                                             accessed_dist_array_buffer_sym_vec,
-                                            global_read_only_vars,
-                                            accumulator_vars,
-                                            ssa_defs)
-    println(loop_body_func)
-    iter_space_value_type = dist_array_get_value_type(iteration_space_dist_array)
-    if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
-        loop_batch_func = gen_loop_body_batch_function(loop_batch_func_name,
-                                                       loop_body_func_name,
-                                                       iter_space_value_type,
-                                                       accessed_dist_array_sym_vec,
-                                                       accessed_dist_array_buffer_sym_vec,
-                                                       global_read_only_vars,
-                                                       accumulator_vars)
-    else
-        loop_batch_func = gen_loop_body_batch_function_iter_dims(loop_batch_func_name,
-                                                                 loop_body_func_name,
-                                                                 iter_space_value_type,
-                                                                 length(get(iteration_space_dist_array.iterate_dims)),
-                                                                 accessed_dist_array_sym_vec,
-                                                                 accessed_dist_array_buffer_sym_vec,
-                                                                 global_read_only_vars,
-                                                                 accumulator_vars)
-    end
-    println(loop_batch_func)
-
-    prefetch_func = nothing
-    prefetch = false
-    if !isempty(global_indexed_dist_array_sym_set)
-
-        prefetch_stmts = get_prefetch_stmts(flow_graph,
                                             global_indexed_dist_array_sym_set,
+                                            buffer_global_indexed_dist_array_sym_set,
+                                            space_partitioned_dist_array_id_vec,
+                                            time_partitioned_dist_array_id_vec,
+                                            global_indexed_dist_array_id_vec,
+                                            dist_array_buffer_id_vec,
+                                            written_dist_array_id_vec,
+                                            accessed_dist_array_id_vec,
+                                            accumulator_vars,
+                                            global_read_only_vars,
+                                            is_ordered,
+                                            is_repeated,
+                                            is_prefetch_disabled,
+                                            is_iteration_var_val_reassigned,
+                                            flow_graph,
                                             ssa_defs,
                                             dist_array_access_context)
-        if prefetch_stmts != nothing
-            prefetch = true
-            prefetch_func_name = gen_unique_symbol()
-            prefetch_batch_func_name = gen_unique_symbol()
-            prefetch_func = gen_prefetch_function(prefetch_func_name,
-                                                  iteration_var,
-                                                  prefetch_stmts,
-                                                  global_read_only_vars,
-                                                  accumulator_vars)
-
-            prefetch_func.args[2] = remap_ssa_vars(prefetch_func.args[2], ssa_defs)
-            if iteration_space_dist_array.dims == get(iteration_space_dist_array.iterate_dims)
-                prefetch_batch_func = gen_prefetch_batch_function(prefetch_batch_func_name,
-                                                                  prefetch_func_name,
-                                                                  iter_space_value_type,
-                                                                  global_read_only_vars,
-                                                                  accumulator_vars)
-            else
-                prefetch_batch_func = gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name,
-                                                                            prefetch_func_name,
-                                                                            iter_space_value_type,
-                                                                            length(get(iteration_space_dist_array.iterate_dims)),
-                                                                            global_read_only_vars,
-                                                                            accumulator_vars)
-            end
-            println(prefetch_func)
-            println(prefetch_batch_func)
-        end
-    end
-
-    for partition_func in partition_func_set
-        eval_expr_on_all(partition_func, :Main)
-    end
-    if prefetch
-        eval_expr_on_all(prefetch_func, :Main)
-        eval_expr_on_all(prefetch_batch_func, :Main)
-    end
-    eval_expr_on_all(loop_body_func, :Main)
-    eval_expr_on_all(loop_batch_func, :Main)
-
-    loop_batch_func_name_str = string(loop_batch_func_name)
-    prefetch_batch_func_name_str = prefetch ? string(prefetch_batch_func_name) : ""
-
-    global exec_for_loop_count
-    exec_for_loop_id = exec_for_loop_count
-    exec_for_loop_count += 1
-    exec_loop_stmt = :(Orion.exec_for_loop(Int32($(exec_for_loop_id)),
-                                           $(iteration_space_dist_array.id),
-                                           Orion.ForLoopParallelScheme_2d,
-                                           $(space_partitioned_dist_array_id_vec),
-                                           $(time_partitioned_dist_array_id_vec),
-                                           $(global_indexed_dist_array_id_vec),
-                                           $(dist_array_buffer_id_vec),
-                                           $(written_dist_array_id_vec),
-                                           $(accessed_dist_array_id_vec),
-                                           $(global_read_only_vars),
-                                           $(accumulator_vars),
-                                           $loop_batch_func_name_str,
-                                           $prefetch_batch_func_name_str,
-                                           $(is_ordered),
-                                           $(is_repeated)))
-
-    push!(parallelized_loop.args, exec_loop_stmt)
-    println(iteration_space_dist_array.partition_info.partition_type)
     return parallelized_loop
 end
 
 function parallelize_unimodular(iteration_space::Symbol,
-                                iteration_var::Symbol,
+                                iteration_var_key::Symbol,
+                                iteration_var_val::Symbol,
                                 dist_array_access_dict::Dict{Symbol, Vector{DistArrayAccess}},
+                                buffer_set::Set{Symbol},
                                 global_read_only_vars::Vector{Symbol},
                                 accumulator_vars::Vector{Symbol},
                                 loop_body::Expr,
                                 is_ordered::Bool,
                                 is_repeated::Bool,
                                 is_histogram_partitioned::Bool,
+                                is_prefetch_disabled::Bool,
                                 par_dims::Vector{Int64},
                                 ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                                 flow_graph::BasicBlock,
@@ -1082,26 +1066,34 @@ function compute_dist_array_partition_dims(da_sym::Symbol,
 end
 
 function static_parallelize(iteration_space::Symbol,
-                            iteration_var::Symbol,
+                            iteration_var_key::Symbol,
+                            iteration_var_val::Symbol,
                             global_read_only_vars::Vector{Symbol},
                             accumulator_vars::Vector{Symbol},
                             loop_body::Expr,
                             is_ordered::Bool,
                             is_repeated::Bool,
                             is_histogram_partitioned::Bool,
+                            is_prefetch_disabled::Bool,
+                            is_iteration_var_val_reassigned::Bool,
                             ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}},
                             flow_graph::BasicBlock)
     iteration_space = iteration_space
     iteration_space_dist_array = eval(current_module(), iteration_space)
     num_dims = length(get(iteration_space_dist_array.iterate_dims))
-    dist_array_access_dict, buffer_set, dist_array_access_context = get_dist_array_access(flow_graph, iteration_var, ssa_defs)
-    dep_vecs = compute_dependence_vectors(dist_array_access_dict, is_ordered, iteration_space_dist_array)
+    dist_array_access_dict, buffer_set, dist_array_access_context = get_dist_array_access(flow_graph, iteration_var_key,
+                                                                                          iteration_var_val, ssa_defs)
+    println(dist_array_access_dict)
+    dep_vecs = compute_dependence_vectors(dist_array_access_dict, is_ordered,
+                                          iteration_space_dist_array)
+    println(dep_vecs)
     par_scheme = determine_parallelization_scheme(dep_vecs, num_dims)
 
     if par_scheme[1] == ForLoopParallelScheme_naive
         println("parallel naive")
         return parallelize_naive(iteration_space,
-                                 iteration_var,
+                                 iteration_var_key,
+                                 iteration_var_val,
                                  dist_array_access_dict,
                                  buffer_set,
                                  global_read_only_vars,
@@ -1110,13 +1102,16 @@ function static_parallelize(iteration_space::Symbol,
                                  is_ordered,
                                  is_repeated,
                                  is_histogram_partitioned,
+                                 is_prefetch_disabled,
+                                 is_iteration_var_val_reassigned,
                                  ssa_defs,
                                  flow_graph,
                                  dist_array_access_context)
     elseif par_scheme[1] == ForLoopParallelScheme_1d
         println("parallel 1d")
         return parallelize_1d(iteration_space,
-                              iteration_var,
+                              iteration_var_key,
+                              iteration_var_val,
                               dist_array_access_dict,
                               buffer_set,
                               global_read_only_vars,
@@ -1125,6 +1120,8 @@ function static_parallelize(iteration_space::Symbol,
                               is_ordered,
                               is_repeated,
                               is_histogram_partitioned,
+                              is_prefetch_disabled,
+                              is_iteration_var_val_reassigned,
                               par_scheme[2],
                               ssa_defs,
                               flow_graph,
@@ -1132,7 +1129,8 @@ function static_parallelize(iteration_space::Symbol,
     elseif par_scheme[1] == ForLoopParallelScheme_2d
         println("parallel 2d")
         return parallelize_2d(iteration_space,
-                              iteration_var,
+                              iteration_var_key,
+                              iteration_var_val,
                               dist_array_access_dict,
                               buffer_set,
                               global_read_only_vars,
@@ -1141,6 +1139,8 @@ function static_parallelize(iteration_space::Symbol,
                               is_ordered,
                               is_repeated,
                               is_histogram_partitioned,
+                              is_prefetch_disabled,
+                              is_iteration_var_val_reassigned,
                               par_scheme[2],
                               ssa_defs,
                               flow_graph,
@@ -1148,7 +1148,8 @@ function static_parallelize(iteration_space::Symbol,
     elseif par_scheme[1] == ForLoopParallelScheme_unimodular
         println("parallel unimodular")
         return parallelize_unimodular(iteration_space,
-                                      iteration_var,
+                                      iteration_var_key,
+                                      iteration_var_val,
                                       dist_array_access_dict,
                                       buffer_set,
                                       global_read_only_vars,
@@ -1157,6 +1158,8 @@ function static_parallelize(iteration_space::Symbol,
                                       is_ordered,
                                       is_repeated,
                                       is_histogram_partitioned,
+                                      is_prefetch_disabled,
+                                      is_iteration_var_val_reassigned,
                                       par_scheme[2],
                                       ssa_defs,
                                       flow_graph,

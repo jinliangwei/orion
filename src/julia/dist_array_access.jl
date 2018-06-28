@@ -1,16 +1,19 @@
 import Base: linearindexing, size, getindex, setindex!
 
 mutable struct GetDistArrayAccessContext
-    iteration_var::Symbol
+    iteration_var_key::Symbol
+    iteration_var_val::Symbol
     ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}}
     access_dict::Dict{Symbol, Vector{DistArrayAccess}}
     buffer_set::Set{Symbol}
     accessed_buffer::Bool
     stmt_access_dict::Dict{Symbol, Vector{DistArrayAccess}}
     da_access_context::DistArrayAccessContext
-    GetDistArrayAccessContext(iteration_var,
+    GetDistArrayAccessContext(iteration_var_key,
+                              iteration_var_val,
                               ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}}) =
-                                  new(iteration_var,
+                                  new(iteration_var_key,
+                                      iteration_var_val,
                                       ssa_defs,
                                       Dict{Symbol, Vector{DistArrayAccess}}(),
                                       Set{Symbol}(),
@@ -19,6 +22,53 @@ mutable struct GetDistArrayAccessContext
                                       DistArrayAccessContext())
 end
 
+function get_dist_array_access_process_access(access::Expr,
+                                              context::GetDistArrayAccessContext,
+                                              expr_head,
+                                              is_assigned_to)
+    ssa_defs = context.ssa_defs
+    referenced_var = ref_get_referenced_var(access)
+    if haskey(ssa_defs, referenced_var)
+        referenced_var = ssa_defs[referenced_var][1]
+    end
+    if isdefined(current_module(), referenced_var) &&
+        isa(eval(current_module(), referenced_var), DistArray)
+        da_access = DistArrayAccess(referenced_var, !is_assigned_to)
+        for sub in ref_get_subscripts(access)
+            evaled_sub = eval_subscript_expr(sub,
+                                             context.iteration_var_key,
+                                             ssa_defs)
+            subscript = DistArrayAccessSubscript(sub, evaled_sub...)
+            push!(da_access.subscripts, subscript)
+        end
+        if !haskey(context.access_dict, referenced_var)
+            context.access_dict[referenced_var] = Vector{DistArrayAccess}()
+        end
+        push!(context.access_dict[referenced_var], da_access)
+        if !haskey(context.stmt_access_dict, referenced_var)
+            context.stmt_access_dict[referenced_var] = Vector{DistArrayAccess}()
+        end
+        push!(context.stmt_access_dict[referenced_var], da_access)
+        if is_assigned_to
+            if expr_head != :(=) &&
+                expr_head != :(.=) &&
+                expr_head != :macrocall
+                da_access = copy(da_access)
+                da_access.is_read = true
+                push!(context.access_dict[referenced_var], da_access)
+                push!(context.stmt_access_dict[referenced_var], da_access)
+            end
+        end
+    elseif isdefined(current_module(), referenced_var) &&
+        isa(eval(current_module(), referenced_var), DistArrayBuffer)
+        push!(context.buffer_set, referenced_var)
+        context.accessed_buffer = true
+    end
+    subscripts = ref_get_subscripts(access)
+    for sub in subscripts
+        AstWalk.ast_walk(sub, get_dist_array_access_visit, context)
+    end
+end
 
 function get_dist_array_access_visit(expr,
                                      context::GetDistArrayAccessContext)
@@ -30,43 +80,7 @@ function get_dist_array_access_visit(expr,
             if is_ref(assigned_to)
                 referenced_var = ref_get_referenced_var(assigned_to)
                 if isa(referenced_var, Symbol)
-                    if referenced_var in keys(ssa_defs)
-                        referenced_var = ssa_defs[referenced_var][1]
-                    end
-                    if isdefined(current_module(), referenced_var) &&
-                        isa(eval(current_module(), referenced_var), DistArray)
-                        da_access = DistArrayAccess(referenced_var, false)
-                        for sub in ref_get_subscripts(assigned_to)
-                            evaled_sub = eval_subscript_expr(sub,
-                                                             context.iteration_var,
-                                                             ssa_defs)
-                            subscript = DistArrayAccessSubscript(sub, evaled_sub...)
-                            push!(da_access.subscripts, subscript)
-                        end
-                        if !(referenced_var in keys(context.access_dict))
-                            context.access_dict[referenced_var] = Vector{DistArrayAccess}()
-                        end
-                        push!(context.access_dict[referenced_var], da_access)
-                        if !(referenced_var in keys(context.stmt_access_dict))
-                            context.stmt_access_dict[referenced_var] = Vector{DistArrayAccess}()
-                        end
-                        push!(context.stmt_access_dict[referenced_var], da_access)
-                        if head != :(=) &&
-                            head != :(.=)
-                            da_access = copy(da_access)
-                            da_access.is_read = true
-                            push!(context.access_dict[referenced_var], da_access)
-                            push!(context.stmt_access_dict[referenced_var], da_access)
-                        end
-                    elseif isdefined(current_module(), referenced_var) &&
-                        isa(eval(current_module(), referenced_var), DistArrayBuffer)
-                        push!(context.buffer_set, referenced_var)
-                        context.accessed_buffer = true
-                    end
-                    subscripts = ref_get_subscripts(assigned_to)
-                    for sub in subscripts
-                        AstWalk.ast_walk(sub, get_dist_array_access_visit, context)
-                    end
+                    get_dist_array_access_process_access(assigned_to, context, head, true)
                     assigned_from = assignment_get_assigned_from(expr)
                     AstWalk.ast_walk(assigned_from, get_dist_array_access_visit, context)
                     return expr
@@ -76,39 +90,29 @@ function get_dist_array_access_visit(expr,
             else
                 return AstWalk.AST_WALK_RECURSE
             end
+        elseif head == :macrocall
+            macro_name = expr.args[1]
+
+            if isa(macro_name, Expr)&&
+                macro_name.head == :(.) &&
+                macro_name.args[1] == :OrionWorker &&
+                (
+                    (isa(macro_name.args[2], Expr) &&
+                     macro_name.args[2].head == :quote &&
+                     macro_name.args[2].args[1] == Symbol("@update")) ||
+                    (isa(macro_name.args[2], QuoteNode) &&
+                     macro_name.args[2].value == Symbol("@update"))
+                )
+                @assert is_ref(expr.args[2])
+                get_dist_array_access_process_access(expr.args[2], context, head, true)
+                return nothing
+            else
+                return AstWalk.AST_WALK_RECURSE
+            end
         elseif is_ref(expr)
             referenced_var = ref_get_referenced_var(expr)
             if isa(referenced_var, Symbol)
-                if referenced_var in keys(ssa_defs)
-                    referenced_var = ssa_defs[referenced_var][1]
-                end
-                if isdefined(current_module(), referenced_var) &&
-                    isa(eval(current_module(), referenced_var), DistArray)
-                    da_access = DistArrayAccess(referenced_var, true)
-                    for sub in ref_get_subscripts(expr)
-                        evaled_sub = eval_subscript_expr(sub,
-                                                         context.iteration_var,
-                                                         ssa_defs)
-                        subscript = DistArrayAccessSubscript(sub, evaled_sub...)
-                        push!(da_access.subscripts, subscript)
-                    end
-                    if !(referenced_var in keys(context.access_dict))
-                        context.access_dict[referenced_var] = Vector{DistArrayAccess}()
-                    end
-                    push!(context.access_dict[referenced_var], da_access)
-                    if !(referenced_var in keys(context.stmt_access_dict))
-                        context.stmt_access_dict[referenced_var] = Vector{DistArrayAccess}()
-                    end
-                    push!(context.stmt_access_dict[referenced_var], da_access)
-                elseif isdefined(current_module(), referenced_var) &&
-                    isa(eval(current_module(), referenced_var), DistArrayBuffer)
-                    push!(context.buffer_set, referenced_var)
-                    context.accessed_buffer = true
-                end
-                subscripts = ref_get_subscripts(expr)
-                for sub in subscripts
-                    AstWalk.ast_walk(sub, get_dist_array_access_visit, context)
-                end
+                get_dist_array_access_process_access(expr, context, head, false)
                 return expr
             else
                 return AstWalk.AST_WALK_RECURSE
@@ -149,9 +153,12 @@ function get_dist_array_access_bb(bb::BasicBlock,
 end
 
 function get_dist_array_access(par_for_loop_entry::BasicBlock,
-                               iteration_var::Symbol,
+                               iteration_var_key::Symbol,
+                               iteration_var_val::Symbol,
                                ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
-    get_da_access_context = GetDistArrayAccessContext(iteration_var, ssa_defs)
+    get_da_access_context = GetDistArrayAccessContext(iteration_var_key,
+                                                      iteration_var_val,
+                                                      ssa_defs)
     traverse_flow_graph(par_for_loop_entry,
                         get_dist_array_access_bb,
                         get_da_access_context)

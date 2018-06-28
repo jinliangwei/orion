@@ -28,6 +28,8 @@ function parallelize_for_loop(args...)
     is_ordered = false
     is_repeated = false
     is_histogram_partitioned = false
+    is_prefetch_disabled = false
+    to_reassign_iteration_var_val = false
 
     for arg in args[1:(length(args) - 1)]
         @assert isa(arg, Symbol)
@@ -37,6 +39,10 @@ function parallelize_for_loop(args...)
             is_repeated = true
         elseif arg == :histogram_partitioned
             is_histogram_partitioned = true
+        elseif arg == :prefetch_distabled
+            is_prefetch_disabled = true
+        elseif arg == :reassign_iteration_var_val
+            to_reassign_iteration_var_val = true
         else
             error("unrecognized specifier ", arg)
         end
@@ -46,17 +52,9 @@ function parallelize_for_loop(args...)
     @assert is_for_loop(loop_stmt)
     iteration_var = for_get_iteration_var(loop_stmt)
     iteration_space = for_get_iteration_space(loop_stmt)
-
-    if isa(iteration_var, Expr)
-        @assert iteration_var.head == :tuple
-        new_iteration_var = gen_unique_symbol()
-        loop_stmt.args[1].args[1] = new_iteration_var
-        iteration_var_key = iteration_var.args[1]
-        iteration_var_val = iteration_var.args[2]
-        insert!(loop_stmt.args[2].args, 1, :($iteration_var_key = $(new_iteration_var)[1]))
-        insert!(loop_stmt.args[2].args, 2, :($iteration_var_val = $(new_iteration_var)[2]))
-        iteration_var = new_iteration_var
-    end
+    @assert isa(iteration_var, Expr) && iteration_var.head == :tuple
+    iteration_var_key = iteration_var.args[1]
+    iteration_var_val = iteration_var.args[2]
 
     @assert isa(iteration_space, Symbol)
     @assert isdefined(current_module(), iteration_space)
@@ -73,13 +71,16 @@ function parallelize_for_loop(args...)
     parallelized_loop = quote end
     println("before static_parallelize")
     exec_loop_stmts = static_parallelize(iteration_space,
-                                         iteration_var,
+                                         iteration_var_key,
+                                         iteration_var_val,
                                          global_read_only_vars,
                                          accumulator_vars,
                                          loop_body,
                                          is_ordered,
                                          is_repeated,
                                          is_histogram_partitioned,
+                                         is_prefetch_disabled,
+                                         to_reassign_iteration_var_val,
                                          ssa_context.ssa_defs,
                                          flow_graph)
 

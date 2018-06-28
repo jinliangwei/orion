@@ -1119,15 +1119,12 @@ end
 # A DistArray supports both iteration (range-based for loop) and indexed query
 
 # Range-based for loop:
-# syntax: for iteration_var in dist_array
+# syntax: for (iteration_var_key, iteration_var_val) in dist_array
 # If dist_array.iterate_dims == dist_array.dims
-# iteration_var is a tuple that contains the DistArray element
-# iteration_var[1] is the key and iteration_var[2] is the value
 #
 # else iteration_dims contains the first K elements of dims
-# iteration_var is a list of elements whose key share the same first-K prefix
-# iteration_var[1] is a list of keys
-# iteration_var[2] is a list of values
+# iteration_var_key is the shared first K elements of the keys
+# iteration_var_val is a list of tuples that contains the keys and values
 
 # Point Query:
 # syntax: a[1, 2, 3]
@@ -1226,18 +1223,20 @@ function dist_array_get_accessor_values_vec{T, N}(dist_array::DenseDistArray{T, 
     dist_array_accessor_get_values_vec(accessor)
 end
 
+Base.IndexStyle{T<:AbstractDistArray}(::Type{T}) = IndexLinear()
+
 function Base.size(dist_array::AbstractDistArray)
     return tuple(dist_array.dims...)
 end
 
-function Base.getindex(dist_array::DistArray,
-                       I...)
+function Base.getindex{T, N}(dist_array::DistArray{T, N},
+                             I...)::T
     accessor = get(dist_array.accessor)
     return getindex(accessor, I...)
 end
 
-function Base.setindex!(dist_array::DistArray,
-                        v, I...)
+function Base.setindex!{T, N}(dist_array::DistArray{T, N},
+                              v, I...)
     accessor = get(dist_array.accessor)
     setindex!(accessor, v, I...)
 end
@@ -1320,4 +1319,8 @@ end
 
 function fill_deepcopy{T}(value::T, num_values)::Vector{T}
     return [deepcopy(value) for i = 1:num_values]
+end
+
+macro update(expr)
+    return nothing
 end

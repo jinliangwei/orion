@@ -1012,27 +1012,27 @@ end
 
 # returns a tuple (sub_value, loop_index_dim, offset)
 function eval_subscript_expr(expr,
-                             iteration_var::Symbol,
+                             iteration_var_key::Symbol,
                              ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
     if isa(expr, Symbol)
         if expr == :(:)
             return (DistArrayAccessSubscript_value_any, nothing, nothing)
-        elseif expr == iteration_var
+        elseif expr == iteration_var_key
             return (expr, nothing, nothing)
         elseif expr in keys(ssa_defs)
             def = ssa_defs[expr][2]
-            if ssa_defs[expr][1] == iteration_var
-                return (iteration_var, nothing, nothing)
+            if ssa_defs[expr][1] == iteration_var_key
+                return (iteration_var_key, nothing, nothing)
             end
             if def.assignment != nothing &&
                 def.mutation == nothing
-                return eval_subscript_expr(def.assignment, iteration_var, ssa_defs)
+                return eval_subscript_expr(def.assignment, iteration_var_key, ssa_defs)
             else
                 return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
             end
         elseif isdefined(current_module(), expr)
             return eval_subscript_expr(eval(current_module(), expr),
-                                       iteration_var, ssa_defs)
+                                       iteration_var_key, ssa_defs)
         else
             return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
             #error("accessing undefined var ", expr)
@@ -1045,24 +1045,15 @@ function eval_subscript_expr(expr,
             referenced_var = ref_get_referenced_var(expr)
             subscripts = ref_get_subscripts(expr)
             evaled_referenced_var = eval_subscript_expr(referenced_var,
-                                                        iteration_var,
+                                                        iteration_var_key,
                                                         ssa_defs)
-            if length(subscripts) == 1 &&
-                isa(subscripts[1], Number)
-                sub_val = subscripts[1]
-            else
-                return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
-            end
-
-            if evaled_referenced_var[1] == iteration_var
-                if sub_val == 1
-                    return (:($iteration_var[1]), nothing, nothing)
+            if evaled_referenced_var[1] == iteration_var_key
+                if length(subscripts) == 1 && isa(subscripts[1], Number)
+                    sub_val = subscripts[1]
+                    return (DistArrayAccessSubscript_value_static, sub_val, 0)
                 else
                     return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
                 end
-            elseif isa(evaled_referenced_var[1], Expr) &&
-                evaled_referenced_var[1] == :($iteration_var[1])
-                return (DistArrayAccessSubscript_value_static, sub_val, 0)
             else
                 return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
             end
@@ -1071,8 +1062,8 @@ function eval_subscript_expr(expr,
             if func_name in Set([:+, :-, :*, :/])
                 arg1 = call_get_arguments(expr)[1]
                 arg2 = call_get_arguments(expr)[2]
-                arg1 = eval_subscript_expr(arg1, iteration_var, ssa_defs)
-                arg2 = eval_subscript_expr(arg2, iteration_var, ssa_defs)
+                arg1 = eval_subscript_expr(arg1, iteration_var_key, ssa_defs)
+                arg2 = eval_subscript_expr(arg2, iteration_var_key, ssa_defs)
                 if arg1[1] == DistArrayAccessSubscript_value_static &&
                     arg2[1] == DistArrayAccessSubscript_value_static
                     if arg1[2] == nothing && arg2[2] == nothing
@@ -1114,8 +1105,6 @@ function eval_subscript_expr(expr,
         else
             return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
         end
-    elseif isa(expr, Tuple)
-        return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
     else
         return (DistArrayAccessSubscript_value_unknown, nothing, nothing)
     end
@@ -1160,21 +1149,20 @@ function get_deleted_syms(bb_list::Vector{BasicBlock},
             bb.control_flow == :for ||
             bb.control_flow == :while
             condition_stmt_idx = length(bb.stmts)
-            if !(
+            if (
                 ((bb.id in keys(bb_dist_array_access_dict)) &&
                  (condition_stmt_idx in keys(bb_dist_array_access_dict[bb.id]))) ||
                 ((bb.id in keys(bb_dist_array_buffer_access_stmts_dict)) &&
                  (condition_stmt_idx in bb_dist_array_buffer_access_stmts_dict[bb.id]))
             )
-                continue
+                syms_deleted = union(syms_deleted, bb.stmt_ssa_defs[condition_stmt_idx])
+                rendezvous = bb.branch_rendezvous
+                bb_syms_deleted = Set{Symbol}()
+                bb_bbs_deleted = Set{Int64}()
+                get_successors_and_ssa_defs_until(bb, rendezvous.id, bb_bbs_deleted, bb_syms_deleted)
+                union!(syms_deleted, bb_syms_deleted)
+                union!(bbs_deleted, bb_bbs_deleted)
             end
-            syms_deleted = union(syms_deleted, bb.stmt_ssa_defs[condition_stmt_idx])
-            rendezvous = bb.branch_rendezvous
-            bb_syms_deleted = Set{Symbol}()
-            bb_bbs_deleted = Set{Int64}()
-            get_successors_and_ssa_defs_until(bb, rendezvous.id, bb_bbs_deleted, bb_syms_deleted)
-            union!(syms_deleted, bb_syms_deleted)
-            union!(bbs_deleted, bb_bbs_deleted)
         end
         if bb.id in keys(bb_dist_array_access_dict)
             stmt_access_dict = bb_dist_array_access_dict[bb.id]

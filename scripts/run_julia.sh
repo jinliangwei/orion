@@ -7,5 +7,6 @@ if [ "$#" != "2" ]; then
     exit
 fi
 
-#LD_PRELOAD=$preload_libs $1 --track-allocation=user $2
-LD_PRELOAD=$preload_libs $1 $2
+#LD_PRELOAD=$preload_libs $1 --track-allocation=all $2
+LD_PRELOAD=$preload_libs $1 -O3 $2
+#LD_PRELOAD=$preload_libs $1 $2

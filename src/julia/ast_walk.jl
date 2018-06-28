@@ -118,6 +118,11 @@ function from_expr_helper(ast::Expr,
         for i = 1:length(args)
             args[i] = from_expr(args[i], callback, cbdata)
         end
+    elseif head == :(->) || head == :(&&) || head == :(||)
+        # args are either Expr or Symbol
+        for i = 1:length(args)
+            args[i] = from_expr(args[i], callback, cbdata)
+        end
     elseif head == :(:)
         # args are either Expr or Symbol
         for i = 1:length(args)

@@ -101,7 +101,8 @@ Orion.@share function apply_buffered_grad(key, x, grad, z, z_p, accum_grad, old_
     return (x, new_z, new_z_p, accum_grad + grad)
 end
 
-Orion.set_write_buffer(accum_grads_buf, weights, apply_buffered_grad, weights_z, weights_z_p, accum_grads, old_accum_grads_buf)
+Orion.set_write_buffer(accum_grads_buf, weights, apply_buffered_grad, weights_z,
+                       weights_z_p, accum_grads, old_accum_grads_buf)
 #Orion.dist_array_set_num_partitions_per_dim(samples_mat, 128)
 
 error_vec = Vector{Float32}()
@@ -109,7 +110,7 @@ loss_vec = Vector{Float32}()
 num_misses_vec = Vector{Float32}()
 
 for iteration = 1:num_iterations
-    Orion.@parallel_for for sample in samples_mat
+    Orion.@parallel_for repeated for sample in samples_mat
         sum = 0.0
         label = sample[2][1]
         features = sample[2][2]
@@ -128,7 +129,7 @@ for iteration = 1:num_iterations
     end
     if iteration % 1 == 0 ||
         iteration == num_iterations
-        Orion.@parallel_for for sample in samples_mat
+        Orion.@parallel_for repeated for sample in samples_mat
             sum = 0.0
             label = sample[2][1]
             features = sample[2][2]

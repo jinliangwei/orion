@@ -46,6 +46,7 @@ DistArray::DistArray(
           symbol,
           key_func_name),
     julia_requester_(julia_requester),
+    dim_key_buff_(num_dims),
     perf_count_(kPerfCountTypes) { }
 
 DistArray::~DistArray() {
@@ -547,6 +548,7 @@ DistArray::SetDims(const std::vector<int64_t> &dims) {
   for (auto partition : partitions_) {
     partition.second->ComputeKeysFromBuffer(my_dims);
   }
+  dim_key_buff_.resize(dims.size());
 }
 
 void
@@ -556,6 +558,7 @@ DistArray::SetDims(const int64_t* dims, size_t num_dims) {
   for (auto partition : partitions_) {
     partition.second->ComputeKeysFromBuffer(my_dims);
   }
+  dim_key_buff_.resize(num_dims);
 }
 
 const std::vector<int64_t> &
@@ -979,6 +982,11 @@ DistArray::CreateDistArrayBuffer(const std::string &serialized_value_type) {
 AbstractDistArrayPartition*
 DistArray::GetBufferPartition() {
   return buffer_partition_.get();
+}
+
+std::vector<int64_t>&
+DistArray::GetDimKeyBuffer() {
+  return dim_key_buff_;
 }
 
 void

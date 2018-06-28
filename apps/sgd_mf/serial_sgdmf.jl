@@ -1,6 +1,8 @@
+#const data_path = "/proj/BigLearning/jinlianw/data/netflix.csv"
 const data_path = "/users/jinlianw/ratings.csv"
+#const data_path = "/proj/BigLearning/jinlianw/data/ml-20m/ratings_p.csv"
 const K = 100
-const num_iterations = 2
+const num_iterations = 1
 const step_size = 0.01
 
 function parse_line(line::AbstractString)
@@ -69,8 +71,8 @@ function train(ratings, step_size, num_iterations)
         if iteration % 1 == 0 ||
             iteration == num_iterations
             println("evaluate model")
-            err = 0
-            for rating in ratings
+            err = 0.0
+            @time for rating in ratings
                 x_idx = rating[1] + 1
                 y_idx = rating[2] + 1
                 rv = rating[3]
@@ -78,7 +80,7 @@ function train(ratings, step_size, num_iterations)
                 W_row = @view W[:, x_idx]
                 H_row = @view H[:, y_idx]
                 pred = dot(W_row, H_row)
-                err += (rv - pred) ^ 2
+                err += abs2(rv - pred)
             end
             println("iteration = ", iteration,
                     " err = ", err)

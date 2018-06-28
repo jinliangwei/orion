@@ -52,8 +52,6 @@ ServerExecForLoop::DeserializeAndApplyDistArrayCaches(
 void
 ServerExecForLoop::DeserializeAndApplyDistArrayBuffers(
     uint8_t* bytes) {
-  if (num_completed_executors_ > 0)
-    LOG(INFO) << __func__;
   auto *cursor = bytes;
   size_t num_dist_arrays = *reinterpret_cast<const size_t*>(cursor);
   cursor += sizeof(size_t);
@@ -117,9 +115,9 @@ ServerExecForLoop::DeserializeAndApplyDistArrayBuffers(
 bool
 ServerExecForLoop::NotifyExecForLoopDone() {
   num_completed_executors_++;
-  LOG(INFO) << __func__ << " num_completed_executors = "
-            << num_completed_executors_ << " numExecutors = " << kNumExecutors
-            << " bool = " << (num_completed_executors_ == kNumExecutors);
+  //LOG(INFO) << __func__ << " num_completed_executors = "
+  //           << num_completed_executors_ << " numExecutors = " << kNumExecutors
+  //          << " bool = " << (num_completed_executors_ == kNumExecutors);
   return (num_completed_executors_ == kNumExecutors);
 }
 

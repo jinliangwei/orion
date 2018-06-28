@@ -9,7 +9,7 @@ const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
 const num_executors = 16
-const num_servers = 1
+const num_servers = 16
 
 # initialize logging of the runtime library
 Orion.glog_init()
@@ -18,7 +18,7 @@ Orion.init(master_ip, master_port, comm_buff_capacity, num_executors,
 
 const data_path = "file:///proj/BigLearning/jinlianw/data/kdda"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/a1a"
-const num_iterations = 128
+const num_iterations = 10
 const step_size = Float32(0.00001)
 const num_features = 20216830
 #const num_features = 123
@@ -82,14 +82,14 @@ Orion.@share function apply_buffered_update(key, weight, update)
     return weight + update
 end
 
-Orion.set_write_buffer(weights_buf, weights, apply_buffered_update)
+Orion.set_write_buffer(weights_buf, weights, apply_buffered_update, max_delay = 10000)
 #Orion.dist_array_set_num_partitions_per_dim(samples_mat, 128)
 
 error_vec = Vector{Float32}()
 loss_vec = Vector{Float32}()
 
 for iteration = 1:num_iterations
-    Orion.@parallel_for for sample in samples_mat
+    Orion.@parallel_for repeated for sample in samples_mat
         sum = 0.0
         label = sample[2][1]
         features = sample[2][2]
@@ -107,7 +107,7 @@ for iteration = 1:num_iterations
     end
     if iteration % 1 == 0 ||
         iteration == num_iterations
-        Orion.@parallel_for for sample in samples_mat
+        Orion.@parallel_for repeated for sample in samples_mat
             sum = 0.0
             label = sample[2][1]
             features = sample[2][2]

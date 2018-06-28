@@ -5,7 +5,7 @@ Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 # test library path
 Orion.helloworld()
 
-const master_ip = "10.117.1.6"
+const master_ip = "10.117.1.38"
 #const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
@@ -16,15 +16,15 @@ Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity, num_executors, num_servers)
 
 #const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm.5K"
-const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm"
+#const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm.4"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/pubmed.dat.perm"
-#const data_path = "file:///proj/BigLearning/jinlianw/data/clueweb.libsvm.8M.perm"
-const num_topics = 1000
+const data_path = "file:///proj/BigLearning/jinlianw/data/clueweb.libsvm.25M"
+const num_topics = 400
 
 Orion.@share const alpha = 0.1
 Orion.@share const beta = 0.1
-const num_iterations = 128
+const num_iterations = 10
 
 const alpha_beta = alpha * beta
 
@@ -47,7 +47,7 @@ Orion.@share function parse_line(line_num::Int64, line::AbstractString)::Vector{
         global num_tokens += count
         global num_dist_tokens += 1
         for c = 1:count
-            push!(token_vec, ((line_num, word_id, c), 0))
+            push!(token_vec, ((c, word_id, line_num), 0))
         end
         idx += 1
     end
@@ -63,13 +63,37 @@ Orion.@dist_array topic_assignments = Orion.text_file(data_path, parse_line,
 
 Orion.materialize(topic_assignments)
 
-(num_docs, vocab_size) = size(topic_assignments)
+(max_token_per_word, vocab_size, num_docs) = size(topic_assignments)
 num_tokens = Orion.get_aggregated_value(:num_tokens, :+)
 println("num_tokens = ", num_tokens)
 num_dist_tokens = Orion.get_aggregated_value(:num_dist_tokens, :+)
 println("num_dist_tokens = ", num_dist_tokens)
 println("vocab_size = ", vocab_size)
 println("num_docs is ", num_docs)
+
+
+docs_histogram = Orion.compute_histogram(topic_assignments, 2, 64)
+println("before shuffle")
+println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
+        )
+
+docs_histogram = Orion.compute_histogram(topic_assignments, 3, 64)
+println("before shuffle")
+println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
+        )
+
+@time Orion.random_remap_keys!(topic_assignments, (2,))
+@time Orion.random_remap_keys!(topic_assignments, (3,))
+
+docs_histogram = Orion.compute_histogram(topic_assignments, 2, 64)
+println("after shuffle")
+println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
+        )
+
+docs_histogram = Orion.compute_histogram(topic_assignments, 3, 64)
+println("after shuffle")
+println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
+        )
 
 Orion.@dist_array topic_summary = Orion.fill(zeros(Int64, num_topics), 1)
 Orion.materialize(topic_summary)
@@ -99,7 +123,7 @@ Orion.@share srand(1)
 println("initialization")
 #Orion.dist_array_set_num_partitions_per_dim(topic_assignments, num_executors * 2)
 Orion.@parallel_for for topic_assignment_pair in topic_assignments
-    doc_id = topic_assignment_pair[1][1]
+    doc_id = topic_assignment_pair[1][3]
     word_id = topic_assignment_pair[1][2]
     word_topic_dict = word_topic_table[word_id]
     doc_topic_dict = doc_topic_table[doc_id]
@@ -232,7 +256,7 @@ last_time = start_time
 @time for iteration = 1:num_iterations
     println("iteration = ", iteration)
     Orion.@parallel_for repeated for topic_assignment_pair in topic_assignments
-        doc_id = topic_assignment_pair[1][1]
+        doc_id = topic_assignment_pair[1][3]
         word_id = topic_assignment_pair[1][2]
         old_topic = topic_assignment_pair[2]
 

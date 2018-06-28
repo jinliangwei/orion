@@ -1,4 +1,4 @@
-import Base.print, Base.string
+import Base.print, Base.string, Base.copy
 
 mutable struct VarInfo
     is_assigned_to::Bool
@@ -40,6 +40,13 @@ mutable struct DistArrayAccess
         new(dist_array,
             Vector{DistArrayAccessSubscript}(),
             is_read)
+end
+
+function copy(src::DistArrayAccess)
+    dest = DistArrayAccess(src.dist_array,
+                           src.is_read)
+    dest.subscripts = copy(src.subscripts)
+    return dest
 end
 
 mutable struct AccumulatorInfo

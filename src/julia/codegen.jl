@@ -447,123 +447,51 @@ function gen_dist_array_write_func_call(dist_array_id::Integer,
     return :(OrionWorker.dist_array_write($dist_array_id, $(subscripts), $source))
 end
 
-
-function gen_loop_body_function(func_name::Symbol,
-                                loop_body::Expr,
-                                iteration_space::Symbol,
-                                iteration_var::Symbol,
-                                accessed_dist_arrays::Vector{Symbol},
-                                accessed_dist_array_buffers::Vector{Symbol},
-                                global_read_only_vars::Vector{Symbol},
-                                accumulator_vars::Vector{Symbol},
-                                ssa_defs::Dict{Symbol, Tuple{Symbol, VarDef}})
-    @assert isa(loop_body, Expr)
-    @assert loop_body.head == :block
-
-    return_stmt = :(return $iteration_var)
-    if length(accumulator_vars) >= 1
-        return_args = Expr(:tuple)
-        push!(return_args.args, iteration_var)
-        for var_sym in accumulator_vars
-            push!(return_args.args, var_sym)
-        end
-        return_stmt = :(return $return_args)
-    end
-
-    loop_body_func = :(
-        function $func_name($iteration_var)
-        $loop_body
-        $return_stmt
-        end
-    )
-
-    for da_sym in accessed_dist_arrays
-        push!(loop_body_func.args[1].args, da_sym)
-    end
-    for buffer_sym in accessed_dist_array_buffers
-        push!(loop_body_func.args[1].args, buffer_sym)
-    end
-    for var_sym in global_read_only_vars
-        push!(loop_body_func.args[1].args, var_sym)
-    end
-    for var_sym in accumulator_vars
-        push!(loop_body_func.args[1].args, var_sym)
-    end
-    return loop_body_func
-end
-
 function gen_loop_body_batch_function(batch_func_name::Symbol,
-                                      func_name::Symbol,
+                                      loop_body::Expr,
+                                      iteration_space::Symbol,
+                                      iteration_var_key::Symbol,
+                                      iteration_var_val::Symbol,
                                       iter_space_value_type::Any,
                                       accessed_dist_arrays::Vector{Symbol},
                                       accessed_dist_array_buffers::Vector{Symbol},
                                       global_read_only_vars::Vector{Symbol},
-                                      accumulator_vars::Vector{Symbol})
-    loop_body_func_call = :(loop_body_func_call_ret = $(func_name)(key_value))
+                                      accumulator_vars::Vector{Symbol},
+                                      renamed_accumulator_vars_map::Dict{Symbol, Symbol},
+                                      update_global_accumulator_vars_stmt::Expr,
+                                      is_iteration_var_val_reassigned::Bool)
+    @assert isa(loop_body, Expr)
+    @assert loop_body.head == :block
 
-    for da_sym in accessed_dist_arrays
-        push!(loop_body_func_call.args[2].args, da_sym)
-    end
+    remapped_loop_body = AstWalk.ast_walk(loop_body, remap_symbols_visit, renamed_accumulator_vars_map)
 
-    for buffer_sym in accessed_dist_array_buffers
-        push!(loop_body_func_call.args[2].args, buffer_sym)
-    end
-
-    for var_sym in global_read_only_vars
-        push!(loop_body_func_call.args[2].args, var_sym)
-    end
-
-    update_accumulator_vars_stmts = quote end
-    update_global_accumulator_vars_stmts = quote end
-
-    renamed_accumulator_vars = Vector{Symbol}()
-    if length(accumulator_vars) > 0
-        update_iteration_var_value_stmt = :(values[i] = loop_body_func_call_ret[1][2])
-
-        for var_sym in accumulator_vars
-            push!(renamed_accumulator_vars, Symbol(:oriongen, var_sym))
-        end
-
-        for var_sym in renamed_accumulator_vars
-            push!(loop_body_func_call.args[2].args, var_sym)
-        end
-
-        for i = 1:length(renamed_accumulator_vars)
-            update_accumulator_vars_stmt = :($(renamed_accumulator_vars[i]) = loop_body_func_call_ret[$i + 1])
-            push!(update_accumulator_vars_stmts.args, update_accumulator_vars_stmt)
-        end
-
-        for i = 1:length(accumulator_vars)
-            update_global_accumulator_vars_stmt = :(global $(accumulator_vars[i]) = $(renamed_accumulator_vars[i]))
-            push!(update_global_accumulator_vars_stmts.args, update_global_accumulator_vars_stmt)
-        end
-    else
-        update_iteration_var_value_stmt = :(values[i] = loop_body_func_call_ret[2])
+    reassign_iteration_var_val_stmt = nothing
+    if is_iteration_var_val_reassigned
+        reassign_iteration_var_val_stmt = :( oriongen_values[oriongen_i] = $iteration_var_val)
     end
 
     batch_loop_stmt = quote
-        dim_keys = Vector{Int64}(length(dims))
-        start = 1 + offset
-        for i in start:(start + num_elements - 1)
-            key = keys[i]
-            value = values[i]
-            OrionWorker.from_int64_to_keys(key, dims, dim_keys)
-
-            key_value = (dim_keys, value)
-            $(loop_body_func_call)
-            $(update_iteration_var_value_stmt)
-            $(update_accumulator_vars_stmts)
+        oriongen_start = 1 + oriongen_offset
+        for oriongen_i in oriongen_start:(oriongen_start + oriongen_num_elements - 1)
+            oriongen_key = oriongen_keys[oriongen_i]
+            $iteration_var_val = oriongen_values[oriongen_i]
+            OrionWorker.from_int64_to_keys(oriongen_key, oriongen_dims, $iteration_var_key)
+            $remapped_loop_body
+            $reassign_iteration_var_val_stmt
         end
     end
 
+
+
     batch_func = :(
-        function $batch_func_name(keys::Vector{Int64},
-                                  values::Vector{$iter_space_value_type},
-                                  dims::Vector{Int64},
-                                  offset::UInt64,
-                                  num_elements::UInt64)
+        function $batch_func_name(oriongen_keys::Vector{Int64},
+                                  oriongen_values::Vector{$iter_space_value_type},
+                                  oriongen_dims::Vector{Int64},
+                                  oriongen_offset::UInt64,
+                                  oriongen_num_elements::UInt64,
+                                  $iteration_var_key::Vector{Int64})
         $(batch_loop_stmt)
-        $(update_global_accumulator_vars_stmts)
+        $(update_global_accumulator_vars_stmt)
         end
     )
 
@@ -579,103 +507,78 @@ function gen_loop_body_batch_function(batch_func_name::Symbol,
         push!(batch_func.args[1].args, var_sym)
     end
 
-    for var_sym in renamed_accumulator_vars
-        push!(batch_func.args[1].args, var_sym)
+    for var_sym in accumulator_vars
+        push!(batch_func.args[1].args, renamed_accumulator_vars_map[var_sym])
     end
 
     return batch_func
 end
 
 function gen_loop_body_batch_function_iter_dims(batch_func_name::Symbol,
-                                                func_name::Symbol,
+                                                loop_body::Expr,
+                                                iteration_space::Symbol,
+                                                iteration_var_key::Symbol,
+                                                iteration_var_val::Symbol,
                                                 iter_space_value_type::Any,
                                                 iterate_dims_length::Int64,
                                                 accessed_dist_arrays::Vector{Symbol},
                                                 accessed_dist_array_buffers::Vector{Symbol},
                                                 global_read_only_vars::Vector{Symbol},
-                                                accumulator_vars::Vector{Symbol})
+                                                accumulator_vars::Vector{Symbol},
+                                                renamed_accumulator_vars_map::Dict{Symbol, Symbol},
+                                                update_global_accumulator_vars_stmt::Expr,
+                                                is_iteration_var_val_reassigned::Bool)
 
-    loop_body_func_call = :(loop_body_func_call_ret = $(func_name)(:key_value))
+    @assert isa(loop_body, Expr)
+    @assert loop_body.head == :block
 
-    for da_sym in accessed_dist_arrays
-        push!(loop_body_func_call.args[2].args, da_sym)
+    remapped_loop_body = AstWalk.ast_walk(loop_body, remap_symbols_visit, renamed_accumulator_vars_map)
+
+    reassign_iteration_var_val_stmt = nothing
+    if is_iteration_var_val_reassigned
+        reassign_iteration_var_val_stmt = :(
+            for oriongen_j in eachindex($iteration_var_val)
+                oriongen_values[oriongen_i - length($iteration_var_val) - 1 + oriongen_j] = $(iteration_var_val)[oriongen_j]
+            end
+        )
     end
-
-    for buffer_sym in accessed_dist_array_buffers
-        push!(loop_body_func_call.args[2].args, buffer_sym)
-    end
-
-    for var_sym in global_read_only_vars
-        push!(loop_body_func_call.args[2].args, var_sym)
-    end
-
-    update_accumulator_vars_stmts = quote end
-    update_global_accumulator_vars_stmts = quote end
-
-    renamed_accumulator_vars = Vector{Symbol}()
-    if length(accumulator_vars) > 0
-        update_iteration_var_value_stmt = :(values[(i - length(value_vec)):(i - 1)] = loop_body_func_call_ret[1][2])
-        for var_sym in accumulator_vars
-            push!(renamed_accumulator_vars, Symbol(:oriongen, var_sym))
-        end
-
-        for var_sym in renamed_accumulator_vars
-            push!(loop_body_func_call.args[2].args, var_sym)
-        end
-
-        for i = 1:length(renamed_accumulator_vars)
-            update_accumulator_vars_stmt = :($(renamed_accumulator_vars[i]) = loop_body_func_call_ret[$i + 1])
-            push!(update_accumulator_vars_stmts.args, update_accumulator_vars_stmt)
-        end
-
-        for i = 1:length(accumulator_vars)
-            update_global_accumulator_vars_stmt = :(global $(accumulator_vars[i]) = $(renamed_accumulator_vars[i]))
-            push!(update_global_accumulator_vars_stmts.args, update_global_accumulator_vars_stmt)
-        end
-    else
-        update_iteration_var_value_stmt = :(values[(i - length(value_vec)):(i - 1)] = loop_body_func_call_ret[2])
-    end
-
     batch_loop_stmt = quote
-        if num_elements == 0
-          return
-        end
-        start = 1 + offset
-        first_key = keys[start]
-        first_dim_keys = OrionWorker.from_int64_to_keys(first_key, dims)
-        dim_keys = Vector{Int64}(length(dims))
-        prefix = first_dim_keys[(end - $iterate_dims_length):end]
-        dim_keys_vec = Vector{Vector{Int64}}()
-        value_vec = Vector{$iter_space_value_type}()
-        for i in start:(start + num_elements - 1)
-            key = keys[i]
-            value = values[i]
-            OrionWorker.from_int64_to_keys(key, dims, dim_keys)
-            curr_prefix = dim_keys[(end - $iterate_dims_length):end]
+        oriongen_start = 1 + oriongen_offset
+        oriongen_first_key = oriongen_keys[oriongen_start]
+        oriongen_first_dim_keys = OrionWorker.from_int64_to_keys(oriongen_first_key, oriongen_dims)
+        oriongen_prefix = oriongen_first_dim_keys[(end - $iterate_dims_length):end]
+        $iteration_var_key = Vector{Vector{Int64}}()
+        $iteration_var_val = Vector{$iter_space_value_type}()
 
-            if curr_prefix == prefix
-                push!(dim_keys_vec, dim_keys)
-                push!(value_vec, value)
+        for oriongen_i in oriongen_start:(oriongen_start + oriongen_num_elements - 1)
+            oriongen_key = oriongen_keys[i]
+            oriongen_value = oriongen_values[i]
+            oriongen_curr_dim_keys = OrionWorker.from_int64_to_keys(oriongen_key, oriongen_dims)
+            oriongen_curr_prefix = oriongen_dim_keys[(end - $iterate_dims_length):end]
+
+            if oriongen_curr_prefix == oriongen_prefix
+                push!($iteration_var_key, oriongen_curr_dim_keys)
+                push!($iteration_var_val, oriongen_value)
             else
-                key_value = (dim_keys_vec, value_vec)
-                $(loop_body_func_call)
-                $(update_iteration_var_value_stmt)
-                $(update_accumulator_vars_stmts)
-                dim_keys_vec = [dim_keys]
-                value_vec = [value]
-                prefix = curr_prefix
+                $remapped_loop_body
+                $reassign_iteration_var_val_stmt
+
+                $iteration_var_key = Vector{Vector{Int64}}()
+                $iteration_var_val = Vector{$iter_space_value_type}()
+                oriongen_prefix = oriongen_curr_prefix
             end
         end
     end
 
     batch_func = :(
-    function $batch_func_name(keys::Vector{Int64},
-                              values::Vector{$iter_space_value_type},
-                              dims::Vector{Int64},
-                              offset::UInt64,
-                              num_elements::UInt64)
+    function $batch_func_name(oriongen_keys::Vector{Int64},
+                              oriongen_values::Vector{$iter_space_value_type},
+                              oriongen_dims::Vector{Int64},
+                              oriongen_offset::UInt64,
+                              oriongen_num_elements::UInt64,
+                              oriongen_dim_keys::Vector{Int64})
         $(batch_loop_stmt)
-        $(update_global_accumulator_vars_stmts)
+        $(update_global_accumulator_vars_stmt)
         end
     )
     for da_sym in accessed_dist_arrays
@@ -690,78 +593,53 @@ function gen_loop_body_batch_function_iter_dims(batch_func_name::Symbol,
         push!(batch_func.args[1].args, var_sym)
     end
 
-    for var_sym in renamed_accumulator_vars
-        push!(batch_func.args[1].args, var_sym)
+    for var_sym in accumulator_vars
+        push!(batch_func.args[1].args, renamed_accumulator_vars_map[var_sym])
     end
+
     return batch_func
 end
 
-function gen_prefetch_function(prefetch_func_name::Symbol,
-                               iterate_var::Symbol,
-                               prefetch_stmts::Expr,
-                               global_read_only_vars::Vector{Symbol},
-                               accumulator_vars::Vector{Symbol})
-    prefetch_func = :(
-        function $prefetch_func_name($iterate_var,
-                                     oriongen_prefetch_point_dict::Dict{Int32, OrionWorker.DistArrayAccessSetRecorder})
-            $prefetch_stmts
-        end
-    )
-
-    for var_sym in global_read_only_vars
-        push!(prefetch_func.args[1].args, var_sym)
-    end
-    for var_sym in accumulator_vars
-        push!(prefetch_func.args[1].args, var_sym)
-    end
-    return prefetch_func
-end
-
 function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
-                                     prefetch_func_name::Symbol,
+                                     iteration_var_key::Symbol,
+                                     iteration_var_val::Symbol,
+                                     prefetch_stmts::Expr,
                                      iter_space_value_type::Any,
                                      global_read_only_vars::Vector{Symbol},
-                                     accumulator_vars::Vector{Symbol})
+                                     accumulator_vars::Vector{Symbol},
+                                     renamed_accumulator_vars_map::Dict{Symbol, Symbol})
 
-    prefetch_func_call = :($(prefetch_func_name)(key_value, prefetch_point_dict))
-    for var_sym in global_read_only_vars
-        push!(prefetch_func_call.args, var_sym)
-    end
-    for var_sym in accumulator_vars
-        push!(prefetch_func_call.args, var_sym)
-    end
-
+    remapped_prefetch_stmts = AstWalk.ast_walk(prefetch_stmts, remap_symbols_visit, renamed_accumulator_vars_map)
     prefetch_batch_func = :(
-        function $prefetch_batch_func_name(keys::Vector{Int64},
-                                           values::Vector{$iter_space_value_type},
-                                           dims::Vector{Int64},
-                                           global_indexed_dist_array_ids::Vector{Int32},
-                                           global_indexed_dist_array_dims::Vector{Vector{Int64}},
-                                           offset::UInt64,
-                                           num_elements::UInt64)::Vector{Vector{Int64}}
-            prefetch_point_dict = Dict{Int32, OrionWorker.DistArrayAccessSetRecorder}()
-            for idx in eachindex(global_indexed_dist_array_ids)
-                dist_array_id = global_indexed_dist_array_ids[idx]
-                dist_array_dims = global_indexed_dist_array_dims[idx]
-                prefetch_point_dict[dist_array_id] = OrionWorker.DistArrayAccessSetRecorder{length(dist_array_dims)}(dist_array_dims)
+        function $prefetch_batch_func_name(oriongen_keys::Vector{Int64},
+                                           oriongen_values::Vector{$iter_space_value_type},
+                                           oriongen_dims::Vector{Int64},
+                                           oriongen_global_indexed_dist_array_ids::Vector{Int32},
+                                           oriongen_global_indexed_dist_array_dims::Vector{Vector{Int64}},
+                                           oriongen_offset::UInt64,
+                                           oriongen_num_elements::UInt64,
+                                           $iteration_var_key::Vector{Int64})::Vector{Vector{Int64}}
+            oriongen_prefetch_point_dict = Dict{Int32, OrionWorker.DistArrayAccessSetRecorder}()
+            for oriongen_idx in eachindex(oriongen_global_indexed_dist_array_ids)
+                oriongen_dist_array_id = oriongen_global_indexed_dist_array_ids[oriongen_idx]
+                oriongen_dist_array_dims = oriongen_global_indexed_dist_array_dims[oriongen_idx]
+                oriongen_prefetch_point_dict[oriongen_dist_array_id] = OrionWorker.DistArrayAccessSetRecorder{length(oriongen_dist_array_dims)}(oriongen_dist_array_dims)
             end
-            dim_keys = Vector{Int64}(length(dims))
-            start = 1 + offset
-            for i in start:(start + num_elements - 1)
-                key = keys[i]
-                value = values[i]
-                OrionWorker.from_int64_to_keys(key, dims, dim_keys)
+            oriongen_dim_keys = Vector{Int64}(length(oriongen_dims))
+            oriongen_start = 1 + oriongen_offset
+            for oriongen_i in oriongen_start:(oriongen_start + oriongen_num_elements - 1)
+                oriongen_key = oriongen_keys[oriongen_i]
+                $iteration_var_val = oriongen_values[oriongen_i]
+                OrionWorker.from_int64_to_keys(oriongen_key, oriongen_dims, $iteration_var_key)
+                $remapped_prefetch_stmts
+            end
 
-                key_value = (dim_keys, value)
-                $(prefetch_func_call)
+            oriongen_prefetch_point_array = Vector{Vector{Int64}}()
+            for oriongen_id in oriongen_global_indexed_dist_array_ids
+                oriongen_point_set = oriongen_prefetch_point_dict[oriongen_id].keys_set
+                push!(oriongen_prefetch_point_array, collect(oriongen_point_set))
             end
-
-            prefetch_point_array = Vector{Vector{Int64}}()
-            for id in global_indexed_dist_array_ids
-                point_set = prefetch_point_dict[id].keys_set
-                push!(prefetch_point_array, collect(point_set))
-            end
-            return prefetch_point_array
+            return oriongen_prefetch_point_array
         end
     )
 
@@ -769,7 +647,7 @@ function gen_prefetch_batch_function(prefetch_batch_func_name::Symbol,
         push!(prefetch_batch_func.args[1].args[1].args, var_sym)
     end
     for var_sym in accumulator_vars
-        push!(prefetch_batch_func.args[1].args[1].args, var_sym)
+        push!(prefetch_batch_func.args[1].args[1].args, renamed_accumulator_vars_map[var_sym])
     end
 
     return prefetch_batch_func
@@ -777,77 +655,75 @@ end
 
 
 function gen_prefetch_batch_function_iter_dims(prefetch_batch_func_name::Symbol,
-                                               prefetch_func_name::Symbol,
+                                               iteration_var_key::Symbol,
+                                               iteration_var_val::Symbol,
+                                               prefetch_stmts::Expr,
                                                iter_space_value_type::Any,
                                                iterate_dims_length::Int64,
                                                global_read_only_vars::Vector{Symbol},
-                                               accumulator_vars::Vector{Symbol})
+                                               accumulator_vars::Vector{Symbol},
+                                               renamed_accumulator_vars_map::Dict{Symbol, Symbol})
 
-    prefetch_func_call = :($(prefetch_func_name)(key_value, prefetch_point_dict))
-    for var_sym in global_read_only_vars
-        push!(prefetch_func_call.args, var_sym)
-    end
-    for var_sym in accumulator_vars
-        push!(prefetch_func_call.args, var_sym)
-    end
-
+    remapped_prefetch_stmts = AstWalk.ast_walk(prefetch_stmts, remap_symbols_visit, renamed_accumulator_vars_map)
     prefetch_batch_func = :(
-            function $prefetch_batch_func_name(keys::Vector{Int64},
-                                               values::Vector{$iter_space_value_type},
-                                               dims::Vector{Int64},
-                                               global_indexed_dist_array_ids::Vector{Int32},
-                                               global_indexed_dist_array_dims::Vector{Vector{Int64}},
-                                               offset::UInt64,
-                                               num_elements::UInt64)::Vector{Vector{Int64}}
-            prefetch_point_dict = Dict{Int32, OrionWorker.DistArrayAccessSetRecorder}()
-            for idx in eachindex(global_indexed_dist_array_ids)
-                id = global_indexed_dist_array_ids[idx]
-                dims = global_indexed_dist_array_dims[idx]
-                prefetch_point_dict[id] = OrionWorker.DistArrayAccessSetRecorder{length(dims)}(dims)
+            function $prefetch_batch_func_name(oriongen_keys::Vector{Int64},
+                                               oriongen_values::Vector{$iter_space_value_type},
+                                               oriongen_dims::Vector{Int64},
+                                               oriongen_global_indexed_dist_array_ids::Vector{Int32},
+                                               oriongen_global_indexed_dist_array_dims::Vector{Vector{Int64}},
+                                               oriongen_offset::UInt64,
+                                               oriongen_num_elements::UInt64,
+                                               $iteration_var_key::Vector{Int64})::Vector{Vector{Int64}}
+            oriongen_prefetch_point_dict = Dict{Int32, OrionWorker.DistArrayAccessSetRecorder}()
+            for oriongen_idx in eachindex(oriongen_global_indexed_dist_array_ids)
+                oriongen_id = oriongen_global_indexed_dist_array_ids[oriongen_idx]
+                oriongen_dims = oriongen_global_indexed_dist_array_dims[oriongen_idx]
+                oriongen_prefetch_point_dict[oriongen_dist_array_id] = OrionWorker.DistArrayAccessSetRecorder{length(oriongen_dist_array_dims)}(oriongen_dist_array_dims)
             end
 
-            if num_elements == 0
-                return Vector{Vector{Int64}}()
-            end
+            oriongen_start = 1 + oriongen_offset
+            oriongen_first_key = oriongen_keys[oriongebn_start]
+            oriongen_first_dim_keys = OrionWorker.from_int64_to_keys(oriongen_first_key, oriongen_dims)
+            oriongen_prefix = oriongen_first_dim_keys[(end - $iterate_dims_length):end]
+            $iteration_var_key = Vector{Vector{Int64}}()
+            $iteration_var_val = Vector{$iter_space_value_type}()
+            for oriongen_i in oriongen_start:(oriongen_start + oriongen_num_elements - 1)
+                oriongen_key = oriongen_keys[oriongen_i]
+                oriongen_value = oriongen_values[oriongen_i]
+                oriongen_dim_keys = OrionWorker.from_int64_to_keys(oriongen_key, oriongen_dims)
+                oriongen_curr_prefix = oriongen_dim_keys[(end - $iterate_dims_length):end]
 
-            start = 1 + offset
-            first_key = keys[start]
-            first_dim_keys = OrionWorker.from_int64_to_keys(first_key, dims)
-            prefix = first_dim_keys[(end - $iterate_dims_length):end]
-            dim_keys_vec = Vector{Vector{Int64}}()
-            value_vec = Vector{$iter_space_value_type}()
-            for i in start:(start + num_elements - 1)
-                key = keys[i]
-                value = values[i]
-                dim_keys = OrionWorker.from_int64_to_keys(key, dims)
-                curr_prefix = dim_keys[(end - $iterate_dims_length):end]
-
-                if curr_prefix == prefix
-                    push!(dim_keys_vec, dim_keys)
-                    push!(value_vec, value)
+                if oriongen_curr_prefix == oriongen_prefix
+                    push!($iteration_var_key, oriongen_curr_dim_keys)
+                    push!($iteration_var_val, oriongen_value)
                 else
-                    key_value = (dim_keys_vec, value_vec)
-                    $(prefetch_func_call)
-                    dim_keys_vec = [dim_keys]
-                    value_vec = [value]
-                    prefix = curr_prefix
-                end
-            end
+                     $remapped_prefetch_stmts
+                     for oriongen_j in eachindex($iteration_var_val)
+                         oriongen_values[oriongen_i - length($iteration_var_val) - 1 + oriongen_j] = $(iteration_var_val)[oriongen_j]
+                     end
 
-            prefetch_point_array = Vector{Vector{Int64}}()
-            for id in global_indexed_dist_array_ids
-                point_set = prefetch_point_dict[id].keys_set
-                push!(prefetch_point_array, collect(point_set))
+                     $iteration_var_key = Vector{Vector{Int64}}()
+                     $iteration_var_val = Vector{$iter_space_value_type}()
+                     oriongen_prefix = oriongen_curr_prefix
+                 end
+             end
+
+            oriongen_prefetch_point_array = Vector{Vector{Int64}}()
+            for oriongen_id in oriongen_global_indexed_dist_array_ids
+                origen_point_set = oriongen_prefetch_point_dict[id].keys_set
+                push!(oriongen_prefetch_point_array, collect(oriongen_point_set))
             end
-            return prefetch_point_array
+            return oriongen_prefetch_point_array
         end
     )
 
+    dump(prefetch_batch_func)
     for var_sym in global_read_only_vars
         push!(prefetch_batch_func.args[1].args[1].args, var_sym)
     end
+
     for var_sym in accumulator_vars
-        push!(prefetch_batch_func.args[1].args[1].args, var_sym)
+        push!(prefetch_batch_func.args[1].args[1].args, renamed_accumulator_vars_map[var_sym])
     end
 
     return prefetch_batch_func
@@ -1184,4 +1060,18 @@ function gen_to_string_batch_function(to_string_func_name::Symbol,
        end
     )
     return to_string_batch_func
+end
+
+function gen_renamed_accumulator_vars(accumulator_vars::Vector{Symbol})
+    update_global_accumulator_vars_stmts = quote end
+    renamed_accumulator_vars_map = Dict{Symbol, Symbol}()
+    if length(accumulator_vars) > 0
+        for var_sym in accumulator_vars
+            renamed_accumulator_var_sym = Symbol(:oriongen_xx_, var_sym)
+            renamed_accumulator_vars_map[var_sym] = renamed_accumulator_var_sym
+            update_global_accumulator_vars_stmt = :(global $(var_sym) = $(renamed_accumulator_var_sym))
+            push!(update_global_accumulator_vars_stmts.args, update_global_accumulator_vars_stmt)
+        end
+    end
+    return renamed_accumulator_vars_map, update_global_accumulator_vars_stmts
 end

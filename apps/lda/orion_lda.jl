@@ -8,7 +8,7 @@ Orion.helloworld()
 const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 1
+const num_executors = 4
 const num_servers = 1
 
 Orion.glog_init()

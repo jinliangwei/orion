@@ -25,8 +25,11 @@ function Base.similar{T}(array::MyArray, ::Type{T}, dims::Dims)
     return MyArray{T, length(dims)}(dims)
 end
 
-my_array = MyArray{Float64, 2}((100, 10000))
-function test_my_array(test_arr)
+my_array_A = MyArray{Float64, 2}((100, 10000))
+my_array_B = MyArray{Float64, 2}((100, 10000))
+
+function test_my_array(test_arr_A,
+                       test_arr_B)
     sum = zeros(100)
     @time for i = 1:10000
         row = @view test_arr[:, i]
@@ -35,25 +38,5 @@ function test_my_array(test_arr)
     println(sum)
 end
 
-function test_my_array_global()
-    sum = zeros(100)
-    @time for i = 1:10000
-        row = my_array[:, i]
-        sum .= sum + row
-    end
-    println(sum)
-end
 
-function test_array()
-    my_array = randn(100, 10000)
-    sum = zeros(100)
-    @time for i = 1:10000
-        row = @view my_array[:, i]
-        sum .= sum + row
-    end
-    println(sum)
-end
-
-#test_array()
-#test_my_array(my_array)
-test_my_array_global()
+@code_warntype test_my_array(my_array)

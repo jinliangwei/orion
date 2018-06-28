@@ -673,6 +673,7 @@ AbstractExecForLoop::GetAndClearDistArrayCacheSendMap(
 
 void
 AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
+  LOG(INFO) << __func__ << "Start";
   CHECK(time_partitions_cleared_);
   time_partitions_serialized_bytes_ = nullptr;
   time_partitions_serialized_size_ = 0;
@@ -728,10 +729,12 @@ AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
   cursor += sizeof(int32_t) * skipped_dist_array_id_vec.size();
   time_partitions_serialized_bytes_ = buffer_bytes;
   time_partitions_serialized_size_ = total_size;
+ LOG(INFO) << __func__ << "End";
 }
 
 void
 AbstractExecForLoop::DeserializePipelinedTimePartitions(uint8_t* bytes) {
+  LOG(INFO) << __func__ << "Start";
   uint8_t *cursor = bytes;
   size_t num_data_buffers = *reinterpret_cast<const size_t*>(cursor);
   cursor += sizeof(size_t);
@@ -765,6 +768,7 @@ AbstractExecForLoop::DeserializePipelinedTimePartitions(uint8_t* bytes) {
       skipped_set.insert(dist_array_id);
     }
   }
+  LOG(INFO) << __func__ << "End";
 }
 
 void
@@ -1005,6 +1009,7 @@ AbstractExecForLoop::PrepareDistArrayCacheBufferPartitions() {
     auto *cache_partition = dist_array_cache_.at(dist_array_id).get();
     cache_partition->CreateCacheAccessor();
   }
+
   for (auto& buffer_pair : dist_array_buffers_) {
     auto buffer_id = buffer_pair.first;
     auto &to_create_accessor = dist_array_cache_buffer_to_create_accessor_.at(buffer_id);

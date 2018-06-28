@@ -62,6 +62,7 @@ class DistArray {
   std::vector<jl_value_t*> gc_partitions_;
   std::unique_ptr<AbstractDistArrayPartition> buffer_partition_;
   jl_value_t* dist_array_jl_ {nullptr};
+  std::vector<int64_t> dim_key_buff_;
 
   const std::vector<PerfCount::CountType> kPerfCountTypes {
     PerfCount::PERF_COUNT_TYPE_HW_CPU_CYCLES,
@@ -160,6 +161,8 @@ class DistArray {
 
   void CreateDistArrayBuffer(const std::string &serialized_value_type);
   AbstractDistArrayPartition* GetBufferPartition();
+
+  std::vector<int64_t> &GetDimKeyBuffer();
  private:
   DISALLOW_COPY(DistArray);
   void RepartitionSerializeAndClearSpaceTime(ExecutorSendBufferMap* send_buff_ptr);

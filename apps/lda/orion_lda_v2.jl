@@ -5,40 +5,44 @@ Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 # test library path
 Orion.helloworld()
 
-const master_ip = "10.117.1.21"
+const master_ip = "10.117.1.30"
 #const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 32
-const num_servers = 1
+const num_executors = 394
+const num_servers = 12
 
 Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity, num_executors, num_servers)
 
 #const data_path = "file:///proj/BigLearning/jinlianw/data/20news.dat"
-const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm"
+#const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm"
+#const data_path = "file:///proj/BigLearning/jinlianw/data/pubmed.dat.perm"
+const data_path = "file:///proj/BigLearning/jinlianw/data/clueweb.libsvm"
 const num_topics = 1000
 
 Orion.@share const alpha = 0.1
 Orion.@share const beta = 0.1
-const num_iterations = 40
+const num_iterations = 50
 
 const alpha_beta = alpha * beta
 
 Orion.@share function parse_line(line_num::Int64, line::AbstractString)::Vector{Tuple{Tuple{Int64, Int64},
-                                                                                   Int64}
+                                                                                   Int32}
                                                                                 }
     # Parse each line to be word counts
     tokens = split(strip(line),  ' ')
     pair_vec = Vector{Tuple{Tuple{Int64, Int64},
-                         Int64
+                         Int32
                          }
-                   }()
+                      }(length(tokens) - 1)
+    idx = 1
     for token in tokens[2:end]
         word_count = split(token, ":")
         word_id = parse(Int64, word_count[1]) + 1
-        count = parse(Int64, word_count[2])
-        push!(pair_vec, ((line_num, word_id), count))
+        count = parse(Int32, word_count[2])
+        pair_vec[idx] = ((line_num, word_id), count)
+        idx += 1
     end
     return pair_vec
 end
@@ -56,7 +60,7 @@ Orion.materialize(doc_word_counts)
 println("vocab_size = ", vocab_size)
 println("num_docs is ", num_docs)
 
-Orion.@share function init_topic_assignments(word_count::Int64)::Vector{Int32}
+Orion.@share function init_topic_assignments(word_count::Int32)::Vector{Int32}
     return Vector{Int32}(word_count)
 end
 
@@ -65,6 +69,8 @@ Orion.@dist_array topic_assignments = Orion.map(doc_word_counts,
                                                 map_values = true)
 Orion.materialize(topic_assignments)
 
+Orion.delete_dist_array(doc_word_counts)
+println("delete dist_array done")
 Orion.@dist_array topic_summary = Orion.fill(zeros(Int64, num_topics), 1)
 Orion.materialize(topic_summary)
 
@@ -103,10 +109,11 @@ Orion.@share function apply_buffered_vec(vec_key,
     return value_vec
 end
 
-Orion.set_write_buffer(topic_summary_buff, topic_summary, apply_buffered_vec)
+Orion.set_write_buffer(topic_summary_buff, topic_summary, apply_buffered_vec,
+                       max_delay = 6000000)
 Orion.@share srand(1)
 println("initialization")
-Orion.dist_array_set_num_partitions_per_dim(topic_assignments, num_executors * 4)
+#Orion.dist_array_set_num_partitions_per_dim(topic_assignments, num_executors * 2)
 Orion.@parallel_for for topic_assignment_pair in topic_assignments
     doc_id = topic_assignment_pair[1][1]
     word_id = topic_assignment_pair[1][2]
@@ -155,7 +162,7 @@ end
 
 Orion.@dist_array s_sum_buff = Orion.create_dense_dist_array_buffer((s_sum.dims...), 0.0)
 Orion.materialize(s_sum_buff)
-Orion.set_write_buffer(s_sum_buff, s_sum, apply_buffered_update)
+Orion.set_write_buffer(s_sum_buff, s_sum, apply_buffered_update, max_delay = 6000000)
 
 println("initializing r_sum")
 Orion.@dist_array r_sum = Orion.fill(0.0, num_docs)
@@ -174,7 +181,7 @@ Orion.@parallel_for for doc_topic_dict_pair in doc_topic_table
     r_sum[doc_id] = doc_r_sum
 end
 println("initializing q_coeff")
-Orion.@dist_array q_coeff = Orion.fill(zeros(Float64, num_topics), num_docs)
+Orion.@dist_array q_coeff = Orion.fill(zeros(Float32, num_topics), num_docs)
 Orion.materialize(q_coeff)
 
 Orion.@parallel_for for doc_topic_dict_tuple in doc_topic_table
@@ -239,7 +246,7 @@ start_time = now()
 
 @time for iteration = 1:num_iterations
     println("iteration = ", iteration)
-    Orion.@parallel_for for topic_assignment_pair in topic_assignments
+    Orion.@parallel_for repeated for topic_assignment_pair in topic_assignments
         doc_id = topic_assignment_pair[1][1]
         word_id = topic_assignment_pair[1][2]
         assignment_vec = topic_assignment_pair[2]
@@ -377,7 +384,7 @@ start_time = now()
         resize!(word_topic_vec, num_nonzeros)
     end
 
-    if iteration % 4 == 0 ||
+    if iteration % 1 == 0 ||
         iteration == num_iterations
         Orion.@parallel_for for word_topic_pair in word_topic_vec_table
             word_topic_vec = word_topic_pair[2]

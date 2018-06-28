@@ -7,11 +7,11 @@ Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 # test library path
 Orion.helloworld()
 
-const master_ip = "10.117.1.17"
+const master_ip = "10.117.1.14"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 64
-const num_servers = 1
+const num_executors = 384
+const num_servers = 12
 
 # initialize logging of the runtime library
 Orion.glog_init()
@@ -23,8 +23,9 @@ Orion.init(master_ip, master_port, comm_buff_capacity,
 #const data_path = "file:///users/jinlianw/ratings.csv"
 const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/ml-20m/ratings_p.csv"
+#const data_path = "file:///proj/BigLearning/jinlianw/data/ml-latest/ratings_p.csv"
 const K = 1000
-const num_iterations = 64
+const num_iterations = 100
 const alpha = Float32(0.08)
 
 Orion.@accumulator err = 0
@@ -34,9 +35,18 @@ Orion.@share function parse_line(line::AbstractString)
     global line_cnt
     line_cnt += 1
     tokens = split(line, ',')
-    @assert length(tokens) == 3
-    key_tuple = (parse(Int64, String(tokens[1])),
-                 parse(Int64, String(tokens[2])) )
+    key_tuple = (parse(Int64, String(tokens[2])) + 1,
+                 parse(Int64, String(tokens[1])) + 1)
+    value = parse(Float32, String(tokens[3]))
+    return (key_tuple, value)
+end
+
+Orion.@share function parse_line_ml(line::AbstractString)
+    global line_cnt
+    line_cnt += 1
+    tokens = split(line, ',')
+    key_tuple = (parse(Int64, String(tokens[2])),
+                 parse(Int64, String(tokens[1])))
     value = parse(Float32, String(tokens[3]))
     return (key_tuple, value)
 end
@@ -71,6 +81,8 @@ Orion.materialize(H_z)
 
 error_vec = Vector{Float64}()
 time_vec = Vector{Float64}()
+start_time = now()
+last_time = start_time
 
 W_grad = zeros(K)
 H_grad = zeros(K)
@@ -79,12 +91,10 @@ H_lr = zeros(K)
 W_lr_old = zeros(K)
 H_lr_old = zeros(K)
 
-start_time = now()
 @time for iteration = 1:num_iterations
-    @time Orion.@parallel_for for rating in ratings
-        x_idx = rating[1][1]
-        y_idx = rating[1][2]
-        rv = rating[2]
+    @time Orion.@parallel_for histogram_partitioned for (rating_key, rv) in ratings
+        x_idx = rating_key[1]
+        y_idx = rating_key[2]
 
         W_row = @view W[:, x_idx]
         H_row = @view H[:, y_idx]
@@ -108,10 +118,10 @@ start_time = now()
     @time if iteration % 1 == 0 ||
         iteration == num_iterations
         println("evaluate model")
-        Orion.@parallel_for for rating in ratings
-            x_idx = rating[1][1]
-            y_idx = rating[1][2]
-            rv = rating[2]
+        Orion.@parallel_for for (rating_key, rv) in ratings
+            x_idx = rating_key[1]
+            y_idx = rating_key[2]
+
             W_row = W[:, x_idx]
             H_row = H[:, y_idx]
             pred = dot(W_row, H_row)
@@ -120,7 +130,10 @@ start_time = now()
         err = Orion.get_aggregated_value(:err, :+)
         curr_time = now()
         elapsed = Int(Dates.value(curr_time - start_time)) / 1000
-        println("iteration = ", iteration, " elapsed = ", elapsed, " err = ", err)
+        diff_time = Int(Dates.value(curr_time - last_time)) / 1000
+        last_time = curr_time
+        println("iteration = ", iteration, " elapsed = ", elapsed, " iter_time = ", diff_time,
+                " err = ", err)
         Orion.reset_accumulator(:err)
         push!(error_vec, err)
         push!(time_vec, elapsed)
@@ -129,4 +142,11 @@ end
 println(error_vec)
 println(time_vec)
 Orion.stop()
+
+loss_fobj = open("results/" * split(PROGRAM_FILE, "/")[end] * "-" *
+                 split(data_path, "/")[end] * "-" * string(num_executors) * "-" *
+                 string(K) * "-" * string(num_iterations) * "-" * string(alpha) * "-" * string(now()) * ".loss", "w")
+for idx in eachindex(time_vec)
+    write(loss_fobj, string(idx) * "\t" * string(time_vec[idx]) * "\t" * string(error_vec[idx]) * "\n")
+end
 exit()

@@ -944,13 +944,13 @@ JuliaEvaluator::GetVarValue(
               &serialized_result_array);
   symbol_jl = jl_symbol(symbol.c_str());
   value_jl = jl_get_global(jl_main_module, symbol_jl);
+  AbortIfException();
 
   jl_function_t *io_buffer_func
       = GetFunction(jl_base_module, "IOBuffer");
   CHECK(io_buffer_func != nullptr);
   buff = jl_call0(io_buffer_func);
   AbortIfException();
-
   jl_function_t *serialize_func
       = GetFunction(jl_base_module, "serialize");
   CHECK(serialize_func != nullptr);
@@ -960,6 +960,8 @@ JuliaEvaluator::GetVarValue(
   jl_function_t *takebuff_array_func
       = GetFunction(jl_base_module, "take!");
   serialized_result_array = jl_call1(takebuff_array_func, buff);
+  AbortIfException();
+
   size_t result_array_length = jl_array_len(serialized_result_array);
   uint8_t* array_bytes = reinterpret_cast<uint8_t*>(jl_array_data(serialized_result_array));
   result_buff->resize(result_array_length);
@@ -1012,7 +1014,9 @@ JuliaEvaluator::SetVarValue(
       = GetFunction(jl_base_module, "deserialize");
   CHECK(deserialize_func != nullptr);
   value_jl = jl_call1(deserialize_func, serialized_value_buff);
+  AbortIfException();
   symbol_jl = jl_symbol(symbol.c_str());
+  LOG(INFO) << __func__ << " symbol = " << symbol;
   jl_set_global(jl_main_module, symbol_jl, value_jl);
   JL_GC_POP();
   AbortIfException();

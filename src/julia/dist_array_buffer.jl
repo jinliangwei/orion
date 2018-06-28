@@ -51,14 +51,14 @@ end
     2 DistArrayBufferDelayMode_auto =
     3
 
-function Base.getindex(dist_array::DistArrayBuffer,
-                       I...)
+function Base.getindex{T, N}(dist_array::DistArrayBuffer{T, N},
+                             I...)::T
     @assert !isnull(dist_array.accessor)
     accessor = get(dist_array.accessor)
     return getindex(accessor, I...)
 end
 
-function Base.setindex!(dist_array::DistArrayBuffer,
+function Base.setindex!{T, N}(dist_array::DistArrayBuffer{T, N},
                         v, I...)
     @assert !isnull(dist_array.accessor)
     accessor = get(dist_array.accessor)

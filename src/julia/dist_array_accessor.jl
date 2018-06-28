@@ -83,13 +83,13 @@ function Base.size(accessor::DistArrayAccessor)
     return accessor.dims
 end
 
-function Base.getindex(accessor::DenseDistArrayAccessor,
-                       i::Int)
+function Base.getindex{T, N}(accessor::DenseDistArrayAccessor{T, N},
+                             i::Int)::T
     return accessor.values[i - accessor.key_begin]
 end
 
-function Base.setindex!(accessor::DenseDistArrayAccessor,
-                        v, i::Int)
+function Base.setindex!{T, N}(accessor::DenseDistArrayAccessor{T, N},
+                             v, i::Int)
     accessor.values[i - accessor.key_begin] = v
 end
 
@@ -98,28 +98,28 @@ function Base.similar{T}(accessor::DenseDistArrayAccessor,
     return Array{T, length(dims)}(dims)
 end
 
-function getindex(accessor::SparseDistArrayAccessor,
-                  i::Int64)
+function Base.getindex{T, N}(accessor::SparseDistArrayAccessor{T, N},
+                             i::Int64)::T
     return accessor.key_value[i]
 end
 
-function setindex!(accessor::SparseDistArrayAccessor,
-                   v, i::Int64)
+function Base.setindex!{T, N}(accessor::SparseDistArrayAccessor{T, N},
+                              v, i::Int64)
     accessor.key_value[i] = v
 end
 
-function getindex(accessor::SparseInitDistArrayAccessor,
-                  i::Int64)
+function Base.getindex{T, N}(accessor::SparseInitDistArrayAccessor{T, N},
+                             i::Int64)::T
     return get(accessor.key_value, i, accessor.init_value)
 end
 
-function setindex!(accessor::SparseInitDistArrayAccessor,
-                   v, i::Int64)
+function setindex!{T, N}(accessor::SparseInitDistArrayAccessor{T, N},
+                         v, i::Int64)
     return accessor.key_value[i] = v
 end
 
-function getindex{T, N}(accessor::DistArrayCacheAccessor{T, N},
-                        i::Int64)
+function Base.getindex{T, N}(accessor::DistArrayCacheAccessor{T, N},
+                        i::Int64)::T
     if haskey(accessor.key_value, i)
         return accessor.key_value[i]
     else

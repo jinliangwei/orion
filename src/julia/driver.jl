@@ -77,8 +77,8 @@ function exec_for_loop(exec_for_loop_id::Int32,
                        time_partitioned_dist_array_ids::Vector{Int32},
                        global_indexed_dist_array_ids::Vector{Int32},
                        dist_array_buffer_ids::Vector{Int32},
-                       written_dist_array_ids::Vector{Int32},
-                       accessed_dist_array_ids::Vector{Int32},
+                       written_dist_array_ids::Vector{Int32}, # dist arrays that are directly written up (not through buffer)
+                       accessed_dist_array_ids::Vector{Int32}, # dist arrays that are directly accessed
                        global_read_only_vars::Vector{Symbol},
                        accumulator_vars::Vector{Symbol},
                        loop_batch_func_name::AbstractString,
