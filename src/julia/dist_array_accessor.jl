@@ -110,7 +110,11 @@ end
 
 function Base.getindex{T, N}(accessor::SparseInitDistArrayAccessor{T, N},
                              i::Int64)::T
-    return get(accessor.key_value, i, accessor.init_value)
+    if haskey(accessor.key_value, i)
+        return accessor.key_value[i]
+    else
+        return deepcopy(accessor.init_value)
+    end
 end
 
 function setindex!{T, N}(accessor::SparseInitDistArrayAccessor{T, N},

@@ -708,7 +708,7 @@ function materialize{T, N}(dist_array::DistArray{T, N})
     if dist_array.is_materialized
         return
     end
-
+    println("dist_array.id = ", dist_array.id, " symbol = ", dist_array.symbol)
     if dist_array.parent_type == DistArrayParentType_dist_array &&
         dist_array.map_type != DistArrayMapType_group_by
         dist_array_to_create = process_dist_array_map(dist_array)
@@ -827,6 +827,8 @@ function map_generic{T, N}(parent_dist_array::DistArray{T, N},
                                                               (Tuple, T),
                                                               flatten_results)
         map_type = DistArrayMapType_map
+        println(ValueType)
+        println(key_num_dims)
     elseif map_value_only && new_keys
         ValueType, key_num_dims = parse_map_new_keys_function(map_func,
                                                               (T,),
@@ -935,9 +937,9 @@ end
 
 function check_and_repartition(dist_array::DistArray,
                                partition_info::DistArrayPartitionInfo)
-    println("check_and_repartition ", dist_array.id, " ", get(dist_array.symbol),
-            " ", partition_info.partition_type,
-            " ", partition_info.partition_dims)
+#    println("check_and_repartition ", dist_array.id, " ", get(dist_array.symbol),
+#            " ", partition_info.partition_type,
+#            " ", partition_info.partition_dims)
     curr_partition_info = dist_array.partition_info
     dist_array.target_partition_info = Nullable{DistArrayPartitionInfo}()
     dist_array.partition_info = partition_info
@@ -951,7 +953,7 @@ function check_and_repartition(dist_array::DistArray,
         @assert !repartition
     end
 
-    println("repartition = ", repartition)
+#    println("repartition = ", repartition)
     local partition_func_name = ""
     if !isnull(partition_info.partition_func_name)
         partition_func_name = get(partition_info.partition_func_name)
@@ -1249,11 +1251,14 @@ end
 struct DistArrayAccessSetRecorder{N} <: AbstractArray{Int32, N}
     keys_set::Set{Int64}
     dims::NTuple{N, Int64}
+    no_writes::Bool
     DistArrayAccessSetRecorder{N}(dims::Vector{Int64}) where {N} = new(Set{Int64}(),
-                                                                       tuple(dims...))
+                                                                       tuple(dims...),
+                                                                       true)
 
-    DistArrayAccessSetRecorder{N}(dims::NTuple{N, Int64}) where {N} = new(Set{Int64}(),
-                                                                          dims)
+    DistArrayAccessSetRecorder{N}(dims::NTuple{N, Int64}, no_writes::Bool = true) where {N} = new(Set{Int64}(),
+                                                                                                  dims,
+                                                                                                  no_writes)
 end
 
 Base.IndexStyle{T<:DistArrayAccessSetRecorder}(::Type{T}) = IndexLinear()
@@ -1271,22 +1276,27 @@ end
 function Base.setindex!(access_reorder::DistArrayAccessSetRecorder,
                         v,
                         i::Int)
-    @assert false "no writes supported"
+    #println("i = ", i, " v = ", v)
+    @assert !access_reorder.no_writes "no writes supported"
 end
 
 function Base.similar{T, N}(access_recorder::DistArrayAccessSetRecorder{N},
                             ::Type{T}, dims::NTuple{N, Int64})
-    return DistArrayAccessSetRecorder{N}(dims)
+
+    return DistArrayAccessSetRecorder{N}(dims, false)
 end
 
 struct DistArrayAccessCountRecorder{N} <: AbstractArray{Int32, N}
     keys_dict::Dict{Int64, UInt64}
     dims::NTuple{N, Int64}
+    no_writes::Bool
     DistArrayAccessCountRecorder{N}(dims::Vector{Int64}) where {N} = new(Dict{Int64, UInt64}(),
-                                                                         tuple(dims...))
+                                                                         tuple(dims...),
+                                                                         true)
 
-    DistArrayAccessCountRecorder{N}(dims::NTuple{N, Int64}) where {N} = new(Dict{Int64, UInt64}(),
-                                                                            dims)
+    DistArrayAccessCountRecorder{N}(dims::NTuple{N, Int64}, no_writes::Bool = true) where {N} = new(Dict{Int64, UInt64}(),
+                                                                                                    dims,
+                                                                                                    no_writes)
 end
 
 Base.IndexStyle(::Type{DistArrayAccessCountRecorder}) = IndexLinear()
@@ -1306,15 +1316,15 @@ function Base.getindex(access_recorder::DistArrayAccessCountRecorder,
     return 0
 end
 
-function Base.setindex!(access_reorder::DistArrayAccessCountRecorder,
+function Base.setindex!(access_recorder::DistArrayAccessCountRecorder,
                         v,
                         i::Int)
-    @assert false "no writes supported"
+    @assert !access_recorder.no_writes "no writes supported"
 end
 
 function Base.similar{T, N}(access_recorder::DistArrayAccessCountRecorder{N},
                             ::Type{T}, dims::NTuple{N, Int64})
-    return DistArrayAccessCountRecorder{N}(dims)
+    return DistArrayAccessCountRecorder{N}(dims, no_writes)
 end
 
 function fill_deepcopy{T}(value::T, num_values)::Vector{T}

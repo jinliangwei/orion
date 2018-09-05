@@ -25,7 +25,7 @@ BOSEN_TEST_EXE := bin/bosen/bosen_test
 
 BOSEN_MAIN_EXE := $(patsubst src/bosen/%_main.cpp,bin/bosen/%,$(BOSEN_MAIN_CPP))
 BOSEN_MAIN_EXE += $(patsubst src/bosen/%_main.c,bin/bosen/%,$(BOSEN_MAIN_C))
-BOSEN_MAIN_EXE := $(filter-out $(BOSEN_TEST_EXE),$(BOSEN_MAIN_EXE))
+BOSEN_MAIN_EXE := $(filter-out $(BOSEN_TEST_EXE) bin/bosen/driver,$(BOSEN_MAIN_EXE))
 
 BOSEN_PROTO_SRC := $(shell find src/bosen/protobuf -type f -name "*.proto")
 BOSEN_PROTO_CPP := $(BOSEN_PROTO_SRC:.proto=.pb.cc)

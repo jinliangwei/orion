@@ -24,6 +24,7 @@ function parse_map_new_keys_function(
     end
     local num_dims
     @assert issubtype(rettype, Tuple)
+    println(rettype)
     @assert length(rettype.parameters) == 2
     key_type = fieldtype(rettype, 1)
     @assert issubtype(key_type, Tuple)

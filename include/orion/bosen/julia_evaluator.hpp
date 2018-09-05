@@ -1,10 +1,10 @@
 #pragma once
 #include <string>
-#include <julia.h>
 #include <glog/logging.h>
 #include <unordered_map>
 #include <mutex>
 #include <condition_variable>
+#include <julia.h>
 
 #include <orion/bosen/type.hpp>
 #include <orion/bosen/blob.hpp>
@@ -35,7 +35,7 @@ class JuliaEvaluator {
   static void Init(const std::string &orion_home,
                    size_t num_servers,
                    size_t num_executors);
-  static void AtExitHook() { jl_atexit_hook(0); }
+  static void AtExitHook();
   static void ExecuteTask(JuliaTask* task);
   static jl_function_t* GetOrionWorkerFunction(const char* func_name);
   static jl_function_t* GetFunction(jl_module_t* module,

@@ -1,5 +1,4 @@
 #include <orion/bosen/constants.h>
-#include <orion/bosen/task.pb.h>
 #include <orion/bosen/type.hpp>
 #include <orion/bosen/julia_module.hpp>
 #include <orion/bosen/dist_array_meta.hpp>

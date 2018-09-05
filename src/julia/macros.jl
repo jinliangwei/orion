@@ -12,7 +12,7 @@ macro accumulator(expr::Expr)
     var = assignment_get_assigned_to(expr)
     @assert isa(var, Symbol)
     accumulator_info_dict[var] = AccumulatorInfo(var,
-                                                 eval(assignment_get_assigned_from(expr)))
+                                                 deepcopy(eval(current_module(), assignment_get_assigned_from(expr))))
     ret = quote end
     push!(ret.args, esc(expr))
     var_str = string(var)

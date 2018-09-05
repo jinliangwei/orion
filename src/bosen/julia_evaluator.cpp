@@ -2,6 +2,8 @@
 #include <orion/bosen/dist_array.hpp>
 #include <orion/bosen/abstract_dist_array_partition.hpp>
 #include <orion/bosen/julia_module.hpp>
+#include <julia.h>
+
 namespace orion {
 namespace bosen {
 
@@ -36,6 +38,11 @@ JuliaEvaluator::Init(const std::string &orion_home,
   num_executors_jl = jl_box_uint64(num_executors);
   jl_call2(worker_init_func, num_servers_jl, num_executors_jl);
   JL_GC_POP();
+}
+
+void
+JuliaEvaluator::AtExitHook() {
+  jl_atexit_hook(0);
 }
 
 void
@@ -795,12 +802,13 @@ JuliaEvaluator::RunMap(
     args[3] = input_values;
     args[4] = output_value_type;
     output_tuple_jl = jl_call(mapper_func, args, 5);
+    AbortIfException();
   }
 
   jl_value_t *output_key_array_jl = jl_get_nth_field(output_tuple_jl, 0);
   *output_values_ptr = jl_get_nth_field(output_tuple_jl, 1);
-
   size_t num_output_keys = jl_array_len(output_key_array_jl);
+
   output_keys->resize(num_output_keys);
   uint8_t *output_key_array = reinterpret_cast<uint8_t*>(jl_array_data(output_key_array_jl));
   memcpy(output_keys->data(), output_key_array, num_output_keys * sizeof(int64_t));

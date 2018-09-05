@@ -125,7 +125,9 @@ DistArrayPartition<void>::CreateCacheAccessor() {
 
 void
 DistArrayPartition<void>::CreateBufferAccessor() {
-  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
+  CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer)
+            << " dist_array_id = " << dist_array_->kId
+            << " accessor type = " << static_cast<int>(storage_type_);
   jl_value_t *dist_array_jl = dist_array_->GetJuliaDistArray();
   auto *create_accessor_func = JuliaEvaluator::GetOrionWorkerFunction(
       "create_dist_array_buffer_accessor");

@@ -339,7 +339,6 @@ Driver::EvalExprOnAll(
   task::EvalExpr eval_expr_task;
   eval_expr_task.set_serialized_expr(
       std::string(reinterpret_cast<const char*>(expr), expr_size));
-  LOG(INFO) << __func__ << " module = " << static_cast<int32_t>(module);
   eval_expr_task.set_module(static_cast<int32_t>(module));
   eval_expr_task.SerializeToString(&msg_buff_);
   message::DriverMsgHelper::CreateMsg<message::DriverMsgEvalExpr>(
@@ -764,7 +763,6 @@ Driver::ExecForLoop(
         written_dist_array_ids[i]);
   }
 
-  LOG(INFO) << "num_accessed_dist_arrays = " << num_accessed_dist_arrays;
   for (size_t i = 0; i < num_accessed_dist_arrays; i++) {
     exec_for_loop_task.add_accessed_dist_array_ids(accessed_dist_array_ids[i]);
   }
@@ -777,10 +775,8 @@ Driver::ExecForLoop(
     exec_for_loop_task.add_global_read_only_var_vals(val_bytes, num_bytes);
   }
 
-  LOG(INFO) << "num_accumulator_var_syms = " << num_accumulator_var_syms;
   for (size_t i = 0; i < num_accumulator_var_syms; i++) {
     exec_for_loop_task.add_accumulator_var_syms(accumulator_var_syms[i]);
-    LOG(INFO) << "accumulator_sym = " << accumulator_var_syms[i];
   }
 
   exec_for_loop_task.set_loop_batch_func_name(loop_batch_func_name);
