@@ -9,14 +9,14 @@ const master_ip = "10.117.1.1"
 #const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 1
-const num_servers = 1
+const num_executors = 384
+const num_servers = 12
 
 Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity, num_executors, num_servers)
 
 #const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm.100"
-const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm"
+const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/nytimes.dat.perm.4"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/pubmed.dat"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/clueweb.libsvm.25M"
@@ -268,10 +268,12 @@ Orion.@accumulator num_reuses = 0
 
 @time for iteration = 1:num_iterations
     println("iteration = ", iteration)
-    Orion.@parallel_for histogram_partitioned repeated reassign_iteration_var_val for (topic_assignment_key, topic_assignment_topic) in topic_assignments
+    Orion.@parallel_for histogram_partitioned repeated reassign_iteration_var_val ordered for (topic_assignment_key, topic_assignment_topic) in topic_assignments
         doc_id = topic_assignment_key[3]
         word_id = topic_assignment_key[2]
+        topic_idx = topic_assignment_key[1]
         old_topic = topic_assignment_topic
+        #println(doc_id, " ", word_id, " ", topic_idx)
 
         doc_topic_dict = doc_topic_table[doc_id]
         word_topic_vec_pair = word_topic_vec_table[word_id]
@@ -392,8 +394,6 @@ Orion.@accumulator num_reuses = 0
             new_topic_index = length(word_topic_vec)
             num_nonzero_q_terms += 1
         end
-        #println("doc_id = ", doc_id, " word_id = ", word_id, " old_topic = ", old_topic,
-        #        " new_topic = ", new_topic)
         q_term_val[new_topic_index] = new_topic_count * doc_q_coeff[new_topic]
         q_term_topic[new_topic_index] = new_topic
         q_sum += q_term_val[new_topic_index]
