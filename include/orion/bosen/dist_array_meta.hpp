@@ -31,7 +31,8 @@ enum class DistArrayPartitionScheme {
     kRange = 5,
     kPartialModuloExecutor = 6,
     kPartialRandomExecutor = 7,
-    kHashExecutor = 8
+    kHashExecutor = 8,
+    k1DOrdered = 9
 };
 
 enum class DistArrayIndexType {

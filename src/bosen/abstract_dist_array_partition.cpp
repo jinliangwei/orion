@@ -970,7 +970,7 @@ AbstractDistArrayPartition::Execute(
     const std::vector<std::string> &accumulator_var_syms,
     size_t offset,
     size_t num_elements) {
-  LOG(INFO) << __func__ << "Start " << num_elements;
+  //LOG(INFO) << __func__ << "Start " << num_elements;
   CHECK(storage_type_ == DistArrayPartitionStorageType::kKeyValueBuffer);
   size_t num_args = accessed_dist_arrays.size() + accessed_dist_array_buffers.size()
                     + global_read_only_var_vals.size()
@@ -1027,11 +1027,11 @@ AbstractDistArrayPartition::Execute(
   jl_function_t *exec_loop_func
       = JuliaEvaluator::GetFunction(jl_main_module,
                                     loop_batch_func_name.c_str());
-  LOG(INFO) << __func__ << "JLCallStart";
+  //LOG(INFO) << __func__ << "JLCallStart";
   jl_call(exec_loop_func, jl_values, num_args);
   JuliaEvaluator::AbortIfException();
   JL_GC_POP();
-  LOG(INFO) << __func__ << "End";
+  //LOG(INFO) << __func__ << "End";
 }
 
 void

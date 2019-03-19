@@ -275,7 +275,9 @@ AbstractExecForLoop::InitExecInterval() {
 AbstractExecForLoop::RunnableStatus
 AbstractExecForLoop::GetRunnableStatus() {
   if (skipped_ ||
-      (curr_partition_num_elements_executed_ >= curr_partition_length_)) {
+      ((curr_partition_ != nullptr) &&
+       (curr_partition_->GetLength() > 0) &&
+       (curr_partition_num_elements_executed_ >= curr_partition_length_))) {
     AdvanceClock();
     ComputePartitionIdsAndFindPartitionToExecute();
   }
@@ -283,8 +285,9 @@ AbstractExecForLoop::GetRunnableStatus() {
   if (IsCompleted())
     return AbstractExecForLoop::RunnableStatus::kCompleted;
 
-  if (SkipTimePartition())
+  if (SkipTimePartition()) {
     return AbstractExecForLoop::RunnableStatus::kSkip;
+  }
 
   int32_t time_partition_id = GetCurrTimePartitionId();
   if (curr_partition_ == nullptr ||
@@ -445,6 +448,7 @@ AbstractExecForLoop::ComputePrefetchIndices() {
 
 void
 AbstractExecForLoop::ExecuteForLoopPartition() {
+  //LOG(INFO) << __func__;
   if (curr_partition_num_elements_executed_ == 0) {
     PrepareSpaceDistArrayPartitions();
     PrepareTimeDistArrayPartitions();
@@ -673,11 +677,12 @@ AbstractExecForLoop::GetAndClearDistArrayCacheSendMap(
 
 void
 AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
-  LOG(INFO) << __func__ << "Start";
+  //LOG(INFO) << __func__ << "Start";
   CHECK(time_partitions_cleared_);
   time_partitions_serialized_bytes_ = nullptr;
   time_partitions_serialized_size_ = 0;
   int32_t time_partition_id_to_send = GetTimePartitionIdToSend();
+  //LOG(INFO) << __func__ << " time_partition_id = " << time_partition_id_to_send;
   if (time_partition_id_to_send < 0) return;
   std::unordered_map<int32_t, SendDataBuffer> data_buffers;
   std::vector<int32_t> skipped_dist_array_id_vec;
@@ -729,12 +734,12 @@ AbstractExecForLoop::SerializeAndClearPipelinedTimePartitions() {
   cursor += sizeof(int32_t) * skipped_dist_array_id_vec.size();
   time_partitions_serialized_bytes_ = buffer_bytes;
   time_partitions_serialized_size_ = total_size;
- LOG(INFO) << __func__ << "End";
+  //LOG(INFO) << __func__ << "End";
 }
 
 void
 AbstractExecForLoop::DeserializePipelinedTimePartitions(uint8_t* bytes) {
-  LOG(INFO) << __func__ << "Start";
+  //LOG(INFO) << __func__ << "Start";
   uint8_t *cursor = bytes;
   size_t num_data_buffers = *reinterpret_cast<const size_t*>(cursor);
   cursor += sizeof(size_t);
@@ -768,7 +773,7 @@ AbstractExecForLoop::DeserializePipelinedTimePartitions(uint8_t* bytes) {
       skipped_set.insert(dist_array_id);
     }
   }
-  LOG(INFO) << __func__ << "End";
+  //LOG(INFO) << __func__ << "End";
 }
 
 void
@@ -830,6 +835,7 @@ AbstractExecForLoop::InitPartitionToExec() {
   curr_partition_num_elements_executed_ = 0;
   if (curr_partition_ != nullptr) {
     curr_partition_length_ = curr_partition_->GetLength();
+    SortPartitionIfOrdered();
   } else {
     curr_partition_length_ = 0;
   }

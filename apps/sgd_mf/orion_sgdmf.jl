@@ -7,11 +7,11 @@ Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 # test library path
 Orion.helloworld()
 
-const master_ip = "10.117.1.14"
+const master_ip = "10.117.1.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 382
-const num_servers = 12
+const num_executors = 1
+const num_servers = 1
 
 # initialize logging of the runtime library
 Orion.glog_init()
@@ -19,12 +19,12 @@ Orion.init(master_ip, master_port, comm_buff_capacity,
            num_executors, num_servers)
 #const data_path = "file:///home/ubuntu/data/ml-1m/ratings.csv"
 #const data_path = "file:///home/ubuntu/data/ml-10M100K/ratings.csv"
-#const data_path = "file:///users/jinlianw/ratings.csv"
-const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
+const data_path = "file:///users/jinlianw/ratings.csv"
+#const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/ml-20m/ratings_p.csv"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/ml-latest/ratings_p.csv"
-const K = 1000
-const num_iterations = 2
+const K = 10
+const num_iterations = 4
 const step_size = Float32(0.01)
 
 Orion.@accumulator err = Float32(0.0)
@@ -125,11 +125,12 @@ H_grad = zeros(Float32, K)
 end
 println(error_vec)
 println(time_vec)
-loss_fobj = open("results/" * split(PROGRAM_FILE, "/")[end] * "-" *
+loss_fobj = open("results.order/" * split(PROGRAM_FILE, "/")[end] * "-" *
                  split(data_path, "/")[end] * "-" * string(num_executors) * "-" *
                  string(K) * "-" * string(num_iterations) * "-" * string(step_size) * "-" * string(now()) * ".loss", "w")
 for idx in eachindex(time_vec)
     write(loss_fobj, string(idx) * "\t" * string(time_vec[idx]) * "\t" * string(error_vec[idx]) * "\n")
 end
 Orion.stop()
+close(loss_fobj)
 exit()

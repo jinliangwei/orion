@@ -70,6 +70,8 @@ extern "C" {
   = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kPartialRandomExecutor);
   const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_HASH_EXECUTOR
   = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::kHashExecutor);
+  const int32_t ORION_DIST_ARRAY_PARTITION_SCHEME_1D_ORDERED
+  = static_cast<int32_t>(orion::bosen::DistArrayPartitionScheme::k1DOrdered);
 
   const int32_t ORION_DIST_ARRAY_INDEX_TYPE_NONE
   = static_cast<int32_t>(orion::bosen::DistArrayIndexType::kNone);

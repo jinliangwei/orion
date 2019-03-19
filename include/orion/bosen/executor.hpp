@@ -935,7 +935,7 @@ Executor::HandlePeerRecvThrExecuteMsg() {
       break;
     case message::ExecuteMsgType::kReplyExecForLoopPredecessorCompletion:
       {
-        LOG(INFO) <<"Got ReplyExecForLoopPredcessorCompletion";
+        //LOG(INFO) <<"Got ReplyExecForLoopPredcessorCompletion";
         CHECK(exec_for_loop_);
         auto *msg = message::ExecuteMsgHelper::get_msg<
           message::ExecuteMsgReplyExecForLoopPredecessorCompletion>(recv_buff);
@@ -1168,6 +1168,7 @@ Executor::HandlePipeMsg(PollConn* poll_conn_ptr) {
             case TaskLabel::kExecForLoopPartition:
             case TaskLabel::kSkipPartition:
               {
+                //LOG(INFO) << __func__ << " TaskLabel::kSkipPartition";
                 action_ = Action::kNone;
                 bool serialize_dist_array_time_partitions = false;
                 bool serialize_global_indexed_dist_arrays
@@ -2101,7 +2102,6 @@ Executor::RepartitionDistArray() {
   bool from_server = orig_partition_scheme == DistArrayPartitionScheme::kModuloServer;
   bool to_server = partition_scheme == DistArrayPartitionScheme::kModuloServer;
 
-  LOG(INFO) << __func__ << " dist_array_id = " << id;
   repartition_recv_ = true;
   if ((to_server && (!kIsServer || (from_server && kConfig.kNumServers == 1))) ||
       (!to_server && (kIsServer || (!from_server && kConfig.kNumExecutors == 1)))
@@ -2116,6 +2116,7 @@ Executor::RepartitionDistArray() {
   switch(partition_scheme) {
     case DistArrayPartitionScheme::kSpaceTime:
     case DistArrayPartitionScheme::k1D:
+    case DistArrayPartitionScheme::k1DOrdered:
       {
         std::string partition_func_name
             = repartition_dist_array_task.partition_func_name();
@@ -2200,6 +2201,7 @@ Executor::RepartitionDistArraySerialize(int32_t dist_array_id,
   auto partition_scheme = meta.GetPartitionScheme();
   if ((partition_scheme == DistArrayPartitionScheme::kSpaceTime ||
        partition_scheme == DistArrayPartitionScheme::k1D ||
+       partition_scheme == DistArrayPartitionScheme::k1DOrdered ||
        partition_scheme == DistArrayPartitionScheme::kRange ||
        partition_scheme == DistArrayPartitionScheme::kModuloExecutor ||
        partition_scheme == DistArrayPartitionScheme::kPartialModuloExecutor ||

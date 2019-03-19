@@ -67,10 +67,10 @@ ExecForLoopSpaceTimeUnordered::ExecForLoopSpaceTimeUnordered(
   kNumSpaceSubClocks = (kMaxSpacePartitionId + kNumExecutors) / kNumExecutors;
   kNumTimeSubClocks = (kMaxTimePartitionId + kNumExecutors) / kNumExecutors;
 
-  LOG(INFO) << "max_space_partition_id = " << kMaxSpacePartitionId
-            << " max_time_partition_id = " << kMaxTimePartitionId
-            << " num_space_sub_clocks = " << kNumSpaceSubClocks
-            << " num_time_sub_clocks = " << kNumTimeSubClocks;
+  //LOG(INFO) << __func__ << "num_clocks = " << kNumClocks << " max_space_partition_id = " << kMaxSpacePartitionId
+  //          << " max_time_partition_id = " << kMaxTimePartitionId
+  //          << " num_space_sub_clocks = " << kNumSpaceSubClocks
+  //          << " num_time_sub_clocks = " << kNumTimeSubClocks;
 }
 
 ExecForLoopSpaceTimeUnordered::~ExecForLoopSpaceTimeUnordered() { }
@@ -128,6 +128,8 @@ ExecForLoopSpaceTimeUnordered::ComputePartitionIdsAndFindPartitionToExecute() {
   curr_partition_ = iteration_space_->GetLocalPartition(curr_space_partition_id_,
                                                         curr_time_partition_id_);
   InitPartitionToExec();
+  LOG(INFO) << __func__ << " curr_space_partition_id = " << curr_space_partition_id_
+            << " curr_time_partition_id = " << curr_time_partition_id_;
 }
 
 }

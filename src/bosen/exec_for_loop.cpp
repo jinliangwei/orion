@@ -236,7 +236,7 @@ Executor::CreateOrReuseServerExecForLoop() {
 void
 Executor::CheckAndExecuteForLoop() {
   auto runnable_status = exec_for_loop_->GetRunnableStatus();
-  LOG(INFO) << __func__ << " " << static_cast<int>(runnable_status);
+  //LOG(INFO) << __func__ << " " << static_cast<int>(runnable_status);
   switch (runnable_status) {
     case AbstractExecForLoop::RunnableStatus::kRunnable:
       {
@@ -299,6 +299,7 @@ Executor::CheckAndExecuteForLoop() {
 
 bool
 Executor::CheckAndSerializeGlobalIndexedDistArrays() {
+  //LOG(INFO) << __func__;
   bool send_global_indexed_dist_arrays
       = exec_for_loop_->SendGlobalIndexedDistArrays();
   if (!send_global_indexed_dist_arrays) return false;
@@ -314,6 +315,7 @@ Executor::CheckAndSerializeGlobalIndexedDistArrays() {
 
 bool
 Executor::CheckAndSerializeDistArrayTimePartitions() {
+  //LOG(INFO) << __func__;
   int32_t successor_to_send
       = exec_for_loop_->GetSuccessorToNotify();
   int32_t time_partition_id_to_send
@@ -374,6 +376,7 @@ Executor::SendPipelinedTimePartitions() {
   auto send_data_buff
       = exec_for_loop_->GetAndResetSerializedTimePartitions();
   if (send_data_buff.second == 0) return;
+
   uint64_t notice = exec_for_loop_->GetNoticeToSuccessor();
   message::ExecuteMsgHelper::CreateMsg<message::ExecuteMsgPipelinedTimePartitions>(
       &send_buff_, send_data_buff.second, notice);

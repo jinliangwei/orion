@@ -63,10 +63,14 @@ ExecForLoopSpaceTimeOrdered::ExecForLoopSpaceTimeOrdered(
   CHECK(max_ids.size() == 2) << "max_ids.size() = " << max_ids.size();
   kMaxSpacePartitionId = max_ids[0];
   kMaxTimePartitionId = max_ids[1];
-  kNumClocks = kMaxSpacePartitionId + kMaxTimePartitionId + 2;
-  kNumSpaceSubClocks = (clock_ >= kExecutorId) ?
-                       (clock_ - kExecutorId + kNumExecutors) / kNumExecutors :
-                       0;
+  kMaxSpaceTimePartitionId = std::max(kMaxSpacePartitionId, kMaxTimePartitionId);
+  kNumClocks = 2 * (kMaxSpaceTimePartitionId + 1);
+  kNumSpaceSubClocks = (kMaxSpaceTimePartitionId + kNumExecutors) / kNumExecutors;
+
+  LOG(INFO) << __func__ << " kMaxSpacePartitionId = " << kMaxSpacePartitionId
+            << " kMaxTimePartitionId = " << kMaxTimePartitionId
+            << " kNumClocks = " << kNumClocks
+            << " kNumSpaceSubClocks = " << kNumSpaceSubClocks;
 }
 
 ExecForLoopSpaceTimeOrdered::~ExecForLoopSpaceTimeOrdered() { }
@@ -79,8 +83,8 @@ ExecForLoopSpaceTimeOrdered::InitClocks() {
 
 int32_t
 ExecForLoopSpaceTimeOrdered::GetTimePartitionIdToSend() {
-  if ((curr_partition_num_elements_executed_ == curr_partition_length_) &&
-      (space_sub_clock_ == kNumSpaceSubClocks - 1)) {
+  if ((curr_time_partition_id_ <= kMaxTimePartitionId) &&
+      (curr_time_partition_id_ >= 0)) {
     return curr_time_partition_id_;
   }
   return -1;
@@ -93,10 +97,9 @@ ExecForLoopSpaceTimeOrdered::AdvanceClock() {
   if (space_sub_clock_ == kNumSpaceSubClocks) {
     space_sub_clock_ = 0;
     clock_++;
-    kNumSpaceSubClocks = (clock_ >= kExecutorId) ?
-                         (clock_ - kExecutorId + kNumExecutors) / kNumExecutors :
-                         0;
   }
+  //LOG(INFO) << __func__ << " executor_id = " << kExecutorId << " clock = " << clock_
+  //          << " space_sub_clock = " << space_sub_clock_;
 }
 
 bool
@@ -109,11 +112,17 @@ void
 ExecForLoopSpaceTimeOrdered::ComputePartitionIdsAndFindPartitionToExecute() {
   if (clock_ == kNumClocks) return;
   curr_space_partition_id_ = space_sub_clock_ * kNumExecutors + kExecutorId;
-  curr_time_partition_id_ = clock_ >= kExecutorId ?
-                            clock_ - kExecutorId - space_sub_clock_ * kNumExecutors :
-                            -1;
-  curr_partition_ = iteration_space_->GetLocalPartition(curr_space_partition_id_,
-                                                        curr_time_partition_id_);
+  curr_time_partition_id_ = ((kMaxSpaceTimePartitionId + 1) - curr_space_partition_id_
+                             + clock_) % (kMaxSpaceTimePartitionId + 1);
+  if (clock_ < curr_space_partition_id_ || clock_ > curr_space_partition_id_ + kMaxTimePartitionId) {
+    curr_partition_ = nullptr;
+  } else {
+    curr_partition_ = iteration_space_->GetLocalPartition(curr_space_partition_id_,
+                                                          curr_time_partition_id_);
+  }
+  InitPartitionToExec();
+  //LOG(INFO) << __func__ << " executor_id = " << kExecutorId << " curr_space_partition_id = " << curr_space_partition_id_
+  //          << " curr_time_partition_id = " << curr_time_partition_id_;
 }
 
 void

@@ -31,7 +31,8 @@ import Base: size, getindex, setindex!
     7 DistArrayPartitionType_partial_modulo_executor =
     8 DistArrayPartitionType_partial_random_executor =
     9 DistArrayPartitionType_hash_executor =
-    10
+    10 DistArrayPartitionType_1d_ordered = # a special partition type used for time-dimension DistArrays accessed by an ordered loop
+    11
 
 @enum DistArrayIndexType DistArrayIndexType_none =
     1 DistArrayIndexType_range =
@@ -101,6 +102,7 @@ function is_partition_equal(partition_a::DistArrayPartitionInfo,
     end
 
     if partition_a.partition_type == DistArrayPartitionType_1d ||
+        partition_a.partition_type == DistArrayPartitionType_1d_ordered ||
         partition_a.partition_type == DistArrayPartitionType_2d
         if get(partition_a.partition_func_name) == get(partition_b.partition_func_name)
             return true
@@ -960,7 +962,8 @@ function check_and_repartition(dist_array::DistArray,
     end
     if repartition
         contiguous_partitions = isa(dist_array, DenseDistArray) &&
-            ((partition_info.partition_type == DistArrayPartitionType_1d &&
+            (((partition_info.partition_type == DistArrayPartitionType_1d ||
+               partition_info.partition_type == DistArrayPartitionType_1d_ordered) &&
              get(partition_info.partition_dims)[1] == length(dist_array.dims)) ||
              (partition_info.partition_type == DistArrayPartitionType_range))
 

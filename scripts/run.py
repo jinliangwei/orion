@@ -81,6 +81,11 @@ def get_default_config():
         'master_output_dir' : '/tmp/master.prof',
         'worker_output_dir' : '/tmp/worker.prof'
     }
+    config['tee'] = {
+        'output_prefix' : "",
+        'stdout' : "true",
+        'alsostderr' : "true",
+    }
     return config
 
 def get_env_str(pargs):
@@ -162,6 +167,17 @@ def get_valgrind_arg_str(valgrind_config):
                        if not k == "callgrind"])
     return arg_str
 
+def stdout_to_tee(pargs, worker_cmd, worker_id):
+    if pargs['tee']['output_prefix'] == '':
+        return worker_cmd
+    else:
+        if pargs['tee']['stdout'] == "true" and \
+           pargs['tee']['alsostderr'] == "true":
+            worker_cmd += ' 2>&1 | tee ' + pargs['tee']['output_prefix'] + '.' + str(worker_id)
+        elif pargs['tee']['stdout'] == "true":
+            worker_cmd += ' | tee ' + pargs['tee']['output_prefix'] + '.' + str(worker_id)
+        return worker_cmd
+
 if __name__ == "__main__":
     args = parse_command_line()
     pargs = get_default_config()
@@ -227,6 +243,8 @@ if __name__ == "__main__":
                 is_server = "true"
             curr_cmd_worker = cmd_worker + " --local_executor_index=" + str(i) \
                                + " --is_server=" + is_server
+            curr_cmd_worker = stdout_to_tee(pargs, curr_cmd_worker, i)
+            print(curr_cmd_worker)
             subprocess.Popen(curr_cmd_worker, shell=True)
     else:
         worker_id = 0
@@ -241,6 +259,7 @@ if __name__ == "__main__":
                                 + " --worker_id=" + str(worker_id) \
                                 + " --local_executor_index=" + str(i) \
                                 + " --is_server=" + is_server
+                ssh_cmd_worker = stdout_to_tee(pargs, ssh_cmd_worker, i)
                 print(ssh_cmd_worker)
                 worker_proc = subprocess.Popen(["ssh", "-oStrictHostKeyChecking=no",
                                                 "-oUserKnownHostsFile=/dev/null",

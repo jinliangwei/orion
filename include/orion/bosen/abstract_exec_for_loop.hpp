@@ -169,6 +169,7 @@ class AbstractExecForLoop {
 
  protected:
   void InitPartitionToExec();
+  virtual void SortPartitionIfOrdered() { }
  private:
   void UpdateDistArrayBufferDelayInfo(size_t num_elements_executed,
                                       bool end_of_partition,

@@ -528,6 +528,7 @@ Driver::RepartitionDistArray(
   auto my_partition_scheme = static_cast<DistArrayPartitionScheme>(partition_scheme);
   if (my_partition_scheme == DistArrayPartitionScheme::kSpaceTime ||
       my_partition_scheme == DistArrayPartitionScheme::k1D ||
+      my_partition_scheme == DistArrayPartitionScheme::k1DOrdered ||
       my_partition_scheme == DistArrayPartitionScheme::kHashExecutor) {
     repartition_dist_array_task.set_partition_func_name(partition_func_name);
   }

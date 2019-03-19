@@ -399,7 +399,7 @@ DistArray::ComputePartialModuloRepartitionIdsAndRepartition(size_t num_partition
 
 void
 DistArray::ComputePartialRandomRepartitionIdsAndRepartition(size_t num_partitions,
-                                                         const std::vector<size_t> &dim_indices) {
+                                                            const std::vector<size_t> &dim_indices) {
 
   std::vector<AbstractDistArrayPartition*> partition_buff;
   GetAndClearLocalPartitions(&partition_buff);
@@ -745,13 +745,18 @@ DistArray::RepartitionSerializeAndClear1D(
     > send_partition_buffs;
   std::unordered_map<int32_t, size_t> send_buff_sizes;
   bool send_to_server = meta_.GetPartitionScheme() == DistArrayPartitionScheme::kModuloServer;
+  bool modulo_recv_id = meta_.GetPartitionScheme() != DistArrayPartitionScheme::k1DOrdered;
+  size_t num_receivers = send_to_server ? kConfig.kNumServers
+                         : kConfig.kNumExecutors;
   auto iter = partitions_.begin();
   while (iter != partitions_.end()) {
     auto &partition_pair = *iter;
     int32_t partition_id = partition_pair.first;
     auto *partition = partition_pair.second;
-    int32_t recv_id = send_to_server ? partition_id % kConfig.kNumServers
-                      : partition_id % kConfig.kNumExecutors;
+    int32_t recv_id = modulo_recv_id ? partition_id % num_receivers
+                      : (num_receivers - partition_id % num_receivers) % num_receivers;
+    LOG(INFO) << __func__ << " partition_id = " << partition_id
+              << " recv_id = " << recv_id;
     if ((send_to_server && kIsServer && recv_id == kServerId)
         || (!send_to_server && !kIsServer && recv_id == kExecutorId)) {
       iter++;
@@ -765,8 +770,6 @@ DistArray::RepartitionSerializeAndClear1D(
   }
 
   auto &send_buff = *send_buff_ptr;
-  size_t num_receivers = send_to_server ? kConfig.kNumServers
-                         : kConfig.kNumExecutors;
   for (int32_t recv_id = 0; recv_id < num_receivers; recv_id++) {
     if ((send_to_server && kIsServer && recv_id == kServerId)
         || (!send_to_server && !kIsServer && recv_id == kExecutorId)) continue;
@@ -783,7 +786,8 @@ DistArray::RepartitionSerializeAndClear1D(
 
   for (const auto &partition_buff_pair : send_partition_buffs) {
     int32_t partition_id = partition_buff_pair.first;
-    int32_t recv_id = partition_id % num_receivers;
+    int32_t recv_id = modulo_recv_id ? partition_id % num_receivers
+                      : (num_receivers - partition_id % num_receivers) % num_receivers;
     if ((send_to_server && kIsServer && recv_id == kServerId)
         || (!send_to_server && !kIsServer && recv_id == kExecutorId)) continue;
 

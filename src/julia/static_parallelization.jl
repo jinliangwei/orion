@@ -916,6 +916,7 @@ function parallelize_2d(iteration_space::Symbol,
             (space_partition_dim in keys(partition_dims) ||
              time_partition_dim in keys(partition_dims))
             if space_partition_dim in keys(partition_dims)
+                space_partitioned = true
                 partition_dim = partition_dims[space_partition_dim]
                 push!(space_partitioned_dist_array_id_vec, eval(current_module(), da_sym).id)
                 if !is_histogram_partitioned
@@ -923,6 +924,7 @@ function parallelize_2d(iteration_space::Symbol,
                 end
             else
                 @assert time_partition_dim in keys(partition_dims)
+                space_partitioned = false
                 partition_dim = partition_dims[time_partition_dim]
                 push!(time_partitioned_dist_array_id_vec, eval(current_module(), da_sym).id)
                 if !is_histogram_partitioned
@@ -936,15 +938,24 @@ function parallelize_2d(iteration_space::Symbol,
 
         if partition_dim > 0
             partition_func_name = gen_unique_symbol()
+
             if !is_histogram_partitioned
                 partition_func = gen_1d_partition_function(partition_func_name,
                                                            partition_dim,
                                                            tile_size)
-                dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
-                                                                   string(partition_func_name),
-                                                                   (partition_dim,),
-                                                                   (tile_size,),
-                                                                   DistArrayIndexType_none)
+                if is_ordered && !space_partitioned
+                    dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d_ordered,
+                                                                       string(partition_func_name),
+                                                                       (partition_dim,),
+                                                                       (tile_size,),
+                                                                       DistArrayIndexType_none)
+                else
+                    dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                                       string(partition_func_name),
+                                                                       (partition_dim,),
+                                                                       (tile_size,),
+                                                                       DistArrayIndexType_none)
+                end
             else
                 if space_partition_dim in keys(partition_dims)
                     partition_bounds = space_partition_bounds
@@ -955,12 +966,19 @@ function parallelize_2d(iteration_space::Symbol,
                 partition_func = gen_1d_histogram_partition_function(partition_func_name,
                                                                      partition_dim,
                                                                      partition_bounds)
-
-                dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
-                                                                   string(partition_func_name),
-                                                                   (partition_dim + iteration_space_dims_diff,),
-                                                                   (tuple(partition_bounds...),),
-                                                                   DistArrayIndexType_none)
+                if is_ordered && !space_partitioned
+                    dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d_ordered,
+                                                                       string(partition_func_name),
+                                                                       (partition_dim + iteration_space_dims_diff,),
+                                                                       (tuple(partition_bounds...),),
+                                                                       DistArrayIndexType_none)
+                else
+                    dist_array_partition_info = DistArrayPartitionInfo(DistArrayPartitionType_1d,
+                                                                       string(partition_func_name),
+                                                                       (partition_dim + iteration_space_dims_diff,),
+                                                                       (tuple(partition_bounds...),),
+                                                                       DistArrayIndexType_none)
+                end
             end
             eval(current_module(), da_sym).target_partition_info = Nullable{DistArrayPartitionInfo}(dist_array_partition_info)
             push!(partition_func_set, partition_func)

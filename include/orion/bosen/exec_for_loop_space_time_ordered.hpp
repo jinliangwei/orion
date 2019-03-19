@@ -13,6 +13,7 @@ class ExecForLoopSpaceTimeOrdered : public AbstractExecForLoop {
   int32_t kMaxTimePartitionId {0};
   int32_t kNumClocks {0};
   int32_t kNumSpaceSubClocks {0};
+  int32_t kMaxSpaceTimePartitionId {0};
   int32_t clock_ {0};
   int32_t space_sub_clock_ {0};
   int32_t curr_space_partition_id_ {0};
@@ -59,6 +60,8 @@ class ExecForLoopSpaceTimeOrdered : public AbstractExecForLoop {
   }
 
   int32_t GetTimePartitionIdToSend();
+ protected:
+  void SortPartitionIfOrdered() { curr_partition_->Sort(); }
 
  private:
   void InitClocks();
@@ -71,14 +74,15 @@ class ExecForLoopSpaceTimeOrdered : public AbstractExecForLoop {
   int32_t GetCurrSpacePartitionId() { return curr_space_partition_id_; }
   int32_t GetCurrTimePartitionId() { return curr_time_partition_id_; }
   bool SkipTimePartition() {
-    return curr_time_partition_id_ < 0;
+    return curr_time_partition_id_ < 0 || curr_time_partition_id_ > kMaxTimePartitionId;
   }
   bool AwaitPredecessorForGlobalIndexedDistArrays() {
+    if (kNumExecutors == 1) return false;
     return !(
         (clock_ <= pred_clock_) ||
         (
             (clock_ == pred_clock_ + 1) &&
-            (space_sub_clock_ <= pred_space_sub_clock_)
+            (space_sub_clock_ < pred_space_sub_clock_)
          )
              );
   }

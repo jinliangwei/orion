@@ -84,6 +84,8 @@ class ExecForLoopSpaceTimeUnordered : public AbstractExecForLoop {
     return curr_time_partition_id_ > kMaxTimePartitionId;
   }
   bool AwaitPredecessorForGlobalIndexedDistArrays() {
+    if (kNumExecutors == 1) return false;
+
     return !((clock_ <= pred_clock_) ||
              ((clock_ == pred_clock_ + 1)
               && (time_sub_clock_ <= pred_time_sub_clock_))

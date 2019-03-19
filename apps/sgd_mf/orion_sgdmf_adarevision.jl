@@ -7,11 +7,11 @@ Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 # test library path
 Orion.helloworld()
 
-const master_ip = "10.117.1.14"
+const master_ip = "10.117.1.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 384
-const num_servers = 12
+const num_executors = 192
+const num_servers = 6
 
 # initialize logging of the runtime library
 Orion.glog_init()
@@ -25,7 +25,7 @@ const data_path = "file:///proj/BigLearning/jinlianw/data/netflix.csv"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/ml-20m/ratings_p.csv"
 #const data_path = "file:///proj/BigLearning/jinlianw/data/ml-latest/ratings_p.csv"
 const K = 1000
-const num_iterations = 100
+const num_iterations = 64
 const alpha = Float32(0.08)
 
 Orion.@accumulator err = 0
@@ -57,6 +57,8 @@ end
 
 Orion.@dist_array ratings = Orion.text_file(data_path, parse_line)
 Orion.materialize(ratings)
+#Orion.random_remap_keys!(ratings, (1,))
+#Orion.random_remap_keys!(ratings, (2,))
 dim_x, dim_y = size(ratings)
 
 println((dim_x, dim_y))
@@ -88,14 +90,12 @@ W_grad = zeros(K)
 H_grad = zeros(K)
 W_lr = zeros(K)
 H_lr = zeros(K)
-W_lr_old = zeros(K)
-H_lr_old = zeros(K)
 
 @time for iteration = 1:num_iterations
-    @time Orion.@parallel_for histogram_partitioned for (rating_key, rv) in ratings
+    @time Orion.@parallel_for for (rating_key, rv) in ratings
         x_idx = rating_key[1]
         y_idx = rating_key[2]
-
+        println(y_idx, ",", x_idx, ",", rv)
         W_row = @view W[:, x_idx]
         H_row = @view H[:, y_idx]
         pred = dot(W_row, H_row)
@@ -143,7 +143,7 @@ println(error_vec)
 println(time_vec)
 Orion.stop()
 
-loss_fobj = open("results/" * split(PROGRAM_FILE, "/")[end] * "-" *
+loss_fobj = open("results.order/" * split(PROGRAM_FILE, "/")[end] * "-" *
                  split(data_path, "/")[end] * "-" * string(num_executors) * "-" *
                  string(K) * "-" * string(num_iterations) * "-" * string(alpha) * "-" * string(now()) * ".loss", "w")
 for idx in eachindex(time_vec)
