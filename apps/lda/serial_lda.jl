@@ -1,9 +1,9 @@
-const data_path = "/proj/BigLearning/jinlianw/data/nytimes.dat.perm.1"
-const num_topics = 10
+const data_path = "/proj/BigLearning/jinlianw/data/nytimes.dat.perm"
+const num_topics = 1000
 const alpha = Float32(0.1)
 const beta = Float32(0.1)
 const alpha_beta = alpha * beta
-const num_iterations = 4
+const num_iterations = 100
 
 num_tokens = 0
 num_dist_tokens = 0
