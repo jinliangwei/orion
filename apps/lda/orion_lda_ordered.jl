@@ -5,12 +5,12 @@ Orion.set_lib_path("/users/jinlianw/orion.git/lib/liborion_driver.so")
 # test library path
 Orion.helloworld()
 
-const master_ip = "10.117.1.1"
-#const master_ip = "127.0.0.1"
+#const master_ip = "10.117.1.1"
+const master_ip = "127.0.0.1"
 const master_port = 10000
 const comm_buff_capacity = 1024
-const num_executors = 384
-const num_servers = 12
+const num_executors = 1
+const num_servers = 1
 
 Orion.glog_init()
 Orion.init(master_ip, master_port, comm_buff_capacity, num_executors, num_servers)
@@ -71,28 +71,28 @@ println("num_dist_tokens = ", num_dist_tokens)
 println("vocab_size = ", vocab_size)
 println("num_docs is ", num_docs)
 
-docs_histogram = Orion.compute_histogram(topic_assignments, 2, 64)
-println("before shuffle")
-println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
-        )
+#docs_histogram = Orion.compute_histogram(topic_assignments, 2, 64)
+#println("before shuffle")
+#println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
+#        )
 
-docs_histogram = Orion.compute_histogram(topic_assignments, 3, 64)
-println("before shuffle")
-println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
-        )
+#docs_histogram = Orion.compute_histogram(topic_assignments, 3, 64)
+#println("before shuffle")
+#println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
+#        )
 
-@time Orion.random_remap_keys!(topic_assignments, (2,))
-@time Orion.random_remap_keys!(topic_assignments, (3,))
+#@time Orion.random_remap_keys!(topic_assignments, (2,))
+#@time Orion.random_remap_keys!(topic_assignments, (3,))
 
-docs_histogram = Orion.compute_histogram(topic_assignments, 2, 64)
-println("after shuffle")
-println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
-        )
+#docs_histogram = Orion.compute_histogram(topic_assignments, 2, 64)
+#println("after shuffle")
+#println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
+#        )
 
-docs_histogram = Orion.compute_histogram(topic_assignments, 3, 64)
-println("after shuffle")
-println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
-        )
+#docs_histogram = Orion.compute_histogram(topic_assignments, 3, 64)
+#println("after shuffle")
+#println(sort!(map(x -> (x[1], Int64(x[2])), docs_histogram), by = x->x[2])
+#        )
 
 Orion.@dist_array topic_summary = Orion.fill(zeros(Int64, num_topics), 1)
 Orion.materialize(topic_summary)
@@ -268,12 +268,11 @@ Orion.@accumulator num_reuses = 0
 
 @time for iteration = 1:num_iterations
     println("iteration = ", iteration)
-    Orion.@parallel_for histogram_partitioned repeated reassign_iteration_var_val ordered for (topic_assignment_key, topic_assignment_topic) in topic_assignments
+    Orion.@parallel_for histogram_partitioned repeated reassign_iteration_var_val ordereod for (topic_assignment_key, topic_assignment_topic) in topic_assignments
         doc_id = topic_assignment_key[3]
         word_id = topic_assignment_key[2]
         topic_idx = topic_assignment_key[1]
         old_topic = topic_assignment_topic
-        #println(doc_id, " ", word_id, " ", topic_idx)
 
         doc_topic_dict = doc_topic_table[doc_id]
         word_topic_vec_pair = word_topic_vec_table[word_id]
@@ -404,6 +403,8 @@ Orion.@accumulator num_reuses = 0
         OrionWorker.@update word_topic_vec_table[word_id]
         OrionWorker.@update q_coeff[doc_id]
         topic_assignment_topic = new_topic
+        println("doc_id = ", doc_id, " word_id = ", word_id, " old_topic = ", old_topic,
+                " new_topic = ", new_topic)
     end
 
     num_reuses = Orion.get_aggregated_value(:num_reuses, :+)
@@ -488,8 +489,8 @@ Orion.@accumulator num_reuses = 0
         last_time = curr_time
         elapsed = Int(Dates.value(curr_time - start_time)) / 1000
         push!(time_vec, elapsed)
-        println("iteration = ", iteration, " elapsed = ", elapsed, " iter_time = ", diff_time,
-                " llh = ", llh, " word_llh = ", word_llh)
+        #println("iteration = ", iteration, " elapsed = ", elapsed, " iter_time = ", diff_time,
+         #       " llh = ", llh, " word_llh = ", word_llh)
     end
 end
 
@@ -498,7 +499,7 @@ println(word_llh_vec)
 println(llh_vec)
 Orion.stop()
 
-llh_fobj = open("results.order/" * split(PROGRAM_FILE, "/")[end] * "-" *
+llh_fobj = open("results.debug/" * split(PROGRAM_FILE, "/")[end] * "-" *
                  split(data_path, "/")[end] * "-" * string(num_executors) * "-" *
                  string(num_topics) * "-" * string(now()) * ".llh", "w")
 for idx in eachindex(time_vec)

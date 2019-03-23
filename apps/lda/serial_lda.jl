@@ -1,9 +1,9 @@
-const data_path = "/proj/BigLearning/jinlianw/data/nytimes.dat.perm"
-const num_topics = 1000
+const data_path = "/proj/BigLearning/jinlianw/data/nytimes.dat.perm.4"
+const num_topics = 10
 const alpha = Float32(0.1)
 const beta = Float32(0.1)
 const alpha_beta = alpha * beta
-const num_iterations = 100
+const num_iterations = 10
 
 num_tokens = 0
 num_dist_tokens = 0
@@ -356,6 +356,7 @@ function compute_llh(word_topic_vec_table::Vector{Tuple{Vector{UInt64}, Vector{I
         end
         llh += (num_topics - length(word_topic_vec)) * lgamma(beta)
     end
+    println("word_llh = ", llh)
     for topic in eachindex(word_log_gamma_sum)
         topic_log_gamma_sum_val = word_log_gamma_sum[topic]
         llh += topic_log_gamma_sum_val - lgamma(vocab_size * beta + topic_summary[topic])
@@ -374,6 +375,7 @@ function compute_llh(word_topic_vec_table::Vector{Tuple{Vector{UInt64}, Vector{I
         llh += doc_log_gamma_sum - lgamma(alpha * num_topics + doc_total_word_count)
         llh += lgamma(num_topics * alpha) - num_topics * lgamma(alpha)
     end
+    println("topic_llh + word_llh = ", llh)
     return llh
 end
 
@@ -516,7 +518,7 @@ topic_assignments = (convert_all_keys_to_int64(topic_assignments[1], dims),
                             num_topics,
                             beta_sum)
 
-llh_fobj = open("results.order/" * split(PROGRAM_FILE, "/")[end] * "-" *
+llh_fobj = open("results.debug/" * split(PROGRAM_FILE, "/")[end] * "-" *
                  split(data_path, "/")[end] * "-" * string(1) * "-" *
                  string(num_topics) * "-" * string(num_iterations) * "-" * string(now()) * ".loss", "w")
 for idx in eachindex(time_vec)
